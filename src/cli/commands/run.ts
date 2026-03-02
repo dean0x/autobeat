@@ -89,11 +89,11 @@ export function waitForTaskCompletion(container: Container, taskId: string): Pro
  * with --foreground so it doesn't recurse back into detach mode.
  * The foreground polls the background's log file to extract and print the task ID, then exits.
  */
-export function handleDetachMode(delegateArgs: string[]): void {
+export function handleDetachMode(runArgs: string[]): void {
   // Validate that at least one non-flag word exists (the prompt)
-  const hasPrompt = delegateArgs.some((arg) => !arg.startsWith('-'));
+  const hasPrompt = runArgs.some((arg) => !arg.startsWith('-'));
   if (!hasPrompt) {
-    ui.error('Usage: delegate delegate "<prompt>" [options]');
+    ui.error('Usage: beat run "<prompt>" [options]');
     process.stderr.write('  A prompt is required to delegate a task\n');
     process.exit(1);
   }
@@ -120,7 +120,7 @@ export function handleDetachMode(delegateArgs: string[]): void {
   }
 
   // Re-spawn CLI with --foreground as a detached background process
-  const childArgs = [process.argv[1], 'delegate', '--foreground', ...delegateArgs];
+  const childArgs = [process.argv[1], 'run', '--foreground', ...runArgs];
   try {
     const child = spawn(process.argv[0], childArgs, {
       detached: true,
@@ -162,8 +162,8 @@ export function handleDetachMode(delegateArgs: string[]): void {
           clearInterval(pollInterval);
           const taskId = match[1];
           s.stop(`Task delegated: ${taskId}`);
-          ui.info(`Check status: delegate status ${taskId}`);
-          ui.info(`View logs:    delegate logs ${taskId}`);
+          ui.info(`Check status: beat status ${taskId}`);
+          ui.info(`View logs:    beat logs ${taskId}`);
           process.exit(0);
         }
 
@@ -197,7 +197,7 @@ export function handleDetachMode(delegateArgs: string[]): void {
   }
 }
 
-export async function delegateTask(
+export async function runTask(
   prompt: string,
   options?: {
     priority?: 'P0' | 'P1' | 'P2';
