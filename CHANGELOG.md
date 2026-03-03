@@ -351,5 +351,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Documentation**: See [README.md](./README.md) for setup and usage
 - **Features**: See [FEATURES.md](./FEATURES.md) for complete feature list
 - **Roadmap**: See [ROADMAP.md](./ROADMAP.md) for future plans
-- **Issues**: Report bugs at [GitHub Issues](https://github.com/dean0x/delegate/issues)
-- **Discussions**: Feature requests at [GitHub Discussions](https://github.com/dean0x/delegate/discussions)
+- **Issues**: Report bugs at [GitHub Issues](https://github.com/dean0x/backbeat/issues)
+- **Discussions**: Feature requests at [GitHub Discussions](https://github.com/dean0x/backbeat/discussions)

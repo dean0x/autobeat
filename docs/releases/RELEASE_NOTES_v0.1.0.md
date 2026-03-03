@@ -22,7 +22,7 @@ Backbeat is an MCP (Model Context Protocol) server that enables Claude Code to d
 
 ```bash
 # Clone the repository
-git clone https://github.com/dean0x/delegate.git
+git clone https://github.com/dean0x/backbeat.git
 cd backbeat
 
 # Install and build
@@ -123,7 +123,7 @@ beat help
 ## 🤝 Contributing
 
 We welcome contributions! Feel free to:
-- Report bugs via [GitHub Issues](https://github.com/dean0x/delegate/issues)
+- Report bugs via [GitHub Issues](https://github.com/dean0x/backbeat/issues)
 - Suggest features
 - Submit pull requests
 
@@ -139,7 +139,7 @@ MIT License - see [LICENSE](./LICENSE) file for details
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/dean0x/delegate/issues)
+- **Issues**: [GitHub Issues](https://github.com/dean0x/backbeat/issues)
 - **Documentation**: [Full Docs](./docs/)
 - **Examples**: [Use Cases](./examples/use-cases.md)
 
@@ -153,6 +153,6 @@ Ready to parallelize your Claude Code workflow? Let's go! 🚀
 
 ---
 
-**Repository**: https://github.com/dean0x/delegate  
+**Repository**: https://github.com/dean0x/backbeat  
 **Version**: 0.1.0  
 **Release Date**: August 17, 2025

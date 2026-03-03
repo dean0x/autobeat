@@ -52,4 +52,4 @@ This release includes contributions from Claude Code 🤖
 
 ---
 
-For more information, visit the [GitHub repository](https://github.com/dean0x/delegate)
+For more information, visit the [GitHub repository](https://github.com/dean0x/backbeat)

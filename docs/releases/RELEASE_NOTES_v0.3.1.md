@@ -161,4 +161,4 @@ None. This is a fully backward-compatible patch release.
 - [Full Changelog](../../CHANGELOG.md)
 - [Task Dependencies Documentation](../TASK-DEPENDENCIES.md)
 - [Architecture Documentation](../architecture/)
-- [GitHub Issues](https://github.com/dean0x/delegate/issues)
+- [GitHub Issues](https://github.com/dean0x/backbeat/issues)

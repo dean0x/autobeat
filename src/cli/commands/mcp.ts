@@ -43,7 +43,7 @@ For global installation:
   }
 }
 
-Learn more: https://github.com/dean0x/delegate#configuration`,
+Learn more: https://github.com/dean0x/backbeat#configuration`,
     'MCP Configuration',
   );
 }

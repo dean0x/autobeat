@@ -189,9 +189,9 @@ Special thanks to:
 ## Links
 
 - 📦 **NPM Package**: https://www.npmjs.com/package/backbeat
-- 📝 **Full Documentation**: https://github.com/dean0x/delegate/blob/main/docs/task-dependencies.md
-- 🐛 **Issues**: https://github.com/dean0x/delegate/issues
-- 💬 **Discussions**: https://github.com/dean0x/delegate/discussions
+- 📝 **Full Documentation**: https://github.com/dean0x/backbeat/blob/main/docs/task-dependencies.md
+- 🐛 **Issues**: https://github.com/dean0x/backbeat/issues
+- 💬 **Discussions**: https://github.com/dean0x/backbeat/discussions
 
 ---
 

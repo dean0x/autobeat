@@ -96,5 +96,5 @@ ${bold('Examples:')}
   beat config set timeout 300000
   beat config reset timeout
 
-Repository: https://github.com/dean0x/delegate`);
+Repository: https://github.com/dean0x/backbeat`);
 }

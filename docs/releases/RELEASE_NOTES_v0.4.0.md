@@ -243,5 +243,5 @@ Existing databases will automatically migrate through v4-v6 schemas on first sta
 ## Links
 
 - NPM Package: https://www.npmjs.com/package/backbeat
-- Documentation: https://github.com/dean0x/delegate/blob/main/docs/FEATURES.md
-- Issues: https://github.com/dean0x/delegate/issues
+- Documentation: https://github.com/dean0x/backbeat/blob/main/docs/FEATURES.md
+- Issues: https://github.com/dean0x/backbeat/issues

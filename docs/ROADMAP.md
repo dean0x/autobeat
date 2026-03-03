@@ -479,4 +479,4 @@ tasks:
 - 📊 v0.4.0 metrics: ~10,080 lines added across 42 files, 844+ tests passing
 - 🔀 Reorganized roadmap: v0.4.0 Resumption+Scheduling, v0.5.0 Distributed, v0.6.0 Orchestration, v0.7.0 Monitoring
 
-For questions about the roadmap, please open a [GitHub Discussion](https://github.com/dean0x/delegate/discussions).
+For questions about the roadmap, please open a [GitHub Discussion](https://github.com/dean0x/backbeat/discussions).

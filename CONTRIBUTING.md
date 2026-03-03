@@ -3,7 +3,7 @@
 ## Development Setup
 
 ```bash
-git clone https://github.com/dean0x/delegate.git
+git clone https://github.com/dean0x/backbeat.git
 cd backbeat
 npm install
 npm run build

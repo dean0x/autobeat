@@ -86,4 +86,4 @@ Add to your MCP configuration:
 
 ---
 
-For detailed documentation, visit: https://github.com/dean0x/delegate
+For detailed documentation, visit: https://github.com/dean0x/backbeat
