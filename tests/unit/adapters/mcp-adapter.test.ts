@@ -16,8 +16,7 @@ import { MCPAdapter } from '../../../src/adapters/mcp-adapter';
 import type { PipelineCreateRequest, PipelineResult, Task, TaskRequest } from '../../../src/core/domain';
 import { Priority, ScheduleId } from '../../../src/core/domain';
 import { BackbeatError, ErrorCode, taskNotFound } from '../../../src/core/errors';
-import type { EventBus } from '../../../src/core/events/event-bus';
-import type { Logger, ScheduleRepository, ScheduleService, TaskManager } from '../../../src/core/interfaces';
+import type { Logger, ScheduleService, TaskManager } from '../../../src/core/interfaces';
 import type { Result } from '../../../src/core/result';
 import { err, ok } from '../../../src/core/result';
 import { TaskFactory } from '../../fixtures/factories';
@@ -163,30 +162,15 @@ class MockLogger implements Logger {
   }
 }
 
-// Stub ScheduleRepository — tests in this file do not exercise schedule features
-const stubScheduleRepository: ScheduleRepository = {
-  save: vi.fn().mockResolvedValue(ok(undefined)),
-  update: vi.fn().mockResolvedValue(ok(undefined)),
-  findById: vi.fn().mockResolvedValue(ok(null)),
-  findAll: vi.fn().mockResolvedValue(ok([])),
-  findByStatus: vi.fn().mockResolvedValue(ok([])),
-  findDue: vi.fn().mockResolvedValue(ok([])),
-  delete: vi.fn().mockResolvedValue(ok(undefined)),
-  count: vi.fn().mockResolvedValue(ok(0)),
-  recordExecution: vi
-    .fn()
-    .mockResolvedValue(ok({ id: 1, scheduleId: '', scheduledFor: 0, status: 'pending', createdAt: 0 })),
-  getExecutionHistory: vi.fn().mockResolvedValue(ok([])),
-};
-
-// Stub EventBus — tests in this file do not exercise event features
-const stubEventBus: EventBus = {
-  emit: vi.fn().mockResolvedValue(ok(undefined)),
-  request: vi.fn().mockResolvedValue(ok(undefined)),
-  subscribe: vi.fn().mockReturnValue(ok('sub-id')),
-  unsubscribe: vi.fn().mockReturnValue(ok(undefined)),
-  subscribeAll: vi.fn().mockReturnValue(ok('sub-id')),
-  unsubscribeAll: vi.fn(),
+// Stub ScheduleService — task-focused tests do not exercise schedule features
+const stubScheduleService: ScheduleService = {
+  createSchedule: vi.fn().mockResolvedValue(ok(null)),
+  listSchedules: vi.fn().mockResolvedValue(ok([])),
+  getSchedule: vi.fn().mockResolvedValue(ok({ schedule: null })),
+  cancelSchedule: vi.fn().mockResolvedValue(ok(undefined)),
+  pauseSchedule: vi.fn().mockResolvedValue(ok(undefined)),
+  resumeSchedule: vi.fn().mockResolvedValue(ok(undefined)),
+  createPipeline: vi.fn().mockResolvedValue(ok({ pipelineId: '', steps: [] })),
 };
 
 describe('MCPAdapter - Protocol Compliance', () => {
@@ -197,7 +181,7 @@ describe('MCPAdapter - Protocol Compliance', () => {
   beforeEach(() => {
     mockTaskManager = new MockTaskManager();
     mockLogger = new MockLogger();
-    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleRepository, stubEventBus);
+    adapter = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService);
   });
 
   afterEach(() => {

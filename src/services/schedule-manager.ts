@@ -25,6 +25,14 @@ import { err, ok, Result } from '../core/result.js';
 import { getNextRunTime, isValidTimezone, validateCronExpression } from '../utils/cron.js';
 import { validatePath } from '../utils/validation.js';
 
+/** Truncate a prompt string to maxLen characters, appending '...' if truncated */
+function truncatePrompt(prompt: string, maxLen: number): string {
+  if (prompt.length <= maxLen) {
+    return prompt;
+  }
+  return prompt.substring(0, maxLen) + '...';
+}
+
 /**
  * Map missedRunPolicy string to MissedRunPolicy enum
  * Defaults to SKIP for unrecognized values
@@ -327,7 +335,7 @@ export class ScheduleManagerService implements ScheduleService {
       createdSteps.push({
         index: i,
         scheduleId: result.value.id,
-        prompt: step.prompt.substring(0, 50) + (step.prompt.length > 50 ? '...' : ''),
+        prompt: truncatePrompt(step.prompt, 50),
       });
     }
 

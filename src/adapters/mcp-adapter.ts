@@ -8,7 +8,6 @@ import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
 import {
   PipelineCreateRequest,
-  PipelineStepRequest,
   Priority,
   ResumeTaskRequest,
   ScheduleCreateRequest,
@@ -1279,13 +1278,11 @@ export class MCPAdapter {
     }
 
     const request: PipelineCreateRequest = {
-      steps: data.steps.map(
-        (s): PipelineStepRequest => ({
-          prompt: s.prompt,
-          priority: s.priority as Priority | undefined,
-          workingDirectory: s.workingDirectory,
-        }),
-      ),
+      steps: data.steps.map((s) => ({
+        prompt: s.prompt,
+        priority: s.priority as Priority | undefined,
+        workingDirectory: s.workingDirectory,
+      })),
       priority: data.priority as Priority | undefined,
       workingDirectory: data.workingDirectory,
     };
