@@ -1687,6 +1687,20 @@ describe('CLI - Task Completion Lifecycle', () => {
       expect(agentDisplay('codex')).toBe('codex');
     });
   });
+
+  describe('Agent auth commands (v0.5.0)', () => {
+    it('should export checkAgents function', async () => {
+      const agentsModule = await import('../../src/cli/commands/agents');
+      expect(typeof agentsModule.checkAgents).toBe('function');
+    });
+
+    it('should export agent config functions', async () => {
+      const agentsModule = await import('../../src/cli/commands/agents');
+      expect(typeof agentsModule.agentsConfigSet).toBe('function');
+      expect(typeof agentsModule.agentsConfigShow).toBe('function');
+      expect(typeof agentsModule.agentsConfigReset).toBe('function');
+    });
+  });
 });
 
 // ============================================================================

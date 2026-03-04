@@ -8,7 +8,7 @@
  * Rationale: Enables pluggable agent backends without changing core task logic
  */
 
-import { ChildProcess } from 'child_process';
+import { ChildProcess, spawnSync } from 'child_process';
 import { Result } from './result.js';
 
 /**
@@ -46,6 +46,124 @@ export const AGENT_DESCRIPTIONS: Readonly<Record<AgentProvider, string>> = Objec
   codex: 'Codex CLI (OpenAI)',
   gemini: 'Gemini CLI (Google)',
 });
+
+/**
+ * Auth requirements per agent provider — single source of truth
+ *
+ * ARCHITECTURE: Used by checkAgentAuth(), resolveAuth(), CLI `agents check`,
+ * and MCP ConfigureAgent/ListAgents tools. One definition, many consumers.
+ */
+export interface AgentAuthConfig {
+  /** Environment variable names that hold API keys */
+  readonly envVars: readonly string[];
+  /** CLI binary name (checked in PATH) */
+  readonly command: string;
+  /** Human-readable login instruction */
+  readonly loginHint: string;
+  /** Human-readable API key instruction */
+  readonly apiKeyHint: string;
+}
+
+export const AGENT_AUTH: Readonly<Record<AgentProvider, AgentAuthConfig>> = Object.freeze({
+  claude: {
+    envVars: ['ANTHROPIC_API_KEY'],
+    command: 'claude',
+    loginHint: 'claude login',
+    apiKeyHint: 'export ANTHROPIC_API_KEY=<key>',
+  },
+  codex: {
+    envVars: ['OPENAI_API_KEY'],
+    command: 'codex',
+    loginHint: 'codex auth login',
+    apiKeyHint: 'export OPENAI_API_KEY=<key>',
+  },
+  gemini: {
+    envVars: ['GEMINI_API_KEY'],
+    command: 'gemini',
+    loginHint: 'gcloud auth application-default login',
+    apiKeyHint: 'export GEMINI_API_KEY=<key>',
+  },
+});
+
+/**
+ * Auth status for a single agent — reusable across CLI, MCP, and pre-spawn checks
+ */
+export interface AgentAuthStatus {
+  readonly provider: AgentProvider;
+  readonly ready: boolean;
+  readonly method: 'env-var' | 'config-file' | 'cli-login' | 'none';
+  /** Which env var is set (if method is 'env-var') */
+  readonly envVar?: string;
+  /** Whether the CLI binary was found in PATH */
+  readonly cliFound: boolean;
+  /** Actionable fix hint (only when not ready) */
+  readonly hint?: string;
+}
+
+/**
+ * Check auth status for a given agent provider.
+ * Resolution order: env var → config file → CLI binary → not configured
+ *
+ * @param provider - Agent to check
+ * @param configApiKey - API key stored in config file (caller loads from configuration.ts)
+ * @param envOverride - Override for process.env (testing only)
+ */
+export function checkAgentAuth(
+  provider: AgentProvider,
+  configApiKey?: string,
+  envOverride?: Record<string, string | undefined>,
+): AgentAuthStatus {
+  const auth = AGENT_AUTH[provider];
+  const env = envOverride ?? process.env;
+
+  // 1. Check env vars (explicit override, CI use case)
+  for (const envVar of auth.envVars) {
+    if (env[envVar]) {
+      return { provider, ready: true, method: 'env-var', envVar, cliFound: isCommandInPath(auth.command) };
+    }
+  }
+
+  // 2. Check config file for stored API key
+  if (configApiKey) {
+    return { provider, ready: true, method: 'config-file', cliFound: isCommandInPath(auth.command) };
+  }
+
+  // 3. Check CLI binary in PATH (login-based auth assumed)
+  if (isCommandInPath(auth.command)) {
+    return { provider, ready: true, method: 'cli-login', cliFound: true };
+  }
+
+  // 4. Nothing configured
+  return {
+    provider,
+    ready: false,
+    method: 'none',
+    cliFound: false,
+    hint: [
+      `Agent '${provider}' not configured. Either:`,
+      `  1. Log in: ${auth.loginHint}`,
+      `  2. Set API key: ${auth.apiKeyHint}`,
+      `  3. Store key: beat agents config set ${provider} apiKey <key>`,
+    ].join('\n'),
+  };
+}
+
+/**
+ * Check if a command exists in PATH using `which`
+ * Separated for testability (can be mocked)
+ */
+export function isCommandInPath(command: string): boolean {
+  const result = spawnSync('which', [command], { stdio: 'ignore' });
+  return result.status === 0;
+}
+
+/**
+ * Mask an API key for display: show first 3 + last 3 chars
+ */
+export function maskApiKey(key: string): string {
+  if (key.length <= 8) return '***';
+  return `${key.slice(0, 3)}...${key.slice(-3)}`;
+}
 
 /**
  * Agent adapter interface — abstracts agent-specific CLI interactions

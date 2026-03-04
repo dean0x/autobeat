@@ -778,6 +778,28 @@ describe('MCPAdapter - Multi-Agent Support (v0.5.0)', () => {
       expect(adapterWithRegistry.getServer()).toBeTruthy();
     });
   });
+
+  describe('ConfigureAgent tool', () => {
+    it('should exist as a constructable adapter method', () => {
+      // ConfigureAgent is exposed via MCP tool registration
+      // Structural test — actual handler is private
+      const adapterInstance = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService);
+      expect(adapterInstance).toBeTruthy();
+      expect(adapterInstance.getServer()).toBeTruthy();
+    });
+
+    it('should accept adapter with registry for agent auth checks', () => {
+      const mockRegistry = {
+        get: vi.fn(),
+        has: vi.fn().mockReturnValue(true),
+        list: vi.fn().mockReturnValue(['claude', 'codex', 'gemini']),
+        dispose: vi.fn(),
+      };
+
+      const adapterWithRegistry = new MCPAdapter(mockTaskManager, mockLogger, stubScheduleService, mockRegistry);
+      expect(adapterWithRegistry).toBeTruthy();
+    });
+  });
 });
 
 /**

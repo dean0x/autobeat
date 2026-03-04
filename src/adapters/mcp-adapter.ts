@@ -6,7 +6,16 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
-import { AGENT_DESCRIPTIONS, AGENT_PROVIDERS, AgentProvider, AgentRegistry, DEFAULT_AGENT } from '../core/agents.js';
+import {
+  AGENT_DESCRIPTIONS,
+  AGENT_PROVIDERS,
+  AgentProvider,
+  AgentRegistry,
+  checkAgentAuth,
+  DEFAULT_AGENT,
+  maskApiKey,
+} from '../core/agents.js';
+import { loadAgentConfig, resetAgentConfig, saveAgentConfig } from '../core/configuration.js';
 import {
   PipelineCreateRequest,
   Priority,
@@ -136,6 +145,15 @@ const CreatePipelineSchema = z.object({
     .describe('Default agent for all steps (individual steps can override)'),
 });
 
+const ConfigureAgentSchema = z.object({
+  agent: z.enum(['claude', 'codex', 'gemini']).describe('Agent provider to configure'),
+  action: z
+    .enum(['set', 'check', 'reset'])
+    .default('check')
+    .describe('Action: set API key, check auth status, or reset stored key'),
+  apiKey: z.string().min(1).optional().describe('API key to store (required for set action)'),
+});
+
 /** Standard MCP tool response shape */
 interface MCPToolResponse {
   [key: string]: unknown;
@@ -223,6 +241,8 @@ export class MCPAdapter {
             return await this.handleCreatePipeline(args);
           case 'ListAgents':
             return this.handleListAgents();
+          case 'ConfigureAgent':
+            return this.handleConfigureAgent(args);
           default:
             // ARCHITECTURE: Return error response instead of throwing
             return {
@@ -609,10 +629,34 @@ export class MCPAdapter {
             // Agent tools (v0.5.0 Multi-Agent Support)
             {
               name: 'ListAgents',
-              description: 'List available AI agents and their registration status',
+              description: 'List available AI agents with registration and auth status',
               inputSchema: {
                 type: 'object',
                 properties: {},
+              },
+            },
+            {
+              name: 'ConfigureAgent',
+              description: 'Check auth status, store API key, or reset stored key for an agent',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  agent: {
+                    type: 'string',
+                    enum: ['claude', 'codex', 'gemini'],
+                    description: 'Agent provider to configure',
+                  },
+                  action: {
+                    type: 'string',
+                    enum: ['set', 'check', 'reset'],
+                    description: 'Action to perform (default: check)',
+                  },
+                  apiKey: {
+                    type: 'string',
+                    description: 'API key to store (required for set action)',
+                  },
+                },
+                required: ['agent'],
               },
             },
           ],
@@ -1368,15 +1412,23 @@ export class MCPAdapter {
 
   /**
    * Handle ListAgents tool call
-   * Returns all known agent providers and their registration status
+   * Returns all known agent providers with registration and auth status
    */
   private handleListAgents(): MCPToolResponse {
-    const agents = AGENT_PROVIDERS.map((provider) => ({
-      provider,
-      description: AGENT_DESCRIPTIONS[provider],
-      registered: this.agentRegistry?.has(provider) ?? false,
-      isDefault: provider === DEFAULT_AGENT,
-    }));
+    const agents = AGENT_PROVIDERS.map((provider) => {
+      const agentConfig = loadAgentConfig(provider);
+      const authStatus = checkAgentAuth(provider, agentConfig.apiKey);
+
+      return {
+        provider,
+        description: AGENT_DESCRIPTIONS[provider],
+        registered: this.agentRegistry?.has(provider) ?? false,
+        isDefault: provider === DEFAULT_AGENT,
+        authStatus: authStatus.ready ? 'ready' : 'not-configured',
+        authMethod: authStatus.method,
+        ...(authStatus.hint && { hint: authStatus.hint }),
+      };
+    });
 
     return {
       content: [
@@ -1394,5 +1446,107 @@ export class MCPAdapter {
         },
       ],
     };
+  }
+
+  /**
+   * Handle ConfigureAgent tool call
+   * Actions: check auth status, set API key, reset stored key
+   */
+  private handleConfigureAgent(args: unknown): MCPToolResponse {
+    const parseResult = ConfigureAgentSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: false,
+                error: parseResult.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; '),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const { agent, action, apiKey } = parseResult.data;
+
+    switch (action) {
+      case 'check': {
+        const agentConfig = loadAgentConfig(agent);
+        const status = checkAgentAuth(agent, agentConfig.apiKey);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  success: true,
+                  ...status,
+                  ...(agentConfig.apiKey && { storedKey: maskApiKey(agentConfig.apiKey) }),
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case 'set': {
+        if (!apiKey) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ success: false, error: 'apiKey is required for set action' }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
+        const result = saveAgentConfig(agent, 'apiKey', apiKey);
+        if (!result.ok) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error }, null, 2) }],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                { success: true, message: `API key stored for ${agent} (${maskApiKey(apiKey)})` },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case 'reset': {
+        const result = resetAgentConfig(agent);
+        if (!result.ok) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error }, null, 2) }],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ success: true, message: `Stored config cleared for ${agent}` }, null, 2),
+            },
+          ],
+        };
+      }
+    }
   }
 }

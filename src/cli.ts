@@ -6,7 +6,13 @@ process.title = 'beat-cli';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { listAgents } from './cli/commands/agents.js';
+import {
+  agentsConfigReset,
+  agentsConfigSet,
+  agentsConfigShow,
+  checkAgents,
+  listAgents,
+} from './cli/commands/agents.js';
 import { cancelTask } from './cli/commands/cancel.js';
 import { configPath, configReset, configSet, configShow } from './cli/commands/config.js';
 import { showHelp } from './cli/commands/help.js';
@@ -238,9 +244,23 @@ if (mainCommand === 'mcp') {
 } else if (mainCommand === 'agents') {
   if (subCommand === 'list' || !subCommand) {
     await listAgents();
+  } else if (subCommand === 'check') {
+    await checkAgents();
+  } else if (subCommand === 'config') {
+    const configAction = args[2];
+    if (configAction === 'set') {
+      await agentsConfigSet(args[3], args[4], args[5]);
+    } else if (configAction === 'show') {
+      await agentsConfigShow(args[3]); // optional agent filter
+    } else if (configAction === 'reset') {
+      await agentsConfigReset(args[3]);
+    } else {
+      ui.error('Usage: beat agents config <set|show|reset>');
+      process.exit(1);
+    }
   } else {
     ui.error(`Unknown agents subcommand: ${subCommand}`);
-    process.stderr.write('Valid subcommands: list\n');
+    process.stderr.write('Valid subcommands: list, check, config\n');
     process.exit(1);
   }
 } else if (mainCommand === 'resume') {

@@ -13,9 +13,9 @@
  */
 
 import { ChildProcess, spawn } from 'child_process';
-import { AgentAdapter, AgentProvider } from '../core/agents.js';
-import { Configuration } from '../core/configuration.js';
-import { BackbeatError, ErrorCode, processSpawnFailed } from '../core/errors.js';
+import { AGENT_AUTH, AgentAdapter, AgentAuthConfig, AgentProvider, isCommandInPath } from '../core/agents.js';
+import { Configuration, loadAgentConfig } from '../core/configuration.js';
+import { agentMisconfigured, BackbeatError, ErrorCode, processSpawnFailed } from '../core/errors.js';
 import { err, ok, Result, tryCatch } from '../core/result.js';
 
 export abstract class BaseAgentAdapter implements AgentAdapter {
@@ -43,8 +43,59 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return prompt;
   }
 
+  /** Auth config for this agent's provider */
+  protected get authConfig(): AgentAuthConfig {
+    return AGENT_AUTH[this.provider];
+  }
+
+  /**
+   * Resolve authentication before spawn.
+   * Resolution order: env var → config file → CLI in PATH → error
+   *
+   * @returns Additional env vars to inject (e.g., stored API key), or error
+   */
+  protected resolveAuth(): Result<{ injectedEnv: Record<string, string> }> {
+    const auth = this.authConfig;
+
+    // 1. Check env vars (explicit override, CI use case)
+    for (const envVar of auth.envVars) {
+      if (process.env[envVar]) {
+        return ok({ injectedEnv: {} });
+      }
+    }
+
+    // 2. Check config file for stored API key
+    const agentConfig = loadAgentConfig(this.provider);
+    if (agentConfig.apiKey) {
+      // Inject stored key as the first env var for this agent
+      return ok({ injectedEnv: { [auth.envVars[0]]: agentConfig.apiKey } });
+    }
+
+    // 3. Check CLI binary in PATH (login-based auth assumed)
+    if (isCommandInPath(auth.command)) {
+      return ok({ injectedEnv: {} });
+    }
+
+    // 4. Nothing configured — fail fast with actionable message
+    return err(
+      agentMisconfigured(
+        this.provider,
+        [
+          'Not configured. Either:',
+          `  1. Log in: ${auth.loginHint}`,
+          `  2. Set API key: ${auth.apiKeyHint}`,
+          `  3. Store key: beat agents config set ${this.provider} apiKey <key>`,
+        ].join('\n'),
+      ),
+    );
+  }
+
   spawn(prompt: string, workingDirectory: string, taskId?: string): Result<{ process: ChildProcess; pid: number }> {
     try {
+      // Pre-spawn auth validation
+      const authResult = this.resolveAuth();
+      if (!authResult.ok) return authResult;
+
       const finalPrompt = this.transformPrompt(prompt);
       const args = this.buildArgs(finalPrompt);
 
@@ -55,6 +106,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       );
       const env = {
         ...cleanEnv,
+        ...authResult.value.injectedEnv,
         BACKBEAT_WORKER: 'true',
         ...(taskId && { BACKBEAT_TASK_ID: taskId }),
       };

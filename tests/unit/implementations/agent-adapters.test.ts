@@ -1,15 +1,20 @@
 /**
  * Agent Adapter Tests — Claude, Codex, Gemini
  *
- * ARCHITECTURE: Tests the spawn arguments, environment stripping, and kill
- * behavior for each agent adapter implementation.
+ * ARCHITECTURE: Tests the spawn arguments, environment stripping, kill
+ * behavior, and pre-spawn auth validation for each agent adapter.
  *
  * Pattern: child_process.spawn is mocked to verify args/env without spawning real processes
  */
 
 import type { ChildProcess } from 'child_process';
+import { mkdirSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Configuration } from '../../../src/core/configuration';
+import { _testSetConfigDir, saveAgentConfig } from '../../../src/core/configuration';
+import { ErrorCode } from '../../../src/core/errors';
 import { ClaudeAdapter } from '../../../src/implementations/claude-adapter';
 import { CodexAdapter } from '../../../src/implementations/codex-adapter';
 import { GeminiAdapter } from '../../../src/implementations/gemini-adapter';
@@ -17,10 +22,23 @@ import { GeminiAdapter } from '../../../src/implementations/gemini-adapter';
 // Mock child_process.spawn
 vi.mock('child_process', () => ({
   spawn: vi.fn(),
+  spawnSync: vi.fn(),
   ChildProcess: vi.fn(),
 }));
 
+// Mock isCommandInPath from agents.ts (used by resolveAuth in base-agent-adapter)
+vi.mock('../../../src/core/agents', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../src/core/agents')>();
+  return {
+    ...original,
+    isCommandInPath: vi.fn().mockReturnValue(true), // Default: CLI found
+  };
+});
+
 import { spawn } from 'child_process';
+import { isCommandInPath } from '../../../src/core/agents';
+
+const mockIsCommandInPath = vi.mocked(isCommandInPath);
 
 const mockSpawn = vi.mocked(spawn);
 
@@ -55,6 +73,8 @@ describe('ClaudeAdapter', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: CLI found in PATH (auth passes)
+    mockIsCommandInPath.mockReturnValue(true);
     adapter = new ClaudeAdapter(testConfig, 'claude');
   });
 
@@ -148,6 +168,7 @@ describe('CodexAdapter', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsCommandInPath.mockReturnValue(true);
     adapter = new CodexAdapter(testConfig, 'codex');
   });
 
@@ -195,6 +216,7 @@ describe('GeminiAdapter', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsCommandInPath.mockReturnValue(true);
     adapter = new GeminiAdapter(testConfig, 'gemini');
   });
 
@@ -233,6 +255,148 @@ describe('GeminiAdapter', () => {
       expect(spawnOptions.env.BACKBEAT_WORKER).toBe('true');
     } finally {
       delete process.env.GEMINI_API_KEY;
+    }
+  });
+});
+
+// ============================================================================
+// Pre-Spawn Auth Validation Tests
+// ============================================================================
+
+describe('Pre-spawn auth validation', () => {
+  let testDir: string;
+  let restoreConfig: () => void;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    testDir = path.join(tmpdir(), `backbeat-adapter-auth-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    restoreConfig = _testSetConfigDir(testDir);
+  });
+
+  afterEach(() => {
+    restoreConfig();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('should fail spawn when no auth configured and CLI not in PATH', () => {
+    // CLI not found
+    mockIsCommandInPath.mockReturnValue(false);
+
+    // Ensure no env vars satisfy auth
+    const savedOpenAI = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+
+    try {
+      const adapter = new CodexAdapter(testConfig, 'codex');
+      const result = adapter.spawn('test prompt', '/workspace');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe(ErrorCode.AGENT_MISCONFIGURED);
+        expect(result.error.message).toContain('codex');
+        expect(result.error.message).toContain('Not configured');
+      }
+
+      adapter.dispose();
+    } finally {
+      if (savedOpenAI !== undefined) process.env.OPENAI_API_KEY = savedOpenAI;
+    }
+  });
+
+  it('should pass auth when env var is set even if CLI not in PATH', () => {
+    mockIsCommandInPath.mockReturnValue(false);
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    process.env.OPENAI_API_KEY = 'sk-test-key';
+    try {
+      const adapter = new CodexAdapter(testConfig, 'codex');
+      const result = adapter.spawn('test prompt', '/workspace');
+      expect(result.ok).toBe(true);
+      adapter.dispose();
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+
+  it('should inject stored API key from config into spawn env', () => {
+    // CLI not in PATH, but config has key
+    mockIsCommandInPath.mockReturnValue(false);
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    saveAgentConfig('codex', 'apiKey', 'sk-stored-key');
+
+    const adapter = new CodexAdapter(testConfig, 'codex');
+    const result = adapter.spawn('test prompt', '/workspace');
+
+    expect(result.ok).toBe(true);
+
+    // Verify the stored key was injected into spawn env
+    const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(spawnOptions.env.OPENAI_API_KEY).toBe('sk-stored-key');
+
+    adapter.dispose();
+  });
+
+  it('should pass auth when CLI is in PATH (login assumed)', () => {
+    // CLI found
+    mockIsCommandInPath.mockReturnValue(true);
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    const adapter = new GeminiAdapter(testConfig, 'gemini');
+    const result = adapter.spawn('test prompt', '/workspace');
+
+    expect(result.ok).toBe(true);
+    adapter.dispose();
+  });
+
+  it('should include actionable hints in AGENT_MISCONFIGURED error', () => {
+    mockIsCommandInPath.mockReturnValue(false);
+
+    const savedGemini = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+
+    try {
+      const adapter = new GeminiAdapter(testConfig, 'gemini');
+      const result = adapter.spawn('test prompt', '/workspace');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain('gcloud auth');
+        expect(result.error.message).toContain('GEMINI_API_KEY');
+        expect(result.error.message).toContain('beat agents config set');
+      }
+
+      adapter.dispose();
+    } finally {
+      if (savedGemini !== undefined) process.env.GEMINI_API_KEY = savedGemini;
+    }
+  });
+
+  it('should prefer env var over config file API key', () => {
+    mockIsCommandInPath.mockReturnValue(false);
+    const mockChild = createMockChildProcess(1234);
+    mockSpawn.mockReturnValue(mockChild);
+
+    // Both set
+    process.env.ANTHROPIC_API_KEY = 'sk-env-key';
+    saveAgentConfig('claude', 'apiKey', 'sk-config-key');
+
+    try {
+      const adapter = new ClaudeAdapter(testConfig, 'claude');
+      const result = adapter.spawn('test prompt', '/workspace');
+      expect(result.ok).toBe(true);
+
+      // Env var takes precedence — config key NOT injected
+      const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+      expect(spawnOptions.env.ANTHROPIC_API_KEY).toBe('sk-env-key');
+
+      adapter.dispose();
+    } finally {
+      delete process.env.ANTHROPIC_API_KEY;
     }
   });
 });

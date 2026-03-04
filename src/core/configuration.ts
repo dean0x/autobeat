@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import { z } from 'zod';
+import type { AgentProvider } from './agents.js';
 
 /**
  * Configuration Schema with Zod
@@ -240,6 +241,94 @@ export function resetConfigValue(key: string): { ok: true } | { ok: false; error
   }
 
   delete existing[key];
+
+  try {
+    mkdirSync(_configDir, { recursive: true });
+    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+    return { ok: true };
+  } catch {
+    return { ok: false, error: `Failed to write config file at ${_configFilePath}` };
+  }
+}
+
+// ============================================================================
+// Per-Agent Config Storage (agents.<provider>.apiKey in config.json)
+// ============================================================================
+
+export interface AgentConfig {
+  readonly apiKey?: string;
+}
+
+/**
+ * Load agent-specific config from the `agents.<provider>` section of config.json
+ */
+export function loadAgentConfig(provider: AgentProvider): AgentConfig {
+  const file = loadConfigFile();
+  const agents = file.agents;
+  if (!agents || typeof agents !== 'object' || Array.isArray(agents)) return {};
+  const section = (agents as Record<string, unknown>)[provider];
+  if (!section || typeof section !== 'object' || Array.isArray(section)) return {};
+  const record = section as Record<string, unknown>;
+  return {
+    apiKey: typeof record.apiKey === 'string' ? record.apiKey : undefined,
+  };
+}
+
+/**
+ * Save a key-value pair under the `agents.<provider>` section of config.json
+ */
+export function saveAgentConfig(
+  provider: AgentProvider,
+  key: string,
+  value: string,
+): { ok: true } | { ok: false; error: string } {
+  if (key !== 'apiKey') {
+    return { ok: false, error: `Unknown agent config key: ${key}. Valid keys: apiKey` };
+  }
+
+  const existing = loadConfigFile();
+  const agents = (
+    existing.agents && typeof existing.agents === 'object' && !Array.isArray(existing.agents) ? existing.agents : {}
+  ) as Record<string, unknown>;
+  const section = (
+    agents[provider] && typeof agents[provider] === 'object' && !Array.isArray(agents[provider]) ? agents[provider] : {}
+  ) as Record<string, unknown>;
+
+  section[key] = value;
+  agents[provider] = section;
+  existing.agents = agents;
+
+  try {
+    mkdirSync(_configDir, { recursive: true });
+    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+    return { ok: true };
+  } catch {
+    return { ok: false, error: `Failed to write config file at ${_configFilePath}` };
+  }
+}
+
+/**
+ * Remove all stored config for a specific agent provider
+ */
+export function resetAgentConfig(provider: AgentProvider): { ok: true } | { ok: false; error: string } {
+  const existing = loadConfigFile();
+  const agents = existing.agents;
+  if (!agents || typeof agents !== 'object' || Array.isArray(agents)) {
+    return { ok: true }; // Nothing to reset
+  }
+
+  const agentsRecord = agents as Record<string, unknown>;
+  if (!(provider in agentsRecord)) {
+    return { ok: true }; // Already clean
+  }
+
+  delete agentsRecord[provider];
+  // Clean up empty agents object
+  if (Object.keys(agentsRecord).length === 0) {
+    delete existing.agents;
+  } else {
+    existing.agents = agentsRecord;
+  }
 
   try {
     mkdirSync(_configDir, { recursive: true });
