@@ -83,6 +83,7 @@ export class TaskManagerService implements TaskManager {
       taskId: task.id,
       priority: task.priority,
       prompt: task.prompt.substring(0, 100),
+      agent: task.agent,
     });
 
     // Emit event - all state management happens in event handlers
@@ -223,6 +224,7 @@ export class TaskManagerService implements TaskManager {
       parentTaskId: TaskId(parentTaskId),
       retryCount,
       retryOf: taskId,
+      agent: originalTask.agent,
     };
 
     // Create the new retry task
@@ -327,6 +329,7 @@ export class TaskManagerService implements TaskManager {
       parentTaskId: TaskId(parentTaskId),
       retryCount,
       retryOf: taskId,
+      agent: originalTask.agent,
     };
 
     const newTask = createTask(resumeRequest);
