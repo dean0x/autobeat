@@ -32,5 +32,4 @@ export class ClaudeAdapter extends BaseAgentAdapter {
     // Exact match for CLAUDECODE — avoids over-stripping CLAUDECODE_SESSION etc.
     return ['CLAUDECODE'];
   }
-
 }

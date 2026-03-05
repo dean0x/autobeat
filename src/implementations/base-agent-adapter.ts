@@ -102,10 +102,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         return err(
           agentMisconfigured(
             this.provider,
-            [
-              `CLI binary '${this.command}' not found in PATH.`,
-              `  Install: ${this.authConfig.loginHint}`,
-            ].join('\n'),
+            [`CLI binary '${this.command}' not found in PATH.`, `  Install: ${this.authConfig.loginHint}`].join('\n'),
           ),
         );
       }
@@ -120,9 +117,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const exactMatches = this.envExactMatchesToStrip;
       const cleanEnv = Object.fromEntries(
         Object.entries(process.env).filter(
-          ([key]) =>
-            !this.envPrefixesToStrip.some((prefix) => key.startsWith(prefix)) &&
-            !exactMatches.includes(key),
+          ([key]) => !this.envPrefixesToStrip.some((prefix) => key.startsWith(prefix)) && !exactMatches.includes(key),
         ),
       );
       const env = {
