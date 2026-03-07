@@ -7,6 +7,16 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { z } from 'zod';
 import pkg from '../../package.json' with { type: 'json' };
 import {
+  AGENT_DESCRIPTIONS,
+  AGENT_PROVIDERS,
+  AGENT_PROVIDERS_TUPLE,
+  AgentProvider,
+  AgentRegistry,
+  checkAgentAuth,
+  maskApiKey,
+} from '../core/agents.js';
+import { type Configuration, loadAgentConfig, resetAgentConfig, saveAgentConfig } from '../core/configuration.js';
+import {
   PipelineCreateRequest,
   Priority,
   ResumeTaskRequest,
@@ -38,6 +48,10 @@ const DelegateTaskSchema = z.object({
     .describe(
       'Task ID to continue from — receives checkpoint context from this dependency (must be in dependsOn list)',
     ),
+  agent: z
+    .enum(AGENT_PROVIDERS_TUPLE)
+    .optional()
+    .describe('AI agent to execute the task (uses configured default if omitted)'),
 });
 
 const TaskStatusSchema = z.object({
@@ -79,6 +93,10 @@ const ScheduleTaskSchema = z.object({
     .string()
     .optional()
     .describe("Schedule ID to chain after (new tasks depend on this schedule's latest task)"),
+  agent: z
+    .enum(AGENT_PROVIDERS_TUPLE)
+    .optional()
+    .describe('AI agent to execute the task (uses configured default if omitted)'),
 });
 
 const ListSchedulesSchema = z.object({
@@ -113,6 +131,7 @@ const CreatePipelineSchema = z.object({
         prompt: z.string().min(1).max(4000).describe('Task prompt for this step'),
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
+        agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
       }),
     )
     .min(2, 'Pipeline requires at least 2 steps')
@@ -126,6 +145,19 @@ const CreatePipelineSchema = z.object({
     .string()
     .optional()
     .describe('Default working directory for all steps (individual steps can override)'),
+  agent: z
+    .enum(AGENT_PROVIDERS_TUPLE)
+    .optional()
+    .describe('Default agent for all steps (individual steps can override)'),
+});
+
+const ConfigureAgentSchema = z.object({
+  agent: z.enum(AGENT_PROVIDERS_TUPLE).describe('Agent provider to configure'),
+  action: z
+    .enum(['set', 'check', 'reset'])
+    .default('check')
+    .describe('Action: set API key, check auth status, or reset stored key'),
+  apiKey: z.string().min(1).optional().describe('API key to store (required for set action)'),
 });
 
 /** Standard MCP tool response shape */
@@ -142,6 +174,8 @@ export class MCPAdapter {
     private readonly taskManager: TaskManager,
     private readonly logger: Logger,
     private readonly scheduleService: ScheduleService,
+    private readonly agentRegistry: AgentRegistry | undefined,
+    private readonly config: Configuration,
   ) {
     this.server = new Server(
       {
@@ -212,6 +246,10 @@ export class MCPAdapter {
             return await this.handleResumeSchedule(args);
           case 'CreatePipeline':
             return await this.handleCreatePipeline(args);
+          case 'ListAgents':
+            return this.handleListAgents();
+          case 'ConfigureAgent':
+            return this.handleConfigureAgent(args);
           default:
             // ARCHITECTURE: Return error response instead of throwing
             return {
@@ -289,6 +327,11 @@ export class MCPAdapter {
                     description:
                       'Task ID to continue from — receives checkpoint context when that dependency completes (must be in dependsOn list)',
                     pattern: '^task-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+                  },
+                  agent: {
+                    type: 'string',
+                    enum: [...AGENT_PROVIDERS],
+                    description: `AI agent to execute the task (${this.config.defaultAgent ? `default: ${this.config.defaultAgent}` : 'required if no default configured'})`,
                   },
                 },
                 required: ['prompt'],
@@ -439,6 +482,11 @@ export class MCPAdapter {
                     type: 'string',
                     description: "Schedule ID to chain after (new tasks depend on this schedule's latest task)",
                   },
+                  agent: {
+                    type: 'string',
+                    enum: [...AGENT_PROVIDERS],
+                    description: `AI agent to execute the task (${this.config.defaultAgent ? `default: ${this.config.defaultAgent}` : 'required if no default configured'})`,
+                  },
                 },
                 required: ['prompt', 'scheduleType'],
               },
@@ -556,6 +604,11 @@ export class MCPAdapter {
                           type: 'string',
                           description: 'Working directory override (absolute path)',
                         },
+                        agent: {
+                          type: 'string',
+                          enum: [...AGENT_PROVIDERS],
+                          description: 'Agent override for this step',
+                        },
                       },
                       required: ['prompt'],
                     },
@@ -571,8 +624,46 @@ export class MCPAdapter {
                     type: 'string',
                     description: 'Default working directory for all steps (individual steps can override)',
                   },
+                  agent: {
+                    type: 'string',
+                    enum: [...AGENT_PROVIDERS],
+                    description: 'Default agent for all steps (individual steps can override)',
+                  },
                 },
                 required: ['steps'],
+              },
+            },
+            // Agent tools (v0.5.0 Multi-Agent Support)
+            {
+              name: 'ListAgents',
+              description: 'List available AI agents with registration and auth status',
+              inputSchema: {
+                type: 'object',
+                properties: {},
+              },
+            },
+            {
+              name: 'ConfigureAgent',
+              description: 'Check auth status, store API key, or reset stored key for an agent',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  agent: {
+                    type: 'string',
+                    enum: [...AGENT_PROVIDERS],
+                    description: 'Agent provider to configure',
+                  },
+                  action: {
+                    type: 'string',
+                    enum: ['set', 'check', 'reset'],
+                    description: 'Action to perform (default: check)',
+                  },
+                  apiKey: {
+                    type: 'string',
+                    description: 'API key to store (required for set action)',
+                  },
+                },
+                required: ['agent'],
               },
             },
           ],
@@ -626,6 +717,7 @@ export class MCPAdapter {
       maxOutputBuffer: data.maxOutputBuffer,
       dependsOn: data.dependsOn ? data.dependsOn.map(TaskId) : undefined,
       continueFrom: data.continueFrom ? TaskId(data.continueFrom) : undefined,
+      agent: data.agent as AgentProvider | undefined,
     };
 
     // Delegate task using our new architecture
@@ -711,6 +803,7 @@ export class MCPAdapter {
                   duration: task.completedAt && task.startedAt ? task.completedAt - task.startedAt : undefined,
                   exitCode: task.exitCode,
                   workingDirectory: task.workingDirectory,
+                  agent: task.agent ?? 'unknown',
                 }),
               },
             ],
@@ -955,6 +1048,7 @@ export class MCPAdapter {
       maxRuns: data.maxRuns,
       expiresAt: data.expiresAt,
       afterScheduleId: data.afterSchedule ? ScheduleId(data.afterSchedule) : undefined,
+      agent: data.agent as AgentProvider | undefined,
     };
 
     const result = await this.scheduleService.createSchedule(request);
@@ -1282,6 +1376,7 @@ export class MCPAdapter {
         prompt: s.prompt,
         priority: s.priority as Priority | undefined,
         workingDirectory: s.workingDirectory,
+        agent: (s.agent ?? data.agent) as AgentProvider | undefined,
       })),
       priority: data.priority as Priority | undefined,
       workingDirectory: data.workingDirectory,
@@ -1316,5 +1411,149 @@ export class MCPAdapter {
         isError: true,
       }),
     });
+  }
+
+  // ============================================================================
+  // AGENT HANDLERS (v0.5.0 Multi-Agent Support)
+  // ============================================================================
+
+  /**
+   * Handle ListAgents tool call
+   * Returns all known agent providers with registration and auth status
+   */
+  private handleListAgents(): MCPToolResponse {
+    const agents = AGENT_PROVIDERS.map((provider) => {
+      const agentConfig = loadAgentConfig(provider);
+      const authStatus = checkAgentAuth(provider, agentConfig.apiKey);
+
+      return {
+        provider,
+        description: AGENT_DESCRIPTIONS[provider],
+        registered: this.agentRegistry?.has(provider) ?? false,
+        isDefault: provider === this.config.defaultAgent,
+        authStatus: authStatus.ready ? 'ready' : 'not-configured',
+        authMethod: authStatus.method,
+        ...(authStatus.hint && { hint: authStatus.hint }),
+      };
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              agents,
+              defaultAgent: this.config.defaultAgent ?? null,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+
+  /**
+   * Handle ConfigureAgent tool call
+   * Actions: check auth status, set API key, reset stored key
+   */
+  private handleConfigureAgent(args: unknown): MCPToolResponse {
+    const parseResult = ConfigureAgentSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: false,
+                error: parseResult.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; '),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const { agent, action, apiKey } = parseResult.data;
+
+    switch (action) {
+      case 'check': {
+        const agentConfig = loadAgentConfig(agent);
+        const status = checkAgentAuth(agent, agentConfig.apiKey);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  success: true,
+                  ...status,
+                  ...(agentConfig.apiKey && { storedKey: maskApiKey(agentConfig.apiKey) }),
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case 'set': {
+        if (!apiKey) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ success: false, error: 'apiKey is required for set action' }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
+        const result = saveAgentConfig(agent, 'apiKey', apiKey);
+        if (!result.ok) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error }, null, 2) }],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                { success: true, message: `API key stored for ${agent} (${maskApiKey(apiKey)})` },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case 'reset': {
+        const result = resetAgentConfig(agent);
+        if (!result.ok) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error }, null, 2) }],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ success: true, message: `Stored config cleared for ${agent}` }, null, 2),
+            },
+          ],
+        };
+      }
+    }
   }
 }

@@ -8,7 +8,7 @@ const isStdoutTTY = process.stdout.isTTY === true;
 const bold = (s: string): string => (isStdoutTTY ? pc.bold(s) : s);
 const cyan = (s: string): string => (isStdoutTTY ? pc.cyan(s) : s);
 
-export function showHelp(dirname: string) {
+export function showHelp(dirname: string): void {
   const pkg = JSON.parse(readFileSync(path.join(dirname, '..', 'package.json'), 'utf-8'));
   const v = pkg.version ?? '0.0.0';
 
@@ -27,6 +27,7 @@ ${bold('Task Commands:')}
     -f, --foreground           Stream output and wait for task completion
     -p, --priority P0|P1|P2    Task priority (P0=critical, P1=high, P2=normal)
     -w, --working-directory D  Working directory for task execution
+    -a, --agent AGENT          AI agent to use (claude, codex, gemini)
     --deps TASK_IDS            Comma-separated task IDs this task depends on (alias: --depends-on)
     -c, --continue TASK_ID     Continue from a dependency's checkpoint (alias: --continue-from)
     -t, --timeout MS           Task timeout in milliseconds
@@ -60,6 +61,13 @@ ${bold('Schedule Commands:')}
   ${cyan('schedule pause')} <schedule-id>
   ${cyan('schedule resume')} <schedule-id>
 
+${bold('Agent Commands:')}
+  ${cyan('agents list')}                List available AI agents
+  ${cyan('agents check')}               Check agent auth status and readiness
+  ${cyan('agents config set')} <agent> apiKey <key>   Store an API key for an agent
+  ${cyan('agents config show')} <agent>               Show stored config for an agent
+  ${cyan('agents config reset')} <agent>              Remove stored config for an agent
+
 ${bold('Pipeline Commands:')}
   ${cyan('pipeline')} <prompt> [<prompt>]...   Create chained one-time schedules
     Example: pipeline "set up db" "run migrations" "seed data"
@@ -76,7 +84,9 @@ ${bold('Examples:')}
   beat mcp start                                      # Start MCP server
   beat run "analyze this codebase"                    # Fire-and-forget (default)
   beat run "fix the bug" --foreground                 # Stream output, wait
+  beat run "analyze code" --agent codex               # Use Codex instead of Claude
   beat run "run tests" --deps task-abc123             # Wait for dependency
+  beat agents list                                    # List available agents
   beat list                                           # List all tasks
 
   # Scheduling

@@ -1,3 +1,4 @@
+import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
 import { ScheduleId } from '../../core/domain.js';
 import type { ScheduleService } from '../../core/interfaces.js';
 import { validatePath } from '../../utils/validation.js';
@@ -54,6 +55,7 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
   let maxRuns: number | undefined;
   let expiresAt: string | undefined;
   let afterScheduleId: string | undefined;
+  let agent: AgentProvider | undefined;
 
   for (let i = 0; i < scheduleArgs.length; i++) {
     const arg = scheduleArgs[i];
@@ -110,6 +112,17 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
     } else if (arg === '--after' && next) {
       afterScheduleId = next;
       i++;
+    } else if (arg === '--agent' || arg === '-a') {
+      if (!next || next.startsWith('-')) {
+        ui.error(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
+        process.exit(1);
+      }
+      if (!isAgentProvider(next)) {
+        ui.error(`Unknown agent: "${next}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
+        process.exit(1);
+      }
+      agent = next;
+      i++;
     } else if (arg.startsWith('-')) {
       ui.error(`Unknown flag: ${arg}`);
       process.exit(1);
@@ -161,6 +174,7 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
     maxRuns,
     expiresAt,
     afterScheduleId: afterScheduleId ? ScheduleId(afterScheduleId) : undefined,
+    agent,
   });
 
   if (result.ok) {
@@ -169,6 +183,7 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
     if (result.value.nextRunAt) details.push(`Next run: ${new Date(result.value.nextRunAt).toISOString()}`);
     if (result.value.cronExpression) details.push(`Cron: ${result.value.cronExpression}`);
     if (result.value.afterScheduleId) details.push(`After: ${result.value.afterScheduleId}`);
+    if (agent) details.push(`Agent: ${agent}`);
     ui.info(details.join(' | '));
     process.exit(0);
   } else {
@@ -256,6 +271,7 @@ async function scheduleGet(service: ScheduleService, scheduleArgs: string[]) {
     lines.push(
       `Prompt:      ${schedule.taskTemplate.prompt.substring(0, 100)}${schedule.taskTemplate.prompt.length > 100 ? '...' : ''}`,
     );
+    if (schedule.taskTemplate.agent) lines.push(`Agent:       ${schedule.taskTemplate.agent}`);
 
     ui.note(lines.join('\n'), 'Schedule Details');
 

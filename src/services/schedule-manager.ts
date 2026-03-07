@@ -5,6 +5,8 @@
  * Rationale: Enables schedule operations from MCP, CLI, or any future adapter
  */
 
+import { resolveDefaultAgent } from '../core/agents.js';
+import { Configuration } from '../core/configuration.js';
 import {
   createSchedule,
   MissedRunPolicy,
@@ -53,6 +55,7 @@ export class ScheduleManagerService implements ScheduleService {
     private readonly eventBus: EventBus,
     private readonly logger: Logger,
     private readonly scheduleRepository: ScheduleRepository,
+    private readonly config: Configuration,
   ) {
     this.logger.debug('ScheduleManagerService initialized');
   }
@@ -154,12 +157,17 @@ export class ScheduleManagerService implements ScheduleService {
       validatedWorkingDirectory = pathValidation.value;
     }
 
+    // Resolve agent (same pattern as TaskManager.delegate)
+    const agentResult = resolveDefaultAgent(request.agent, this.config.defaultAgent);
+    if (!agentResult.ok) return agentResult;
+
     // Create schedule via domain factory
     const schedule = createSchedule({
       taskTemplate: {
         prompt: request.prompt,
         priority: request.priority,
         workingDirectory: validatedWorkingDirectory,
+        agent: agentResult.value,
       },
       scheduleType: request.scheduleType,
       cronExpression: request.cronExpression,
@@ -320,6 +328,7 @@ export class ScheduleManagerService implements ScheduleService {
         priority: step.priority ?? request.priority,
         workingDirectory: step.workingDirectory ?? request.workingDirectory,
         afterScheduleId: previousScheduleId,
+        agent: step.agent ?? request.agent,
       });
 
       if (!result.ok) {

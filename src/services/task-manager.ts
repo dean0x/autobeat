@@ -13,9 +13,9 @@
  * - All state changes MUST go through events
  */
 
+import { resolveDefaultAgent } from '../core/agents.js';
 import { Configuration } from '../core/configuration.js';
 import {
-  canCancel,
   createTask,
   isTerminalState,
   ResumeTaskRequest,
@@ -44,7 +44,6 @@ export class TaskManagerService implements TaskManager {
   /**
    * Delegate a task - purely event-driven, no direct state management
    */
-
   async delegate(request: TaskRequest): Promise<Result<Task>> {
     // Apply configuration defaults to request
     let requestWithDefaults: TaskRequest = {
@@ -76,6 +75,11 @@ export class TaskManagerService implements TaskManager {
       }
     }
 
+    // Resolve agent: explicit → config default → error
+    const agentResult = resolveDefaultAgent(requestWithDefaults.agent, this.config.defaultAgent);
+    if (!agentResult.ok) return agentResult;
+    requestWithDefaults = { ...requestWithDefaults, agent: agentResult.value };
+
     // Create task using pure function with defaults applied
     const task = createTask(requestWithDefaults);
 
@@ -83,6 +87,7 @@ export class TaskManagerService implements TaskManager {
       taskId: task.id,
       priority: task.priority,
       prompt: task.prompt.substring(0, 100),
+      agent: task.agent,
     });
 
     // Emit event - all state management happens in event handlers
@@ -223,6 +228,7 @@ export class TaskManagerService implements TaskManager {
       parentTaskId: TaskId(parentTaskId),
       retryCount,
       retryOf: taskId,
+      agent: originalTask.agent,
     };
 
     // Create the new retry task
@@ -327,6 +333,7 @@ export class TaskManagerService implements TaskManager {
       parentTaskId: TaskId(parentTaskId),
       retryCount,
       retryOf: taskId,
+      agent: originalTask.agent,
     };
 
     const newTask = createTask(resumeRequest);

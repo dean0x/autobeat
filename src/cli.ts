@@ -6,6 +6,13 @@ process.title = 'beat-cli';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  agentsConfigReset,
+  agentsConfigSet,
+  agentsConfigShow,
+  checkAgents,
+  listAgents,
+} from './cli/commands/agents.js';
 import { cancelTask } from './cli/commands/cancel.js';
 import { configPath, configReset, configSet, configShow } from './cli/commands/config.js';
 import { showHelp } from './cli/commands/help.js';
@@ -18,6 +25,7 @@ import { handleDetachMode, runTask } from './cli/commands/run.js';
 import { handleScheduleCommand } from './cli/commands/schedule.js';
 import { getTaskStatus } from './cli/commands/status.js';
 import * as ui from './cli/ui.js';
+import { AGENT_PROVIDERS, isAgentProvider } from './core/agents.js';
 import { validateBufferSize, validatePath, validateTimeout } from './utils/validation.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -56,6 +64,7 @@ if (mainCommand === 'mcp') {
       continueFrom?: string;
       timeout?: number;
       maxOutputBuffer?: number;
+      agent?: string;
     } = {};
 
     let promptWords: string[] = [];
@@ -132,6 +141,19 @@ if (mainCommand === 'mcp') {
         }
         options.maxOutputBuffer = bufferResult.value;
         i++;
+      } else if (arg === '--agent' || arg === '-a') {
+        const next = foregroundArgs[i + 1];
+        if (next && !next.startsWith('-')) {
+          if (!isAgentProvider(next)) {
+            ui.error(`Unknown agent: "${next}". Available agents: ${AGENT_PROVIDERS.join(', ')}`);
+            process.exit(1);
+          }
+          options.agent = next;
+          i++;
+        } else {
+          ui.error(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
+          process.exit(1);
+        }
       } else if (arg.startsWith('-')) {
         ui.error(`Unknown flag: ${arg}`);
         process.exit(1);
@@ -149,12 +171,14 @@ if (mainCommand === 'mcp') {
           '  -f, --foreground              Stream output and wait for completion',
           '  -p, --priority P0|P1|P2      Task priority (P0=critical, P1=high, P2=normal)',
           '  -w, --working-directory DIR   Working directory for task execution',
+          '  -a, --agent AGENT            AI agent to use (claude, codex, gemini)',
           '  -t, --timeout MS              Task timeout in milliseconds',
           '  --max-output-buffer BYTES     Maximum output buffer size',
           '',
           'Examples:',
           '  beat run "refactor auth"                     # Fire-and-forget (default)',
           '  beat run "quick fix" --foreground            # Stream output, wait',
+          '  beat run "analyze code" --agent codex        # Use Codex instead of Claude',
           '',
         ].join('\n'),
       );
@@ -217,6 +241,28 @@ if (mainCommand === 'mcp') {
   await handleScheduleCommand(subCommand, args.slice(2));
 } else if (mainCommand === 'pipeline') {
   await handlePipelineCommand(args.slice(1));
+} else if (mainCommand === 'agents') {
+  if (subCommand === 'list' || !subCommand) {
+    await listAgents();
+  } else if (subCommand === 'check') {
+    await checkAgents();
+  } else if (subCommand === 'config') {
+    const configAction = args[2];
+    if (configAction === 'set') {
+      await agentsConfigSet(args[3], args[4], args[5]);
+    } else if (configAction === 'show') {
+      await agentsConfigShow(args[3]); // optional agent filter
+    } else if (configAction === 'reset') {
+      await agentsConfigReset(args[3]);
+    } else {
+      ui.error('Usage: beat agents config <set|show|reset>');
+      process.exit(1);
+    }
+  } else {
+    ui.error(`Unknown agents subcommand: ${subCommand}`);
+    process.stderr.write('Valid subcommands: list, check, config\n');
+    process.exit(1);
+  }
 } else if (mainCommand === 'resume') {
   const taskId = args[1];
   if (!taskId) {

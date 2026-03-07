@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import { z } from 'zod';
+import { AGENT_PROVIDERS_TUPLE, type AgentProvider, isAgentProvider } from './agents.js';
 
 /**
  * Configuration Schema with Zod
@@ -47,6 +48,8 @@ export const ConfigurationSchema = z.object({
   retryMaxDelayMs: z.number().min(5000).max(300000).default(30000), // Default: 30 second max delay
   // Recovery configuration
   taskRetentionDays: z.number().min(1).max(365).default(7), // Default: keep tasks for 7 days
+  // Agent configuration (v0.5.0 Multi-Agent Support)
+  defaultAgent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
 });
 
 export type Configuration = z.infer<typeof ConfigurationSchema>;
@@ -132,6 +135,8 @@ export function loadConfiguration(): Configuration {
     envConfig.retryInitialDelayMs = parseEnvNumber(process.env.RETRY_INITIAL_DELAY_MS, 0);
   if (process.env.RETRY_MAX_DELAY_MS) envConfig.retryMaxDelayMs = parseEnvNumber(process.env.RETRY_MAX_DELAY_MS, 0);
   if (process.env.TASK_RETENTION_DAYS) envConfig.taskRetentionDays = parseEnvNumber(process.env.TASK_RETENTION_DAYS, 0);
+  if (process.env.BACKBEAT_DEFAULT_AGENT && isAgentProvider(process.env.BACKBEAT_DEFAULT_AGENT))
+    envConfig.defaultAgent = process.env.BACKBEAT_DEFAULT_AGENT;
 
   // Layer 2: Config file values (lower priority than env vars)
   const fileConfig = loadConfigFile();
@@ -166,6 +171,8 @@ export function loadConfiguration(): Configuration {
 // Config File Persistence (~/.backbeat/config.json)
 // ============================================================================
 
+type ConfigWriteResult = { ok: true } | { ok: false; error: string };
+
 // Display path for CLI (always shows real home path)
 export const CONFIG_FILE_PATH = path.join(homedir(), '.backbeat', 'config.json');
 
@@ -185,6 +192,18 @@ export function _testSetConfigDir(dir: string): () => void {
   };
 }
 
+/** Write config object to disk with secure permissions (dir 0o700, file 0o600) */
+function writeConfigFile(data: Record<string, unknown>): ConfigWriteResult {
+  try {
+    mkdirSync(_configDir, { recursive: true, mode: 0o700 });
+    writeFileSync(_configFilePath, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+    chmodSync(_configFilePath, 0o600); // Ensure permissions on pre-existing files (writeFileSync mode only applies on creation)
+    return { ok: true };
+  } catch {
+    return { ok: false, error: `Failed to write config file at ${_configFilePath}` };
+  }
+}
+
 export function loadConfigFile(): Record<string, unknown> {
   try {
     if (!existsSync(_configFilePath)) return {};
@@ -198,7 +217,7 @@ export function loadConfigFile(): Record<string, unknown> {
   }
 }
 
-export function saveConfigValue(key: string, value: unknown): { ok: true } | { ok: false; error: string } {
+export function saveConfigValue(key: string, value: unknown): ConfigWriteResult {
   // Validate key exists in schema
   const schemaShape = ConfigurationSchema.shape;
   if (!(key in schemaShape)) {
@@ -217,17 +236,10 @@ export function saveConfigValue(key: string, value: unknown): { ok: true } | { o
   // Load existing, merge, write
   const existing = loadConfigFile();
   existing[key] = fieldResult.data;
-
-  try {
-    mkdirSync(_configDir, { recursive: true });
-    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
-    return { ok: true };
-  } catch {
-    return { ok: false, error: `Failed to write config file at ${_configFilePath}` };
-  }
+  return writeConfigFile(existing);
 }
 
-export function resetConfigValue(key: string): { ok: true } | { ok: false; error: string } {
+export function resetConfigValue(key: string): ConfigWriteResult {
   const schemaShape = ConfigurationSchema.shape;
   if (!(key in schemaShape)) {
     const validKeys = Object.keys(schemaShape).join(', ');
@@ -240,12 +252,72 @@ export function resetConfigValue(key: string): { ok: true } | { ok: false; error
   }
 
   delete existing[key];
+  return writeConfigFile(existing);
+}
 
-  try {
-    mkdirSync(_configDir, { recursive: true });
-    writeFileSync(_configFilePath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
-    return { ok: true };
-  } catch {
-    return { ok: false, error: `Failed to write config file at ${_configFilePath}` };
+// ============================================================================
+// Per-Agent Config Storage (agents.<provider>.apiKey in config.json)
+// ============================================================================
+
+export interface AgentConfig {
+  readonly apiKey?: string;
+}
+
+/**
+ * Load agent-specific config from the `agents.<provider>` section of config.json
+ */
+export function loadAgentConfig(provider: AgentProvider): AgentConfig {
+  const file = loadConfigFile();
+  const agents = file.agents;
+  if (!agents || typeof agents !== 'object' || Array.isArray(agents)) return {};
+  const section = (agents as Record<string, unknown>)[provider];
+  if (!section || typeof section !== 'object' || Array.isArray(section)) return {};
+  const record = section as Record<string, unknown>;
+  return {
+    apiKey: typeof record.apiKey === 'string' ? record.apiKey : undefined,
+  };
+}
+
+/**
+ * Save a key-value pair under the `agents.<provider>` section of config.json
+ */
+export function saveAgentConfig(provider: AgentProvider, key: 'apiKey', value: string): ConfigWriteResult {
+  const existing = loadConfigFile();
+  const agents = (
+    existing.agents && typeof existing.agents === 'object' && !Array.isArray(existing.agents) ? existing.agents : {}
+  ) as Record<string, unknown>;
+  const section = (
+    agents[provider] && typeof agents[provider] === 'object' && !Array.isArray(agents[provider]) ? agents[provider] : {}
+  ) as Record<string, unknown>;
+
+  section[key] = value;
+  agents[provider] = section;
+  existing.agents = agents;
+  return writeConfigFile(existing);
+}
+
+/**
+ * Remove all stored config for a specific agent provider
+ */
+export function resetAgentConfig(provider: AgentProvider): ConfigWriteResult {
+  const existing = loadConfigFile();
+  const agents = existing.agents;
+  if (!agents || typeof agents !== 'object' || Array.isArray(agents)) {
+    return { ok: true }; // Nothing to reset
   }
+
+  const agentsRecord = agents as Record<string, unknown>;
+  if (!(provider in agentsRecord)) {
+    return { ok: true }; // Already clean
+  }
+
+  delete agentsRecord[provider];
+  // Clean up empty agents object
+  if (Object.keys(agentsRecord).length === 0) {
+    delete existing.agents;
+  } else {
+    existing.agents = agentsRecord;
+  }
+
+  return writeConfigFile(existing);
 }

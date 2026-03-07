@@ -3,6 +3,7 @@
  * All types are immutable (readonly)
  */
 
+import { AgentProvider } from './agents.js';
 import { BackbeatError } from './errors.js';
 
 export type TaskId = string & { readonly __brand: 'TaskId' };
@@ -95,6 +96,10 @@ export interface Task {
   // When set, DependencyHandler enriches prompt with checkpoint context from this dependency
   readonly continueFrom?: TaskId;
 
+  // Multi-agent support (v0.5.0): Which agent provider to use for execution
+  // Resolved by TaskManager: explicit task agent > config defaultAgent > error
+  readonly agent?: AgentProvider;
+
   // Timestamps and results
   readonly createdAt: number;
   readonly updatedAt?: number;
@@ -152,6 +157,10 @@ export interface TaskRequest {
   // When set, the task's prompt is enriched with checkpoint context from this dependency before running
   // Must be in dependsOn list (auto-added if missing)
   readonly continueFrom?: TaskId;
+
+  // Multi-agent support (v0.5.0): Which agent provider to use
+  // Resolved by TaskManager: explicit task agent > config defaultAgent > error
+  readonly agent?: AgentProvider;
 }
 
 export interface TaskUpdate {
@@ -201,6 +210,10 @@ export const createTask = (request: TaskRequest): Task => {
     // Execution configuration
     timeout: request.timeout,
     maxOutputBuffer: request.maxOutputBuffer,
+
+    // Multi-agent support (v0.5.0)
+    agent: request.agent,
+
     createdAt: now,
     updatedAt: now,
   });
@@ -349,6 +362,7 @@ export interface ScheduleCreateRequest {
   readonly maxRuns?: number;
   readonly expiresAt?: string; // ISO 8601 string (parsed by service)
   readonly afterScheduleId?: ScheduleId; // Chain: block until after-schedule's latest task completes
+  readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
 }
 
 /**
@@ -359,12 +373,14 @@ export interface PipelineStepRequest {
   readonly prompt: string;
   readonly priority?: Priority;
   readonly workingDirectory?: string;
+  readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
 }
 
 export interface PipelineCreateRequest {
   readonly steps: readonly PipelineStepRequest[];
   readonly priority?: Priority; // shared default for all steps
   readonly workingDirectory?: string; // shared default for all steps
+  readonly agent?: AgentProvider; // shared default for all steps
 }
 
 export interface PipelineStep {

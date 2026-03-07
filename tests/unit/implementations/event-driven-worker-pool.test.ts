@@ -1,12 +1,15 @@
 import { EventEmitter } from 'events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AgentRegistry } from '../../../src/core/agents';
 import type { Task } from '../../../src/core/domain';
 import { TaskId, WorkerId } from '../../../src/core/domain';
 import { BackbeatError, ErrorCode } from '../../../src/core/errors';
 import type { EventBus } from '../../../src/core/events/event-bus';
 import type { Logger, OutputCapture, ProcessSpawner, ResourceMonitor } from '../../../src/core/interfaces';
 import { err, ok } from '../../../src/core/result';
+import { InMemoryAgentRegistry } from '../../../src/implementations/agent-registry';
 import { EventDrivenWorkerPool } from '../../../src/implementations/event-driven-worker-pool';
+import { ProcessSpawnerAdapter } from '../../../src/implementations/process-spawner-adapter';
 import { TaskFactory } from '../../fixtures/factories';
 import { createMockLogger } from '../../fixtures/mocks';
 
@@ -74,16 +77,18 @@ const createTestEventBus = () =>
 /**
  * Helper to build a Task object without using withId() (which mutates a frozen object).
  * Spreads the frozen task from the factory into a plain mutable object.
+ * Sets agent='claude' by default since worker pool requires task.agent to be set.
  */
 const buildTask = (configure?: (factory: TaskFactory) => void): Task => {
   const factory = new TaskFactory();
   if (configure) configure(factory);
-  return { ...factory.build() };
+  return { ...factory.build(), agent: 'claude' as const };
 };
 
 describe('EventDrivenWorkerPool', () => {
   let pool: EventDrivenWorkerPool;
   let spawner: ProcessSpawner;
+  let agentRegistry: AgentRegistry;
   let mockProcess: ReturnType<typeof createMockProcess>;
   let monitor: ResourceMonitor;
   let logger: Logger;
@@ -100,7 +105,10 @@ describe('EventDrivenWorkerPool', () => {
     eventBus = createTestEventBus();
     outputCapture = createMockOutputCapture();
 
-    pool = new EventDrivenWorkerPool(spawner, monitor, logger, eventBus, outputCapture);
+    // Wrap ProcessSpawner in AgentRegistry for backward compatibility
+    agentRegistry = new InMemoryAgentRegistry([new ProcessSpawnerAdapter(spawner)]);
+
+    pool = new EventDrivenWorkerPool(agentRegistry, monitor, logger, eventBus, outputCapture);
   });
 
   afterEach(() => {
@@ -150,6 +158,49 @@ describe('EventDrivenWorkerPool', () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error).toBe(monitorError);
+    });
+
+    it('should propagate agent registry errors without wrapping', async () => {
+      const registryError = new BackbeatError(ErrorCode.AGENT_NOT_FOUND, "Agent 'unknown' not found");
+      // Replace registry with one that returns an error
+      const failRegistry = {
+        get: vi.fn().mockReturnValue(err(registryError)),
+        has: vi.fn().mockReturnValue(false),
+        list: vi.fn().mockReturnValue([]),
+        dispose: vi.fn(),
+      } as unknown as AgentRegistry;
+      const failPool = new EventDrivenWorkerPool(failRegistry, monitor, logger, eventBus, outputCapture);
+      const task = buildTask();
+
+      const result = await failPool.spawn(task);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBe(registryError);
+      expect((result.error as BackbeatError).code).toBe(ErrorCode.AGENT_NOT_FOUND);
+    });
+
+    it('should propagate adapter spawn errors without wrapping', async () => {
+      const spawnError = new BackbeatError(
+        ErrorCode.AGENT_MISCONFIGURED,
+        "Agent 'claude' is misconfigured: CLI not found",
+      );
+      const failAdapter = {
+        provider: 'claude' as const,
+        spawn: vi.fn().mockReturnValue(err(spawnError)),
+        kill: vi.fn().mockReturnValue(ok(undefined)),
+        dispose: vi.fn(),
+      };
+      const failRegistry = new InMemoryAgentRegistry([failAdapter]);
+      const failPool = new EventDrivenWorkerPool(failRegistry, monitor, logger, eventBus, outputCapture);
+      const task = buildTask();
+
+      const result = await failPool.spawn(task);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBe(spawnError);
+      expect((result.error as BackbeatError).code).toBe(ErrorCode.AGENT_MISCONFIGURED);
     });
 
     it('should use task.workingDirectory when provided', async () => {

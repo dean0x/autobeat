@@ -8,7 +8,6 @@ import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadConfiguration } from '../../src/core/configuration.js';
 import type { Task, WorkerId } from '../../src/core/domain.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { Database } from '../../src/implementations/database.js';
@@ -18,6 +17,7 @@ import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { TaskManagerService } from '../../src/services/task-manager.js';
 import { createTestConfiguration } from '../fixtures/factories.js';
+import { createAgentRegistryFromSpawner } from '../fixtures/mock-agent.js';
 import { MockProcessSpawner } from '../fixtures/mock-process-spawner.js';
 import { createTestTask as createTask } from '../fixtures/test-data.js';
 import { TestLogger } from '../fixtures/test-doubles.js';
@@ -42,8 +42,9 @@ describe('Integration: Event-driven task delegation flow', () => {
     const processSpawner = new MockProcessSpawner();
     const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
 
+    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
     const workerPool = new EventDrivenWorkerPool(
-      processSpawner, // spawner
+      agentRegistry, // agentRegistry
       resourceMonitor, // monitor
       logger, // logger
       eventBus, // eventBus
@@ -51,7 +52,7 @@ describe('Integration: Event-driven task delegation flow', () => {
     );
 
     // Initialize task manager with new signature: (eventBus, logger, config)
-    const config = loadConfiguration();
+    const config = createTestConfiguration();
     const taskManager = new TaskManagerService(eventBus, logger, config);
 
     // Track events
