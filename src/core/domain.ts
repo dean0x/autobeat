@@ -97,7 +97,7 @@ export interface Task {
   readonly continueFrom?: TaskId;
 
   // Multi-agent support (v0.5.0): Which agent provider to use for execution
-  // Defaults to 'claude' when not specified (backward compatible)
+  // Resolved by TaskManager: explicit task agent > config defaultAgent > error
   readonly agent?: AgentProvider;
 
   // Timestamps and results
@@ -159,7 +159,7 @@ export interface TaskRequest {
   readonly continueFrom?: TaskId;
 
   // Multi-agent support (v0.5.0): Which agent provider to use
-  // Defaults to 'claude' when not specified (backward compatible)
+  // Resolved by TaskManager: explicit task agent > config defaultAgent > error
   readonly agent?: AgentProvider;
 }
 

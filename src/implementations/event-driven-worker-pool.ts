@@ -344,5 +344,4 @@ export class EventDrivenWorkerPool implements WorkerPool {
       error: taskTimeout(taskId, timeoutMs),
     });
   }
-
 }
