@@ -108,7 +108,10 @@ export async function agentsConfigSet(
     process.exit(1);
   }
 
-  ui.note('API keys passed as CLI arguments may be stored in shell history. Consider using an environment variable instead.', 'Warning');
+  ui.note(
+    'API keys passed as CLI arguments may be stored in shell history. Consider using an environment variable instead.',
+    'Warning',
+  );
 
   const result = saveAgentConfig(agent, key, value);
   if (!result.ok) {
