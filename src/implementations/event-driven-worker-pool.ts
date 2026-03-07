@@ -70,9 +70,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     const adapterResult = this.agentRegistry.get(agentProvider);
 
     if (!adapterResult.ok) {
-      return err(
-        new BackbeatError(ErrorCode.WORKER_SPAWN_FAILED, `Failed to spawn worker: ${adapterResult.error.message}`),
-      );
+      return err(adapterResult.error);
     }
 
     const adapter = adapterResult.value;
