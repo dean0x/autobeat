@@ -1,0 +1,196 @@
+import { mkdtemp, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createTask, type Task, TaskId, TaskStatus } from '../../../../src/core/domain';
+import { InMemoryEventBus } from '../../../../src/core/events/event-bus';
+import { type TaskQueuedEvent } from '../../../../src/core/events/events';
+import { Database } from '../../../../src/implementations/database';
+import { SQLiteDependencyRepository } from '../../../../src/implementations/dependency-repository';
+import { PriorityTaskQueue } from '../../../../src/implementations/task-queue';
+import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository';
+import { QueueHandler } from '../../../../src/services/handlers/queue-handler';
+import { createTestConfiguration } from '../../../fixtures/factories';
+import { TestLogger } from '../../../fixtures/test-doubles';
+import { flushEventLoop } from '../../../utils/event-helpers.js';
+
+describe('QueueHandler', () => {
+  let handler: QueueHandler;
+  let eventBus: InMemoryEventBus;
+  let queue: PriorityTaskQueue;
+  let dependencyRepo: SQLiteDependencyRepository;
+  let taskRepo: SQLiteTaskRepository;
+  let database: Database;
+  let tempDir: string;
+  let logger: TestLogger;
+
+  beforeEach(async () => {
+    logger = new TestLogger();
+    const config = createTestConfiguration();
+    eventBus = new InMemoryEventBus(config, logger);
+
+    tempDir = await mkdtemp(join(tmpdir(), 'queue-handler-test-'));
+    database = new Database(join(tempDir, 'test.db'));
+    dependencyRepo = new SQLiteDependencyRepository(database);
+    taskRepo = new SQLiteTaskRepository(database);
+    queue = new PriorityTaskQueue();
+
+    handler = new QueueHandler(queue, dependencyRepo, taskRepo, logger);
+    const setupResult = await handler.setup(eventBus);
+    if (!setupResult.ok) {
+      throw new Error(`Failed to setup QueueHandler: ${setupResult.error.message}`);
+    }
+  });
+
+  afterEach(async () => {
+    eventBus.dispose();
+    database.close();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  describe('TaskPersisted', () => {
+    it('should enqueue task and emit TaskQueued when no dependencies', async () => {
+      const task = createTask({ prompt: 'test task' });
+
+      let queuedEvent: TaskQueuedEvent | undefined;
+      eventBus.on('TaskQueued', (event: TaskQueuedEvent) => {
+        queuedEvent = event;
+      });
+
+      await eventBus.emit('TaskPersisted', { taskId: task.id, task });
+      await flushEventLoop();
+
+      expect(queue.size()).toBe(1);
+      expect(queue.contains(task.id)).toBe(true);
+      expect(queuedEvent).toBeDefined();
+      expect(queuedEvent!.taskId).toBe(task.id);
+    });
+
+    it('should not enqueue task when blocked by dependencies', async () => {
+      // Create parent and child tasks in the DB
+      const parentTask = createTask({ prompt: 'parent task' });
+      const childTask = createTask({ prompt: 'child task', dependsOn: [parentTask.id] });
+      await taskRepo.save(parentTask);
+      await taskRepo.save(childTask);
+
+      // Add dependency to repo so isBlocked returns true
+      await dependencyRepo.addDependency(childTask.id, parentTask.id);
+
+      let queuedEvent: TaskQueuedEvent | undefined;
+      eventBus.on('TaskQueued', (event: TaskQueuedEvent) => {
+        queuedEvent = event;
+      });
+
+      await eventBus.emit('TaskPersisted', { taskId: childTask.id, task: childTask });
+      await flushEventLoop();
+
+      expect(queue.size()).toBe(0);
+      expect(queue.contains(childTask.id)).toBe(false);
+      expect(queuedEvent).toBeUndefined();
+      expect(logger.hasLogContaining('Task blocked by dependencies')).toBe(true);
+    });
+  });
+
+  describe('TaskCancellationRequested', () => {
+    it('should remove task from queue when present', async () => {
+      const task = createTask({ prompt: 'test task' });
+      queue.enqueue(task);
+      expect(queue.contains(task.id)).toBe(true);
+
+      await eventBus.emit('TaskCancellationRequested', { taskId: task.id, reason: 'user cancel' });
+      await flushEventLoop();
+
+      expect(queue.contains(task.id)).toBe(false);
+      expect(queue.size()).toBe(0);
+    });
+
+    it('should no-op when task is not in queue', async () => {
+      // Task not in queue — should not crash
+      await eventBus.emit('TaskCancellationRequested', { taskId: TaskId('nonexistent-task') });
+      await flushEventLoop();
+
+      expect(queue.size()).toBe(0);
+      expect(logger.hasLogContaining('Task not in queue for cancellation')).toBe(true);
+    });
+  });
+
+  describe('NextTaskQuery', () => {
+    it('should respond with task when queue has tasks', async () => {
+      const task = createTask({ prompt: 'test task' });
+      queue.enqueue(task);
+
+      const result = await eventBus.request<{ type: 'NextTaskQuery' }, Task | null>('NextTaskQuery', {});
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).not.toBeNull();
+        expect(result.value!.id).toBe(task.id);
+      }
+
+      // Task should have been dequeued
+      expect(queue.size()).toBe(0);
+    });
+
+    it('should respond with null when queue is empty', async () => {
+      const result = await eventBus.request<{ type: 'NextTaskQuery' }, Task | null>('NextTaskQuery', {});
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toBeNull();
+      }
+    });
+  });
+
+  describe('RequeueTask', () => {
+    it('should re-enqueue task and emit TaskQueued', async () => {
+      const task = createTask({ prompt: 'retried task' });
+
+      let queuedEvent: TaskQueuedEvent | undefined;
+      eventBus.on('TaskQueued', (event: TaskQueuedEvent) => {
+        queuedEvent = event;
+      });
+
+      await eventBus.emit('RequeueTask', { task });
+      await flushEventLoop();
+
+      expect(queue.size()).toBe(1);
+      expect(queue.contains(task.id)).toBe(true);
+      expect(queuedEvent).toBeDefined();
+      expect(queuedEvent!.taskId).toBe(task.id);
+    });
+  });
+
+  describe('TaskUnblocked', () => {
+    it('should fetch fresh task from DB, enqueue, and emit TaskQueued', async () => {
+      // Save task in QUEUED status to DB
+      const task = createTask({ prompt: 'unblocked task' });
+      await taskRepo.save(task);
+
+      let queuedEvent: TaskQueuedEvent | undefined;
+      eventBus.on('TaskQueued', (event: TaskQueuedEvent) => {
+        queuedEvent = event;
+      });
+
+      await eventBus.emit('TaskUnblocked', { taskId: task.id, task });
+      await flushEventLoop();
+
+      expect(queue.size()).toBe(1);
+      expect(queue.contains(task.id)).toBe(true);
+      expect(queuedEvent).toBeDefined();
+      expect(queuedEvent!.taskId).toBe(task.id);
+    });
+
+    it('should not enqueue task that is no longer in QUEUED status', async () => {
+      // Save task then update to CANCELLED — simulates race condition
+      const task = createTask({ prompt: 'cancelled task' });
+      await taskRepo.save(task);
+      await taskRepo.update(task.id, { status: TaskStatus.CANCELLED });
+
+      await eventBus.emit('TaskUnblocked', { taskId: task.id, task });
+      await flushEventLoop();
+
+      expect(queue.size()).toBe(0);
+      expect(logger.hasLogContaining('no longer in QUEUED state')).toBe(true);
+    });
+  });
+});

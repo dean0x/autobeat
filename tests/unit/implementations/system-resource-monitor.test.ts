@@ -493,79 +493,12 @@ describe('SystemResourceMonitor', () => {
       expect(events.length).toBeGreaterThan(0);
     });
 
-    // TODO: Implement threshold crossing event emission in SystemResourceMonitor
-    // Currently the monitor tracks thresholds internally but doesn't emit events
-    it.skip('should emit events when thresholds are crossed', async () => {
-      const events: Array<{ type: string; data: unknown }> = [];
-
-      eventBus.on('ResourceThresholdCrossed', (data) => {
-        events.push({ type: 'ResourceThresholdCrossed', data });
-      });
-
-      monitor.startMonitoring();
-
-      // Initial state: normal resources
-      await vi.advanceTimersByTimeAsync(100);
-
-      // Simulate high CPU
-      mockLoadavg = () => [3.5, 3.0, 2.5]; // 87.5% usage
-      await vi.advanceTimersByTimeAsync(100);
-
-      expect(events).toHaveLength(1);
-      expect(events[0].type).toBe('ResourceThresholdCrossed');
-      expect(events[0].data.type).toBe('cpu_high');
-      expect(events[0].data).toBeDefined();
-      expect(typeof events[0].data.type).toBe('string');
-      expect(Array.isArray(events)).toBe(true);
-    });
-
-    // TODO: Implement threshold recovery event emission in SystemResourceMonitor
-    it.skip('should emit recovery events', async () => {
-      const events: Array<{ type: string; data: unknown }> = [];
-
-      eventBus.on('ResourceThresholdRecovered', (data) => {
-        events.push({ type: 'ResourceThresholdRecovered', data });
-      });
-
-      monitor.startMonitoring();
-
-      // Start with high CPU
-      mockLoadavg = () => [3.5, 3.0, 2.5];
-      await vi.advanceTimersByTimeAsync(100);
-
-      // Return to normal
-      mockLoadavg = () => [1.0, 1.0, 1.0];
-      await vi.advanceTimersByTimeAsync(100);
-
-      expect(events).toHaveLength(1);
-      expect(events[0].type).toBe('ResourceThresholdRecovered');
-      expect(events[0].data.type).toBe('cpu_normal');
-    });
-
     it('should stop monitoring on command', () => {
       monitor.startMonitoring();
       expect(monitor['monitoringInterval']).toBeTruthy();
 
       monitor.stopMonitoring();
       expect(monitor['monitoringInterval']).toBeNull();
-    });
-
-    // TODO: Implement threshold event de-duplication in SystemResourceMonitor
-    it.skip('should not emit duplicate threshold events', async () => {
-      const events: unknown[] = [];
-      eventBus.on('ResourceThresholdCrossed', (data) => events.push(data));
-
-      monitor.startMonitoring();
-
-      // Keep high CPU for multiple intervals
-      mockLoadavg = () => [3.5, 3.0, 2.5];
-
-      for (let i = 0; i < 5; i++) {
-        await vi.advanceTimersByTimeAsync(100);
-      }
-
-      // Should only emit once
-      expect(events).toHaveLength(1);
     });
   });
 
