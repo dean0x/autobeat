@@ -2,7 +2,7 @@
 
 This document lists all features that are **currently implemented and working** in Backbeat.
 
-Last Updated: February 2026
+Last Updated: March 2026
 
 ## ✅ Core Task Delegation
 
@@ -245,6 +245,24 @@ Last Updated: February 2026
 - **TaskCompleted / TaskFailed**: Triggers automatic checkpoint capture via `CheckpointHandler`
 - **CheckpointRepository**: SQLite persistence with prepared statements and Zod boundary validation
 
+## ✅ Multi-Agent Support (v0.5.0)
+
+### Agent Registry
+- **Pluggable Adapters**: Agent registry with adapter pattern for agent lifecycle management
+- **Built-in Agents**: Claude (`claude`), OpenAI Codex (`codex`), Google Gemini (`gemini-cli`)
+- **Per-Task Selection**: Choose which agent runs each task via MCP `agent` field or CLI `--agent` flag
+- **Default Agent**: System-wide default agent configured via `beat init` or `~/.backbeat/config.json`
+- **Auth Checking**: Verify agent CLI tools are installed and authenticated before delegation
+
+### CLI Commands
+- `beat init`: Interactive first-time setup — select default agent, validates availability
+- `beat init --agent <name>`: Non-interactive setup with specified agent
+- `beat agents list`: Show registered agents with default marker and auth status
+
+### MCP Integration
+- **`agent` field on DelegateTask**: Specify agent per task (e.g., `{ agent: "codex" }`)
+- **Fallback**: Uses default agent when no agent specified
+
 ## ❌ NOT Implemented (Despite Some Documentation Claims)
 - **Distributed Processing**: Single-server only
 - **Web UI**: No dashboard interface
@@ -253,6 +271,21 @@ Last Updated: February 2026
 - **REST API**: MCP protocol only
 
 ---
+
+---
+
+## 🆕 What's New in v0.5.0
+
+### Multi-Agent Support
+- **Agent Registry**: Pluggable adapters for Claude, Codex, and Gemini with per-task agent selection
+- **`beat init`**: Interactive first-time setup wizard for selecting default agent
+- **`beat agents list`**: Show registered agents with default marker and auth status
+- **Auth Checking**: Validates agent CLI availability before task delegation
+- **MCP + CLI Parity**: `agent` field on `DelegateTask` tool, `--agent` flag on `beat run`
+
+### Test Coverage
+- **54 new tests**: Handler unit tests (21), final coverage gaps (33)
+- **Stale cleanup**: Removed 3 `it.skip` tests for unimplemented threshold events
 
 ---
 

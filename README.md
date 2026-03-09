@@ -315,7 +315,8 @@ backbeat/
 - [x] v0.3.2 - Settling workers and spawn burst protection
 - [x] v0.3.3 - Test infrastructure and memory management
 - [x] v0.4.0 - Task scheduling and task resumption
-- [ ] v0.5.0 - CLI usability improvements and detach-by-default
+- [x] v0.5.0 - Multi-agent support (Claude, Codex, Gemini)
+- [ ] v0.6.0 - Scheduled pipelines and loops
 
 See **[ROADMAP.md](./docs/ROADMAP.md)** for detailed plans and timelines.
 
