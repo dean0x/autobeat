@@ -486,6 +486,45 @@ describe('DependencyHandler - Behavioral Tests', () => {
       expect(logger.getLogsByLevel('error').length).toBeGreaterThan(0);
     });
 
+    it('should not unblock task when getDependencies fails during cascade check', async () => {
+      // Arrange: parent → child dependency
+      const parent = createTask({ prompt: 'parent' });
+      const child = createTask({ prompt: 'child', dependsOn: [parent.id] });
+      await taskRepo.save(parent);
+      await taskRepo.save(child);
+      await eventBus.emit('TaskDelegated', { task: child });
+
+      // Track unblock events — none should fire
+      let unblockedEventReceived = false;
+      eventBus.subscribe('TaskUnblocked', async () => {
+        unblockedEventReceived = true;
+      });
+
+      // Mock getDependencies to fail when called during cascade check
+      const originalGetDeps = dependencyRepo.getDependencies.bind(dependencyRepo);
+      const getDependenciesSpy = vi.spyOn(dependencyRepo, 'getDependencies').mockImplementation(async (taskId) => {
+        // Only fail during the cascade check (after isBlocked returns false)
+        if (taskId === child.id) {
+          const { err: mkErr } = await import('../../../../src/core/result');
+          const { BackbeatError, ErrorCode } = await import('../../../../src/core/errors');
+          return mkErr(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Simulated getDependencies failure'));
+        }
+        return originalGetDeps(taskId);
+      });
+
+      // Act: fail the parent — should trigger cascade check
+      await eventBus.emit('TaskFailed', { taskId: parent.id, error: new Error('parent failed') });
+      await flushEventLoop();
+
+      getDependenciesSpy.mockRestore();
+
+      // Assert: task should NOT be unblocked (getDependencies failed, can't confirm cascade)
+      expect(unblockedEventReceived).toBe(false);
+
+      // Assert: warning should be logged
+      expect(logger.getLogsByLevel('warn').length).toBeGreaterThan(0);
+    });
+
     it('should handle database errors during dependency creation', async () => {
       // Arrange - Create valid tasks
       const parent = createTask({ prompt: 'parent' });

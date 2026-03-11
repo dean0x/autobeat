@@ -582,20 +582,26 @@ export class DependencyHandler extends BaseEventHandler {
         // Task is no longer blocked — but check if any resolved dependency failed/cancelled
         // If so, cascade cancellation instead of unblocking
         const depsResult = await this.dependencyRepo.getDependencies(dep.taskId);
-        if (depsResult.ok) {
-          const failedDep = depsResult.value.find((d) => d.resolution === 'failed' || d.resolution === 'cancelled');
-          if (failedDep) {
-            this.logger.info('Dependency resolved as failed/cancelled — cascading cancellation', {
-              taskId: dep.taskId,
-              failedDependency: failedDep.dependsOnTaskId,
-              failedResolution: failedDep.resolution,
-            });
-            await this.eventBus.emit('TaskCancellationRequested', {
-              taskId: dep.taskId,
-              reason: `Dependency ${failedDep.dependsOnTaskId} ${failedDep.resolution}`,
-            });
-            continue;
-          }
+        if (!depsResult.ok) {
+          this.logger.warn('getDependencies failed during cascade check, skipping unblock', {
+            taskId: dep.taskId,
+            error: depsResult.error.message,
+          });
+          continue;
+        }
+
+        const failedDep = depsResult.value.find((d) => d.resolution === 'failed' || d.resolution === 'cancelled');
+        if (failedDep) {
+          this.logger.info('Dependency resolved as failed/cancelled — cascading cancellation', {
+            taskId: dep.taskId,
+            failedDependency: failedDep.dependsOnTaskId,
+            failedResolution: failedDep.resolution,
+          });
+          await this.eventBus.emit('TaskCancellationRequested', {
+            taskId: dep.taskId,
+            reason: `Dependency ${failedDep.dependsOnTaskId} ${failedDep.resolution}`,
+          });
+          continue;
         }
 
         // Task is unblocked with all deps completed - fetch task and emit event
