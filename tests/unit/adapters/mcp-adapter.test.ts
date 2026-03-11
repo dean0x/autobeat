@@ -895,7 +895,7 @@ describe('MCPAdapter - SchedulePipeline & Enhanced Schedule Tools', () => {
       expect(result.isError).toBe(false);
       const response = JSON.parse(result.content[0].text);
       expect(response.success).toBe(true);
-      expect(response.cancelledTasks).toBe(true);
+      expect(response.cancelTasksRequested).toBe(true);
       expect(mockScheduleService.cancelScheduleCalls).toHaveLength(1);
       expect(mockScheduleService.cancelScheduleCalls[0].cancelTasks).toBe(true);
     });
@@ -1508,7 +1508,7 @@ async function simulateCancelSchedule(
           success: true,
           message: `Schedule ${scheduleId} cancelled`,
           reason,
-          cancelledTasks: cancelTasks,
+          cancelTasksRequested: cancelTasks,
         }),
       },
     ],

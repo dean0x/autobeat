@@ -1383,7 +1383,7 @@ export class MCPAdapter {
                 success: true,
                 message: `Schedule ${scheduleId} cancelled`,
                 reason,
-                cancelledTasks: cancelTasks,
+                cancelTasksRequested: cancelTasks,
               },
               null,
               2,
