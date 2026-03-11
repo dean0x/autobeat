@@ -413,15 +413,30 @@ export class ScheduleHandler extends BaseEventHandler {
     const updateResult = await this.updateScheduleAfterTrigger(schedule, triggeredAt);
     if (!updateResult.ok) return updateResult;
 
-    // Emit TaskDelegated for each task (best-effort)
-    for (const task of savedTasks) {
+    // Emit TaskDelegated for each task
+    // Step 0 failure is fatal — it's the only task that becomes runnable; all later
+    // steps block on it. If it's never delegated, the entire pipeline is orphaned.
+    // Steps 1–N failures are best-effort — they're already saved with dependencies
+    // and will be enqueued when their predecessor completes.
+    for (let ti = 0; ti < savedTasks.length; ti++) {
+      const task = savedTasks[ti];
       const emitResult = await this.eventBus.emit('TaskDelegated', { task });
       if (!emitResult.ok) {
+        if (ti === 0) {
+          this.logger.error('Failed to emit TaskDelegated for pipeline step 0 — aborting pipeline', emitResult.error, {
+            taskId: task.id,
+            scheduleId,
+          });
+          for (const savedTask of savedTasks) {
+            await this.taskRepo.update(savedTask.id, { status: TaskStatus.CANCELLED });
+          }
+          return emitResult;
+        }
         this.logger.error('Failed to emit TaskDelegated for pipeline task', emitResult.error, {
           taskId: task.id,
           scheduleId,
+          step: ti,
         });
-        // Best-effort: continue with remaining tasks
       }
     }
 

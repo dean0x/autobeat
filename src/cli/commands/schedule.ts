@@ -159,6 +159,9 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
 
   // Pipeline mode: --pipeline with --step flags
   if (isPipeline) {
+    if (promptWords.length > 0) {
+      ui.info(`Ignoring positional prompt text in --pipeline mode: "${promptWords.join(' ')}". Use --step flags only.`);
+    }
     if (pipelineSteps.length < 2) {
       ui.error('Pipeline requires at least 2 --step flags');
       process.exit(1);

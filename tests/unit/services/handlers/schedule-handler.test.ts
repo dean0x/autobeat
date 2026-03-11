@@ -776,6 +776,38 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       expect(historyResult.value[0].status).toBe('failed');
     });
 
+    it('should cancel all tasks when TaskDelegated fails for step 0', async () => {
+      // Arrange: 3-step pipeline where step 0 TaskDelegated emission will fail
+      const schedule = createPipelineSchedule();
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      const originalEmit = eventBus.emit.bind(eventBus);
+      const emitSpy = vi.spyOn(eventBus, 'emit').mockImplementation(async (event, payload) => {
+        if (event === 'TaskDelegated') {
+          // Fail on the FIRST TaskDelegated (step 0)
+          const { err: mkErr } = await import('../../../../src/core/result');
+          const { BackbeatError, ErrorCode } = await import('../../../../src/core/errors');
+          return mkErr(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Simulated emit failure'));
+        }
+        return originalEmit(event, payload);
+      });
+
+      // Act
+      await triggerSchedule(schedule.id);
+
+      emitSpy.mockRestore();
+
+      // Assert: all 3 tasks should be cancelled — step 0 failure orphans the whole pipeline
+      const allTasksResult = await taskRepo.findAll();
+      expect(allTasksResult.ok).toBe(true);
+      if (!allTasksResult.ok) return;
+      expect(allTasksResult.value).toHaveLength(3);
+      expect(allTasksResult.value.every((t) => t.status === TaskStatus.CANCELLED)).toBe(true);
+
+      // Assert: error logged for step 0
+      expect(logger.hasLogContaining('Failed to emit TaskDelegated for pipeline step 0')).toBe(true);
+    });
+
     it('should record execution with lastTaskId for afterScheduleId chaining', async () => {
       // Arrange: a pipeline with 3 steps
       const schedule = createPipelineSchedule();

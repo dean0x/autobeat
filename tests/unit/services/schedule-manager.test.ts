@@ -773,10 +773,7 @@ describe('ScheduleManagerService - Unit Tests', () => {
       const normalizedPath = `${cwd}/src`;
 
       const request = scheduledPipelineRequest({
-        steps: [
-          { prompt: 'Step one', workingDirectory: unnormalizedPath },
-          { prompt: 'Step two' },
-        ],
+        steps: [{ prompt: 'Step one', workingDirectory: unnormalizedPath }, { prompt: 'Step two' }],
       });
 
       const result = await service.createScheduledPipeline(request);
