@@ -283,7 +283,7 @@ export class ScheduleHandler extends BaseEventHandler {
         scheduleId,
         schedule.nextRunAt ?? triggeredAt,
         triggeredAt,
-        taskSaveResult.error.message,
+        `Failed to create task: ${taskSaveResult.error.message}`,
       );
       return taskSaveResult;
     }
@@ -495,7 +495,7 @@ export class ScheduleHandler extends BaseEventHandler {
       scheduledFor,
       executedAt: triggeredAt,
       status: 'failed',
-      errorMessage: `Failed to create task: ${errorMessage}`,
+      errorMessage,
       createdAt: Date.now(),
     });
     if (!result.ok) {

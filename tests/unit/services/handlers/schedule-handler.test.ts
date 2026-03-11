@@ -809,6 +809,69 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       expect(execution.taskId).not.toBe(firstTask!.id);
     });
 
+    it('should not double-wrap error message in pipeline failure execution record', async () => {
+      // Arrange: 2-step pipeline where the 2nd save will fail
+      const twoSteps: readonly PipelineStepRequest[] = [{ prompt: 'step-a' }, { prompt: 'step-b' }];
+      const schedule = createPipelineSchedule({ pipelineSteps: twoSteps });
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      let saveCallCount = 0;
+      const originalSave = taskRepo.save.bind(taskRepo);
+      const saveSpy = vi.spyOn(taskRepo, 'save').mockImplementation(async (task) => {
+        saveCallCount++;
+        if (saveCallCount === 2) {
+          const { err: mkErr } = await import('../../../../src/core/result');
+          const { BackbeatError, ErrorCode } = await import('../../../../src/core/errors');
+          return mkErr(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'DB write error'));
+        }
+        return originalSave(task);
+      });
+
+      // Act
+      await triggerSchedule(schedule.id);
+      saveSpy.mockRestore();
+
+      // Assert: execution error message should NOT have double prefix
+      const historyResult = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(historyResult.ok).toBe(true);
+      if (!historyResult.ok) return;
+      expect(historyResult.value).toHaveLength(1);
+
+      const errorMessage = historyResult.value[0].errorMessage;
+      expect(errorMessage).toBeDefined();
+      // Should contain "Pipeline failed at step 2" but NOT "Failed to create task: Pipeline failed"
+      expect(errorMessage).toContain('Pipeline failed at step 2');
+      expect(errorMessage).not.toContain('Failed to create task: Pipeline failed');
+    });
+
+    it('should include prefix in single-task failure execution record', async () => {
+      // Arrange: single-task schedule where save fails
+      const schedule = createTestSchedule();
+      await saveSchedule(schedule);
+      await scheduleRepo.update(schedule.id, { nextRunAt: Date.now() - 60000 });
+
+      const saveSpy = vi.spyOn(taskRepo, 'save').mockImplementation(async () => {
+        const { err: mkErr } = await import('../../../../src/core/result');
+        const { BackbeatError, ErrorCode } = await import('../../../../src/core/errors');
+        return mkErr(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'DB write error'));
+      });
+
+      // Act
+      await eventBus.emit('ScheduleTriggered', { scheduleId: schedule.id, triggeredAt: Date.now() });
+      await flushEventLoop();
+      saveSpy.mockRestore();
+
+      // Assert: execution error message should include "Failed to create task:" prefix
+      const historyResult = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(historyResult.ok).toBe(true);
+      if (!historyResult.ok) return;
+      expect(historyResult.value).toHaveLength(1);
+
+      const errorMessage = historyResult.value[0].errorMessage;
+      expect(errorMessage).toBeDefined();
+      expect(errorMessage).toContain('Failed to create task:');
+    });
+
     it('should update schedule state after pipeline trigger', async () => {
       // Arrange: ONE_TIME pipeline schedule
       const schedule = createPipelineSchedule({
