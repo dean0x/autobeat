@@ -257,7 +257,7 @@ export class ScheduleHandler extends BaseEventHandler {
 
       // Dispatch to appropriate trigger path
       if (schedule.pipelineSteps && schedule.pipelineSteps.length > 0) {
-        return this.handlePipelineTrigger(schedule, triggeredAt);
+        return this.handlePipelineTrigger(schedule, schedule.pipelineSteps, triggeredAt);
       }
       return this.handleSingleTaskTrigger(schedule, triggeredAt);
     });
@@ -270,7 +270,13 @@ export class ScheduleHandler extends BaseEventHandler {
     const scheduleId = schedule.id;
 
     // afterScheduleId enforcement: inject dependency on chained schedule's latest task
-    const taskTemplate = await this.resolveAfterScheduleDependency(schedule);
+    const afterTaskId = await this.resolveAfterScheduleTaskId(schedule);
+    const dependsOn = afterTaskId
+      ? [...(schedule.taskTemplate.dependsOn ?? []), afterTaskId]
+      : schedule.taskTemplate.dependsOn;
+    const taskTemplate = dependsOn
+      ? { ...schedule.taskTemplate, dependsOn }
+      : schedule.taskTemplate;
 
     // Create task from template
     const task = createTask(taskTemplate);
@@ -314,9 +320,12 @@ export class ScheduleHandler extends BaseEventHandler {
   /**
    * Handle pipeline trigger - create N tasks with linear dependencies
    */
-  private async handlePipelineTrigger(schedule: Schedule, triggeredAt: number): Promise<Result<void>> {
+  private async handlePipelineTrigger(
+    schedule: Schedule,
+    steps: NonNullable<Schedule['pipelineSteps']>,
+    triggeredAt: number,
+  ): Promise<Result<void>> {
     const scheduleId = schedule.id;
-    const steps = schedule.pipelineSteps!;
     const defaults = schedule.taskTemplate;
 
     this.logger.info('Processing pipeline trigger', {
@@ -325,26 +334,13 @@ export class ScheduleHandler extends BaseEventHandler {
     });
 
     // afterScheduleId handling: resolve predecessor dependency for step 0
-    let step0DependsOn: TaskId[] | undefined;
-    if (schedule.afterScheduleId) {
-      const historyResult = await this.scheduleRepo.getExecutionHistory(schedule.afterScheduleId, 1);
-      if (historyResult.ok && historyResult.value.length > 0) {
-        const latestExecution = historyResult.value[0];
-        if (latestExecution.taskId) {
-          const depTaskResult = await this.taskRepo.findById(latestExecution.taskId);
-          if (depTaskResult.ok && depTaskResult.value && !isTerminalState(depTaskResult.value.status)) {
-            step0DependsOn = [latestExecution.taskId];
-            this.logger.info('Injected afterSchedule dependency on pipeline step 0', {
-              scheduleId,
-              afterScheduleId: schedule.afterScheduleId,
-              dependsOnTaskId: latestExecution.taskId,
-            });
-          }
-        }
-      }
-    }
+    const afterTaskId = await this.resolveAfterScheduleTaskId(schedule);
+    const step0DependsOn: TaskId[] | undefined = afterTaskId ? [afterTaskId] : undefined;
 
     // Create tasks for each step with linear dependencies
+    // TODO: Wrap in a proper async-safe transaction once better-sqlite3 async
+    // transaction support is available. Current db.transaction() is synchronous
+    // and does not support awaited operations inside the callback.
     const savedTasks: Task[] = [];
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
@@ -370,7 +366,10 @@ export class ScheduleHandler extends BaseEventHandler {
 
       const saveResult = await this.taskRepo.save(task);
       if (!saveResult.ok) {
-        // Partial save failure: cancel already-saved tasks directly via DB
+        // ARCHITECTURE EXCEPTION: Direct taskRepo.update() instead of emitting
+        // TaskCancellationRequested events. At this point tasks are just DB rows —
+        // no TaskDelegated events have been emitted and no workers have been spawned,
+        // so there is nothing to coordinate via the event bus. Direct cleanup is correct.
         this.logger.error('Pipeline task save failed, cleaning up', saveResult.error, {
           scheduleId,
           failedStep: i,
@@ -450,16 +449,18 @@ export class ScheduleHandler extends BaseEventHandler {
   // ============================================================================
 
   /**
-   * Resolve afterScheduleId dependency and return (possibly modified) task template
+   * Resolve afterScheduleId to the TaskId of the chained schedule's latest non-terminal task.
+   * Returns undefined if no dependency is needed (no afterScheduleId, no active task, etc.)
+   * Used by both single-task and pipeline trigger paths.
    */
-  private async resolveAfterScheduleDependency(schedule: Schedule): Promise<typeof schedule.taskTemplate> {
-    if (!schedule.afterScheduleId) return schedule.taskTemplate;
+  private async resolveAfterScheduleTaskId(schedule: Schedule): Promise<TaskId | undefined> {
+    if (!schedule.afterScheduleId) return undefined;
 
     const historyResult = await this.scheduleRepo.getExecutionHistory(schedule.afterScheduleId, 1);
-    if (!historyResult.ok || historyResult.value.length === 0) return schedule.taskTemplate;
+    if (!historyResult.ok || historyResult.value.length === 0) return undefined;
 
     const latestExecution = historyResult.value[0];
-    if (!latestExecution.taskId) return schedule.taskTemplate;
+    if (!latestExecution.taskId) return undefined;
 
     const depTaskResult = await this.taskRepo.findById(latestExecution.taskId);
     if (!depTaskResult.ok || !depTaskResult.value || isTerminalState(depTaskResult.value.status)) {
@@ -469,19 +470,16 @@ export class ScheduleHandler extends BaseEventHandler {
         taskId: latestExecution.taskId,
         taskStatus: depTaskResult.ok ? (depTaskResult.value?.status ?? 'not-found') : 'lookup-failed',
       });
-      return schedule.taskTemplate;
+      return undefined;
     }
 
-    this.logger.info('Injected afterSchedule dependency', {
+    this.logger.info('Resolved afterSchedule dependency', {
       scheduleId: schedule.id,
       afterScheduleId: schedule.afterScheduleId,
       dependsOnTaskId: latestExecution.taskId,
     });
 
-    return {
-      ...schedule.taskTemplate,
-      dependsOn: [...(schedule.taskTemplate.dependsOn ?? []), latestExecution.taskId],
-    };
+    return latestExecution.taskId;
   }
 
   /**
