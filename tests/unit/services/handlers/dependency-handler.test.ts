@@ -486,6 +486,45 @@ describe('DependencyHandler - Behavioral Tests', () => {
       expect(logger.getLogsByLevel('error').length).toBeGreaterThan(0);
     });
 
+    it('should not unblock task when getDependencies fails during cascade check', async () => {
+      // Arrange: parent → child dependency
+      const parent = createTask({ prompt: 'parent' });
+      const child = createTask({ prompt: 'child', dependsOn: [parent.id] });
+      await taskRepo.save(parent);
+      await taskRepo.save(child);
+      await eventBus.emit('TaskDelegated', { task: child });
+
+      // Track unblock events — none should fire
+      let unblockedEventReceived = false;
+      eventBus.subscribe('TaskUnblocked', async () => {
+        unblockedEventReceived = true;
+      });
+
+      // Mock getDependencies to fail when called during cascade check
+      const originalGetDeps = dependencyRepo.getDependencies.bind(dependencyRepo);
+      const getDependenciesSpy = vi.spyOn(dependencyRepo, 'getDependencies').mockImplementation(async (taskId) => {
+        // Only fail during the cascade check (after isBlocked returns false)
+        if (taskId === child.id) {
+          const { err: mkErr } = await import('../../../../src/core/result');
+          const { BackbeatError, ErrorCode } = await import('../../../../src/core/errors');
+          return mkErr(new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Simulated getDependencies failure'));
+        }
+        return originalGetDeps(taskId);
+      });
+
+      // Act: fail the parent — should trigger cascade check
+      await eventBus.emit('TaskFailed', { taskId: parent.id, error: new Error('parent failed') });
+      await flushEventLoop();
+
+      getDependenciesSpy.mockRestore();
+
+      // Assert: task should NOT be unblocked (getDependencies failed, can't confirm cascade)
+      expect(unblockedEventReceived).toBe(false);
+
+      // Assert: warning should be logged
+      expect(logger.getLogsByLevel('warn').length).toBeGreaterThan(0);
+    });
+
     it('should handle database errors during dependency creation', async () => {
       // Arrange - Create valid tasks
       const parent = createTask({ prompt: 'parent' });
@@ -1178,5 +1217,97 @@ describe('DependencyHandler - Behavioral Tests', () => {
         true,
       );
     }, 15000); // Extended timeout: handler awaits 5s checkpoint timeout internally
+  });
+
+  describe('Dependency failure cascade (v0.6.0)', () => {
+    it('should cancel dependent task when upstream fails', async () => {
+      // Arrange - Create parent and child with dependency
+      const parentTask = createTask({ prompt: 'parent' });
+      await taskRepo.save(parentTask);
+      const childTask = createTask({ prompt: 'child', dependsOn: [parentTask.id] });
+      await taskRepo.save(childTask);
+
+      // Emit TaskDelegated for child to register deps in handler
+      await eventBus.emit('TaskDelegated', { task: childTask });
+      await flushEventLoop();
+
+      // Capture TaskCancellationRequested events
+      const cancellationRequestedIds: TaskId[] = [];
+      eventBus.subscribe('TaskCancellationRequested', async (event) => {
+        cancellationRequestedIds.push(event.taskId);
+      });
+
+      // Act - Fail the parent task
+      await eventBus.emit('TaskFailed', { taskId: parentTask.id, error: new Error('failed') });
+      await flushEventLoop();
+
+      // Assert - Child should receive a cancellation request
+      expect(cancellationRequestedIds).toContain(childTask.id);
+      expect(logger.hasLogContaining('cascading cancellation')).toBe(true);
+    });
+
+    it('should cascade cancellation through multi-level chain', async () => {
+      // Arrange - Create A→B→C chain
+      const taskA = createTask({ prompt: 'task A' });
+      await taskRepo.save(taskA);
+      const taskB = createTask({ prompt: 'task B', dependsOn: [taskA.id] });
+      await taskRepo.save(taskB);
+      const taskC = createTask({ prompt: 'task C', dependsOn: [taskB.id] });
+      await taskRepo.save(taskC);
+
+      // Register dependencies in the handler
+      await eventBus.emit('TaskDelegated', { task: taskB });
+      await eventBus.emit('TaskDelegated', { task: taskC });
+      await flushEventLoop();
+
+      // Capture TaskCancellationRequested events
+      const cancellationRequestedIds: TaskId[] = [];
+      eventBus.subscribe('TaskCancellationRequested', async (event) => {
+        cancellationRequestedIds.push(event.taskId);
+      });
+
+      // Act - Fail A, which should cascade cancellation to B
+      await eventBus.emit('TaskFailed', { taskId: taskA.id, error: new Error('failed') });
+      await flushEventLoop();
+
+      // B should be cancelled at this point
+      expect(cancellationRequestedIds).toContain(taskB.id);
+
+      // Simulate B being cancelled (downstream of the cancellation request) — this
+      // triggers the DependencyHandler to resolve C's dependency on B as 'cancelled',
+      // which cascades the cancellation to C
+      await eventBus.emit('TaskCancelled', { taskId: taskB.id, reason: 'dependency failed' });
+      await flushEventLoop();
+
+      // C should also receive a cancellation request (cascade)
+      expect(cancellationRequestedIds).toContain(taskC.id);
+      expect(logger.hasLogContaining('cascading cancellation')).toBe(true);
+    });
+
+    it('should cancel dependent when upstream is cancelled', async () => {
+      // Arrange - Create parent and child with dependency
+      const parentTask = createTask({ prompt: 'parent' });
+      await taskRepo.save(parentTask);
+      const childTask = createTask({ prompt: 'child', dependsOn: [parentTask.id] });
+      await taskRepo.save(childTask);
+
+      // Emit TaskDelegated for child to register deps in handler
+      await eventBus.emit('TaskDelegated', { task: childTask });
+      await flushEventLoop();
+
+      // Capture TaskCancellationRequested events
+      const cancellationRequestedIds: TaskId[] = [];
+      eventBus.subscribe('TaskCancellationRequested', async (event) => {
+        cancellationRequestedIds.push(event.taskId);
+      });
+
+      // Act - Cancel the parent task (instead of failing it)
+      await eventBus.emit('TaskCancelled', { taskId: parentTask.id, reason: 'user cancelled' });
+      await flushEventLoop();
+
+      // Assert - Child should receive a cancellation request
+      expect(cancellationRequestedIds).toContain(childTask.id);
+      expect(logger.hasLogContaining('cascading cancellation')).toBe(true);
+    });
   });
 });

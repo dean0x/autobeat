@@ -5,7 +5,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { PipelineCreateRequest, ScheduleCreateRequest } from '../../../src/core/domain';
+import type {
+  PipelineCreateRequest,
+  ScheduleCreateRequest,
+  ScheduledPipelineCreateRequest,
+} from '../../../src/core/domain';
 import {
   createSchedule,
   MissedRunPolicy,
@@ -13,6 +17,7 @@ import {
   ScheduleId,
   ScheduleStatus,
   ScheduleType,
+  TaskId,
 } from '../../../src/core/domain';
 import { Database } from '../../../src/implementations/database';
 import { SQLiteScheduleRepository } from '../../../src/implementations/schedule-repository';
@@ -370,6 +375,98 @@ describe('ScheduleManagerService - Unit Tests', () => {
       expect(events[0].reason).toBe('no longer needed');
     });
 
+    it('should emit TaskCancellationRequested for in-flight tasks when cancelTasks=true', async () => {
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'pipeline step' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+      });
+      await scheduleRepo.save(schedule);
+
+      // Record an execution with pipeline task IDs
+      const now = Date.now();
+      await scheduleRepo.recordExecution({
+        scheduleId: schedule.id,
+        scheduledFor: now,
+        executedAt: now,
+        status: 'triggered',
+        pipelineTaskIds: [TaskId('task-aaa'), TaskId('task-bbb'), TaskId('task-ccc')],
+        createdAt: now,
+      });
+
+      const result = await service.cancelSchedule(schedule.id, 'abort pipeline', true);
+
+      expect(result.ok).toBe(true);
+      expect(eventBus.hasEmitted('ScheduleCancelled')).toBe(true);
+      expect(eventBus.hasEmitted('TaskCancellationRequested')).toBe(true);
+      expect(eventBus.getEventCount('TaskCancellationRequested')).toBe(3);
+
+      const cancelEvents = eventBus.getEmittedEvents('TaskCancellationRequested');
+      const cancelledTaskIds = cancelEvents.map((e: { taskId: string }) => e.taskId);
+      expect(cancelledTaskIds).toContain('task-aaa');
+      expect(cancelledTaskIds).toContain('task-bbb');
+      expect(cancelledTaskIds).toContain('task-ccc');
+    });
+
+    it('should cancel single taskId when no pipelineTaskIds in execution', async () => {
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'single task' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+      });
+      await scheduleRepo.save(schedule);
+
+      // Insert a task row to satisfy FK constraint on schedule_executions.task_id
+      const taskId = TaskId('task-single');
+      const now = Date.now();
+      db.getDatabase()
+        .prepare(`INSERT INTO tasks (id, prompt, status, priority, created_at) VALUES (?, ?, ?, ?, ?)`)
+        .run(taskId, 'single task', 'running', 'P2', now);
+
+      // Record an execution with only a single taskId (non-pipeline schedule)
+      await scheduleRepo.recordExecution({
+        scheduleId: schedule.id,
+        scheduledFor: now,
+        executedAt: now,
+        status: 'triggered',
+        taskId,
+        createdAt: now,
+      });
+
+      const result = await service.cancelSchedule(schedule.id, 'stop it', true);
+
+      expect(result.ok).toBe(true);
+      expect(eventBus.getEventCount('TaskCancellationRequested')).toBe(1);
+
+      const cancelEvents = eventBus.getEmittedEvents('TaskCancellationRequested');
+      expect(cancelEvents[0].taskId).toBe('task-single');
+    });
+
+    it('should not emit TaskCancellationRequested when cancelTasks is false', async () => {
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'test' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+      });
+      await scheduleRepo.save(schedule);
+
+      const now = Date.now();
+      await scheduleRepo.recordExecution({
+        scheduleId: schedule.id,
+        scheduledFor: now,
+        executedAt: now,
+        status: 'triggered',
+        pipelineTaskIds: [TaskId('task-x')],
+        createdAt: now,
+      });
+
+      const result = await service.cancelSchedule(schedule.id, 'normal cancel');
+
+      expect(result.ok).toBe(true);
+      expect(eventBus.hasEmitted('ScheduleCancelled')).toBe(true);
+      expect(eventBus.hasEmitted('TaskCancellationRequested')).toBe(false);
+    });
+
     it('should return error for non-existent schedule', async () => {
       const result = await service.cancelSchedule(ScheduleId('non-existent'));
 
@@ -592,6 +689,121 @@ describe('ScheduleManagerService - Unit Tests', () => {
 
       expect(result.ok).toBe(true);
       expect(eventBus.getEventCount('ScheduleCreated')).toBe(3);
+    });
+  });
+
+  describe('createScheduledPipeline()', () => {
+    function scheduledPipelineRequest(
+      overrides: Partial<ScheduledPipelineCreateRequest> = {},
+    ): ScheduledPipelineCreateRequest {
+      return {
+        steps: [{ prompt: 'Step one' }, { prompt: 'Step two' }, { prompt: 'Step three' }],
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        ...overrides,
+      };
+    }
+
+    it('should create a scheduled pipeline with cron', async () => {
+      const request = scheduledPipelineRequest();
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const schedule = result.value;
+      expect(schedule.scheduleType).toBe(ScheduleType.CRON);
+      expect(schedule.cronExpression).toBe('0 9 * * *');
+      expect(schedule.pipelineSteps).toBeDefined();
+      expect(schedule.pipelineSteps).toHaveLength(3);
+      expect(schedule.taskTemplate.prompt).toContain('Pipeline (3 steps)');
+      expect(schedule.taskTemplate.prompt).toContain('Step one');
+      expect(schedule.status).toBe(ScheduleStatus.ACTIVE);
+    });
+
+    it('should create a scheduled pipeline with one_time', async () => {
+      const futureDate = new Date(Date.now() + 3600000); // 1 hour from now
+      const request = scheduledPipelineRequest({
+        steps: [{ prompt: 'First step' }, { prompt: 'Second step' }],
+        scheduleType: ScheduleType.ONE_TIME,
+        cronExpression: undefined,
+        scheduledAt: futureDate.toISOString(),
+      });
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const schedule = result.value;
+      expect(schedule.scheduleType).toBe(ScheduleType.ONE_TIME);
+      expect(schedule.scheduledAt).toBeDefined();
+      expect(schedule.pipelineSteps).toHaveLength(2);
+    });
+
+    it('should reject fewer than 2 steps', async () => {
+      const request = scheduledPipelineRequest({
+        steps: [{ prompt: 'Only one' }],
+      });
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('at least 2 steps');
+    });
+
+    it('should reject more than 20 steps', async () => {
+      const steps = Array.from({ length: 21 }, (_, i) => ({ prompt: `Step ${i + 1}` }));
+      const request = scheduledPipelineRequest({ steps });
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('exceed 20 steps');
+    });
+
+    it('should store normalized paths for per-step workingDirectory', async () => {
+      const cwd = process.cwd();
+      // Path with /../ segment that resolves to cwd
+      const unnormalizedPath = `${cwd}/src/../src`;
+      const normalizedPath = `${cwd}/src`;
+
+      const request = scheduledPipelineRequest({
+        steps: [{ prompt: 'Step one', workingDirectory: unnormalizedPath }, { prompt: 'Step two' }],
+      });
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // The schedule's pipelineSteps should contain the NORMALIZED path
+      expect(result.value.pipelineSteps).toBeDefined();
+      expect(result.value.pipelineSteps![0].workingDirectory).toBe(normalizedPath);
+      // Step without workingDirectory should remain undefined
+      expect(result.value.pipelineSteps![1].workingDirectory).toBeUndefined();
+    });
+
+    it('should emit ScheduleCreated event with pipelineSteps', async () => {
+      const request = scheduledPipelineRequest();
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(true);
+      expect(eventBus.hasEmitted('ScheduleCreated')).toBe(true);
+      expect(eventBus.getEventCount('ScheduleCreated')).toBe(1);
+
+      const events = eventBus.getEmittedEvents('ScheduleCreated');
+      const emittedSchedule = events[0].schedule;
+      expect(emittedSchedule.pipelineSteps).toBeDefined();
+      expect(emittedSchedule.pipelineSteps).toHaveLength(3);
+      expect(emittedSchedule.pipelineSteps![0].prompt).toBe('Step one');
+      expect(emittedSchedule.pipelineSteps![1].prompt).toBe('Step two');
+      expect(emittedSchedule.pipelineSteps![2].prompt).toBe('Step three');
     });
   });
 });
