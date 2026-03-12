@@ -74,16 +74,10 @@ export class ScheduleHandler extends BaseEventHandler {
     taskRepo: TaskRepository & SyncTaskOperations,
     eventBus: EventBus,
     logger: Logger,
-    database?: Database,
+    database: Database,
     options?: ScheduleHandlerOptions,
   ): Promise<Result<ScheduleHandler, BackbeatError>> {
     const handlerLogger = logger.child ? logger.child({ module: 'ScheduleHandler' }) : logger;
-
-    if (!database) {
-      return err(
-        new BackbeatError(ErrorCode.DEPENDENCY_INJECTION_FAILED, 'ScheduleHandler requires Database for transactions'),
-      );
-    }
 
     // Create handler
     const handler = new ScheduleHandler(scheduleRepo, taskRepo, eventBus, database, handlerLogger, options);
@@ -309,7 +303,7 @@ export class ScheduleHandler extends BaseEventHandler {
         scheduleId,
         schedule.nextRunAt ?? triggeredAt,
         triggeredAt,
-        `Failed to create task: ${txResult.error.message}`,
+        `Schedule trigger failed: ${txResult.error.message}`,
       );
       return txResult;
     }

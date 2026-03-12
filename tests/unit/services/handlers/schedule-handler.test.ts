@@ -867,9 +867,9 @@ describe('ScheduleHandler - Behavioral Tests', () => {
 
       const errorMessage = historyResult.value[0].errorMessage;
       expect(errorMessage).toBeDefined();
-      // Should contain "Pipeline failed at step 2" but NOT "Failed to create task: Pipeline failed"
+      // Should contain "Pipeline failed at step 2" but NOT "Schedule trigger failed: Pipeline failed"
       expect(errorMessage).toContain('Pipeline failed at step 2');
-      expect(errorMessage).not.toContain('Failed to create task: Pipeline failed');
+      expect(errorMessage).not.toContain('Schedule trigger failed: Pipeline failed');
     });
 
     it('should include prefix in single-task failure execution record', async () => {
@@ -887,7 +887,7 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       await flushEventLoop();
       saveSpy.mockRestore();
 
-      // Assert: execution error message should include "Failed to create task:" prefix
+      // Assert: execution error message should include "Schedule trigger failed:" prefix
       const historyResult = await scheduleRepo.getExecutionHistory(schedule.id);
       expect(historyResult.ok).toBe(true);
       if (!historyResult.ok) return;
@@ -895,7 +895,7 @@ describe('ScheduleHandler - Behavioral Tests', () => {
 
       const errorMessage = historyResult.value[0].errorMessage;
       expect(errorMessage).toBeDefined();
-      expect(errorMessage).toContain('Failed to create task:');
+      expect(errorMessage).toContain('Schedule trigger failed:');
     });
 
     it('should rollback task on single-task recordExecutionSync failure', async () => {
