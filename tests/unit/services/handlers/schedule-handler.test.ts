@@ -46,7 +46,7 @@ describe('ScheduleHandler - Behavioral Tests', () => {
     scheduleRepo = new SQLiteScheduleRepository(database);
     taskRepo = new SQLiteTaskRepository(database);
 
-    const handlerResult = await ScheduleHandler.create(scheduleRepo, taskRepo, eventBus, logger, database);
+    const handlerResult = await ScheduleHandler.create(scheduleRepo, taskRepo, eventBus, database, logger);
     if (!handlerResult.ok) {
       throw new Error(`Failed to create ScheduleHandler: ${handlerResult.error.message}`);
     }
@@ -84,7 +84,9 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       const freshLogger = new TestLogger();
 
       const freshDb = new Database(':memory:');
-      const result = await ScheduleHandler.create(scheduleRepo, taskRepo, freshEventBus, freshLogger, freshDb);
+      const freshScheduleRepo = new SQLiteScheduleRepository(freshDb);
+      const freshTaskRepo = new SQLiteTaskRepository(freshDb);
+      const result = await ScheduleHandler.create(freshScheduleRepo, freshTaskRepo, freshEventBus, freshDb, freshLogger);
 
       expect(result.ok).toBe(true);
       expect(freshLogger.hasLogContaining('ScheduleHandler initialized')).toBe(true);

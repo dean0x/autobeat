@@ -321,13 +321,13 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
     return this.rowToSchedule(row);
   }
 
-  updateSync(id: ScheduleId, update: Partial<Schedule>): void {
-    const existing = this.findByIdSync(id);
-    if (!existing) {
+  updateSync(id: ScheduleId, update: Partial<Schedule>, existing?: Schedule): void {
+    const base = existing ?? this.findByIdSync(id);
+    if (!base) {
       throw new BackbeatError(ErrorCode.TASK_NOT_FOUND, `Schedule ${id} not found`);
     }
     const updatedSchedule: Schedule = {
-      ...existing,
+      ...base,
       ...update,
       updatedAt: Date.now(),
     };
@@ -346,7 +346,13 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
       execution.createdAt,
     );
 
-    const row = this.getExecutionByIdStmt.get(result.lastInsertRowid) as ScheduleExecutionRow;
+    const row = this.getExecutionByIdStmt.get(result.lastInsertRowid) as ScheduleExecutionRow | undefined;
+    if (!row) {
+      throw new BackbeatError(
+        ErrorCode.SYSTEM_ERROR,
+        `Failed to retrieve execution record after insert (rowid: ${result.lastInsertRowid})`,
+      );
+    }
     return this.rowToExecution(row);
   }
 
@@ -475,7 +481,13 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
           execution.createdAt,
         );
 
-        const row = this.getExecutionByIdStmt.get(result.lastInsertRowid) as ScheduleExecutionRow;
+        const row = this.getExecutionByIdStmt.get(result.lastInsertRowid) as ScheduleExecutionRow | undefined;
+        if (!row) {
+          throw new BackbeatError(
+            ErrorCode.SYSTEM_ERROR,
+            `Failed to retrieve execution record after insert (rowid: ${result.lastInsertRowid})`,
+          );
+        }
         return this.rowToExecution(row);
       },
       operationErrorHandler('record schedule execution', { scheduleId: execution.scheduleId }),

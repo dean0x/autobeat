@@ -8,7 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
-import { Logger } from '../core/interfaces.js';
+import { Logger, TransactionRunner } from '../core/interfaces.js';
 import { Result, tryCatch } from '../core/result.js';
 
 /**
@@ -45,7 +45,7 @@ const noOpLogger: Logger = {
  * const testDb = new Database();
  * ```
  */
-export class Database {
+export class Database implements TransactionRunner {
   private db: SQLite.Database;
   private readonly dbPath: string;
   private readonly logger: Logger;

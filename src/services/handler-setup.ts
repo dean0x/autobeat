@@ -20,14 +20,13 @@ import {
   SyncTaskOperations,
   TaskQueue,
   TaskRepository,
+  TransactionRunner,
   WorkerPool,
 } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
-import { Database } from '../implementations/database.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
 import { OutputHandler } from './handlers/output-handler.js';
-// Event Handlers
 import { PersistenceHandler } from './handlers/persistence-handler.js';
 import { QueryHandler } from './handlers/query-handler.js';
 import { QueueHandler } from './handlers/queue-handler.js';
@@ -42,7 +41,7 @@ export interface HandlerDependencies {
   readonly config: Configuration;
   readonly logger: Logger;
   readonly eventBus: EventBus;
-  readonly database: Database;
+  readonly database: TransactionRunner;
   readonly taskRepository: TaskRepository & SyncTaskOperations;
   readonly outputCapture: OutputCapture;
   readonly taskQueue: TaskQueue;
@@ -113,7 +112,7 @@ export function extractHandlerDependencies(container: Container): Result<Handler
   const eventBusResult = getDependency<EventBus>(container, 'eventBus');
   if (!eventBusResult.ok) return eventBusResult;
 
-  const databaseResult = getDependency<Database>(container, 'database');
+  const databaseResult = getDependency<TransactionRunner>(container, 'database');
   if (!databaseResult.ok) return databaseResult;
 
   const taskRepositoryResult = getDependency<TaskRepository & SyncTaskOperations>(container, 'taskRepository');
@@ -264,8 +263,8 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     deps.scheduleRepository,
     deps.taskRepository,
     eventBus,
-    childLogger('ScheduleHandler'),
     deps.database,
+    childLogger('ScheduleHandler'),
   );
   if (!scheduleHandlerResult.ok) {
     // Cleanup previous handlers on failure

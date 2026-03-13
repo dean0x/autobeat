@@ -33,9 +33,9 @@ import {
   SyncScheduleOperations,
   SyncTaskOperations,
   TaskRepository,
+  TransactionRunner,
 } from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
-import { Database } from '../../implementations/database.js';
 import { getNextRunTime, isValidTimezone, validateCronExpression } from '../../utils/cron.js';
 
 /**
@@ -57,7 +57,7 @@ export class ScheduleHandler extends BaseEventHandler {
     private readonly scheduleRepo: ScheduleRepository & SyncScheduleOperations,
     private readonly taskRepo: TaskRepository & SyncTaskOperations,
     private readonly eventBus: EventBus,
-    private readonly database: Database,
+    private readonly database: TransactionRunner,
     logger: Logger,
     options?: ScheduleHandlerOptions,
   ) {
@@ -73,8 +73,8 @@ export class ScheduleHandler extends BaseEventHandler {
     scheduleRepo: ScheduleRepository & SyncScheduleOperations,
     taskRepo: TaskRepository & SyncTaskOperations,
     eventBus: EventBus,
+    database: TransactionRunner,
     logger: Logger,
-    database: Database,
     options?: ScheduleHandlerOptions,
   ): Promise<Result<ScheduleHandler, BackbeatError>> {
     const handlerLogger = logger.child ? logger.child({ module: 'ScheduleHandler' }) : logger;
@@ -281,9 +281,19 @@ export class ScheduleHandler extends BaseEventHandler {
     // Create task domain object (pure computation — OUTSIDE transaction)
     const task = createTask({ ...schedule.taskTemplate, dependsOn });
 
+    // Pure computation OUTSIDE transaction
+    const scheduleUpdates = this.computeScheduleUpdates(schedule, triggeredAt);
+
     // Atomic: save task + record execution + update schedule
     const txResult = this.database.runInTransaction(() => {
-      this.taskRepo.saveSync(task);
+      try {
+        this.taskRepo.saveSync(task);
+      } catch (error) {
+        throw new BackbeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `Schedule trigger failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
 
       this.scheduleRepo.recordExecutionSync({
         scheduleId,
@@ -294,7 +304,7 @@ export class ScheduleHandler extends BaseEventHandler {
         createdAt: Date.now(),
       });
 
-      this.updateScheduleAfterTriggerSync(schedule, triggeredAt);
+      this.scheduleRepo.updateSync(schedule.id, scheduleUpdates, schedule);
     });
 
     if (!txResult.ok) {
@@ -303,10 +313,13 @@ export class ScheduleHandler extends BaseEventHandler {
         scheduleId,
         schedule.nextRunAt ?? triggeredAt,
         triggeredAt,
-        `Schedule trigger failed: ${txResult.error.message}`,
+        txResult.error.message,
       );
       return txResult;
     }
+
+    // Post-commit logging
+    this.logScheduleTransition(schedule, scheduleUpdates);
 
     // Events emitted AFTER transaction commit (never emit for uncommitted data)
     await this.eventBus.emit('TaskDelegated', { task });
@@ -377,6 +390,9 @@ export class ScheduleHandler extends BaseEventHandler {
     const firstTaskId = tasks[0].id;
     const lastTaskId = tasks[tasks.length - 1].id;
 
+    // Pure computation OUTSIDE transaction
+    const scheduleUpdates = this.computeScheduleUpdates(schedule, triggeredAt);
+
     // Atomic: save N tasks + record execution + update schedule
     const txResult = this.database.runInTransaction(() => {
       for (let i = 0; i < tasks.length; i++) {
@@ -401,7 +417,7 @@ export class ScheduleHandler extends BaseEventHandler {
         createdAt: Date.now(),
       });
 
-      this.updateScheduleAfterTriggerSync(schedule, triggeredAt);
+      this.scheduleRepo.updateSync(schedule.id, scheduleUpdates, schedule);
     });
 
     if (!txResult.ok) {
@@ -415,6 +431,9 @@ export class ScheduleHandler extends BaseEventHandler {
       );
       return txResult;
     }
+
+    // Post-commit logging
+    this.logScheduleTransition(schedule, scheduleUpdates);
 
     // Events emitted AFTER transaction commit (never emit for uncommitted data)
     // Step 0 failure is fatal — it's the only task that becomes runnable.
@@ -522,7 +541,7 @@ export class ScheduleHandler extends BaseEventHandler {
 
   /**
    * Compute schedule update fields after a trigger (runCount, lastRunAt, nextRunAt, status).
-   * Performs logging but no database writes. Shared by async and sync trigger paths.
+   * Pure computation — no side effects.
    */
   private computeScheduleUpdates(schedule: Schedule, triggeredAt: number): Partial<Schedule> {
     const newRunCount = schedule.runCount + 1;
@@ -535,10 +554,6 @@ export class ScheduleHandler extends BaseEventHandler {
       if (nextResult.ok) {
         newNextRunAt = nextResult.value;
       } else {
-        this.logger.error('Failed to calculate next run, pausing schedule', nextResult.error, {
-          scheduleId: schedule.id,
-          cronExpression: schedule.cronExpression,
-        });
         newStatus = ScheduleStatus.PAUSED;
       }
     } else if (schedule.scheduleType === ScheduleType.ONE_TIME) {
@@ -550,18 +565,12 @@ export class ScheduleHandler extends BaseEventHandler {
     if (schedule.maxRuns && newRunCount >= schedule.maxRuns) {
       newStatus = ScheduleStatus.COMPLETED;
       newNextRunAt = undefined;
-      this.logger.info('Schedule reached maxRuns, marking completed', {
-        scheduleId: schedule.id,
-        runCount: newRunCount,
-        maxRuns: schedule.maxRuns,
-      });
     }
 
     // Check expiration
     if (schedule.expiresAt && Date.now() >= schedule.expiresAt) {
       newStatus = ScheduleStatus.EXPIRED;
       newNextRunAt = undefined;
-      this.logger.info('Schedule expired', { scheduleId: schedule.id, expiresAt: schedule.expiresAt });
     }
 
     return {
@@ -573,12 +582,29 @@ export class ScheduleHandler extends BaseEventHandler {
   }
 
   /**
-   * Update schedule state after a trigger (sync path — for use inside transactions).
-   * Does not throw on getNextRunTime failure; sets PAUSED status instead.
+   * Log schedule state transitions after successful commit.
+   * Post-commit only — never called inside a transaction.
    */
-  private updateScheduleAfterTriggerSync(schedule: Schedule, triggeredAt: number): void {
-    const updates = this.computeScheduleUpdates(schedule, triggeredAt);
-    this.scheduleRepo.updateSync(schedule.id, updates);
+  private logScheduleTransition(schedule: Schedule, updates: Partial<Schedule>): void {
+    if (updates.status === ScheduleStatus.PAUSED) {
+      this.logger.warn('Failed to calculate next run, pausing schedule', {
+        scheduleId: schedule.id,
+        cronExpression: schedule.cronExpression,
+      });
+    }
+    if (updates.status === ScheduleStatus.COMPLETED && schedule.maxRuns) {
+      this.logger.info('Schedule reached maxRuns, marking completed', {
+        scheduleId: schedule.id,
+        runCount: updates.runCount,
+        maxRuns: schedule.maxRuns,
+      });
+    }
+    if (updates.status === ScheduleStatus.EXPIRED) {
+      this.logger.info('Schedule expired', {
+        scheduleId: schedule.id,
+        expiresAt: schedule.expiresAt,
+      });
+    }
   }
 
   /**

@@ -428,9 +428,18 @@ export interface SyncTaskOperations {
  * ARCHITECTURE: Narrow interface — only the operations needed inside transactions.
  */
 export interface SyncScheduleOperations {
-  updateSync(id: ScheduleId, update: Partial<Schedule>): void;
+  updateSync(id: ScheduleId, update: Partial<Schedule>, existing?: Schedule): void;
   recordExecutionSync(execution: Omit<ScheduleExecution, 'id'>): ScheduleExecution;
   findByIdSync(id: ScheduleId): Schedule | null;
+}
+
+/**
+ * Synchronous transaction runner for atomic multi-step DB operations.
+ * ARCHITECTURE: Abstraction over Database — handlers depend on this interface, not concrete Database.
+ * Pattern: Dependency Inversion Principle — service layer depends on abstraction.
+ */
+export interface TransactionRunner {
+  runInTransaction<T>(fn: () => T): Result<T>;
 }
 
 /**
