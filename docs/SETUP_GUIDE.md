@@ -99,9 +99,11 @@ npm run build
 ## Using a Real Agent CLI
 
 To use with an actual agent CLI (not mock):
+To use with an actual agent CLI (not mock):
 
 1. Remove `"MOCK_MODE": "true"` from config
-2. Ensure `claude` CLI is installed
+2. Ensure your chosen agent CLI is installed (e.g., `claude`, `codex`, `gemini-cli`)
+3. Test with real tasks
 3. Test with real tasks
 
 ## What You Can Do Now
