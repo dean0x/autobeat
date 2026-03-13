@@ -186,7 +186,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       exitCode: task.exitCode ?? null,
       dependencies: null, // Dependencies stored in task_dependencies table
       parentTaskId: task.parentTaskId || null,
-      retryCount: task.retryCount || null,
+      retryCount: task.retryCount ?? null,
       retryOf: task.retryOf || null,
       continueFrom: task.continueFrom || null,
       agent: task.agent || null,
@@ -330,7 +330,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       timeout: data.timeout ?? undefined,
       maxOutputBuffer: data.max_output_buffer ?? undefined,
       parentTaskId: data.parent_task_id ? (data.parent_task_id as TaskId) : undefined,
-      retryCount: data.retry_count || undefined,
+      retryCount: data.retry_count ?? undefined,
       retryOf: data.retry_of ? (data.retry_of as TaskId) : undefined,
       continueFrom: data.continue_from ? (data.continue_from as TaskId) : undefined,
       agent: data.agent ?? undefined,
