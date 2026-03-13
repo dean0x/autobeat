@@ -27,7 +27,14 @@ import {
   ScheduleUpdatedEvent,
 } from '../../core/events/events.js';
 import { BaseEventHandler } from '../../core/events/handlers.js';
-import { Logger, ScheduleRepository, TaskRepository } from '../../core/interfaces.js';
+import {
+  Logger,
+  ScheduleRepository,
+  SyncScheduleOperations,
+  SyncTaskOperations,
+  TaskRepository,
+  TransactionRunner,
+} from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
 import { getNextRunTime, isValidTimezone, validateCronExpression } from '../../utils/cron.js';
 
@@ -47,9 +54,10 @@ export class ScheduleHandler extends BaseEventHandler {
    * ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
    */
   private constructor(
-    private readonly scheduleRepo: ScheduleRepository,
-    private readonly taskRepo: TaskRepository,
+    private readonly scheduleRepo: ScheduleRepository & SyncScheduleOperations,
+    private readonly taskRepo: TaskRepository & SyncTaskOperations,
     private readonly eventBus: EventBus,
+    private readonly database: TransactionRunner,
     logger: Logger,
     options?: ScheduleHandlerOptions,
   ) {
@@ -60,25 +68,19 @@ export class ScheduleHandler extends BaseEventHandler {
   /**
    * Factory method to create a fully initialized ScheduleHandler
    * ARCHITECTURE: Guarantees handler is ready to use - no uninitialized state possible
-   *
-   * @param scheduleRepo - Repository for schedule persistence
-   * @param taskRepo - Repository for task creation when schedule triggers
-   * @param eventBus - Event bus for subscriptions
-   * @param logger - Logger instance
-   * @param options - Optional configuration
-   * @returns Result containing initialized handler or error
    */
   static async create(
-    scheduleRepo: ScheduleRepository,
-    taskRepo: TaskRepository,
+    scheduleRepo: ScheduleRepository & SyncScheduleOperations,
+    taskRepo: TaskRepository & SyncTaskOperations,
     eventBus: EventBus,
+    database: TransactionRunner,
     logger: Logger,
     options?: ScheduleHandlerOptions,
   ): Promise<Result<ScheduleHandler, BackbeatError>> {
     const handlerLogger = logger.child ? logger.child({ module: 'ScheduleHandler' }) : logger;
 
     // Create handler
-    const handler = new ScheduleHandler(scheduleRepo, taskRepo, eventBus, handlerLogger, options);
+    const handler = new ScheduleHandler(scheduleRepo, taskRepo, eventBus, database, handlerLogger, options);
 
     // Subscribe to events
     const subscribeResult = handler.subscribeToEvents();
@@ -264,41 +266,64 @@ export class ScheduleHandler extends BaseEventHandler {
   }
 
   /**
-   * Handle single-task trigger - existing logic extracted verbatim
+   * Handle single-task trigger — atomic via Database.runInTransaction()
    */
   private async handleSingleTaskTrigger(schedule: Schedule, triggeredAt: number): Promise<Result<void>> {
     const scheduleId = schedule.id;
 
     // afterScheduleId enforcement: inject dependency on chained schedule's latest task
+    // (reads only, needs async for history lookup — stays OUTSIDE transaction)
     const afterTaskId = await this.resolveAfterScheduleTaskId(schedule);
     const dependsOn = afterTaskId
       ? [...(schedule.taskTemplate.dependsOn ?? []), afterTaskId]
       : schedule.taskTemplate.dependsOn;
 
-    // Create task from template
+    // Create task domain object (pure computation — OUTSIDE transaction)
     const task = createTask({ ...schedule.taskTemplate, dependsOn });
-    const taskSaveResult = await this.taskRepo.save(task);
-    if (!taskSaveResult.ok) {
+
+    // Pure computation OUTSIDE transaction
+    const scheduleUpdates = this.computeScheduleUpdates(schedule, triggeredAt);
+
+    // Atomic: save task + record execution + update schedule
+    const txResult = this.database.runInTransaction(() => {
+      try {
+        this.taskRepo.saveSync(task);
+      } catch (error) {
+        throw new BackbeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `Schedule trigger failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
+      this.scheduleRepo.recordExecutionSync({
+        scheduleId,
+        taskId: task.id,
+        scheduledFor: schedule.nextRunAt ?? triggeredAt,
+        executedAt: triggeredAt,
+        status: 'triggered',
+        createdAt: Date.now(),
+      });
+
+      this.scheduleRepo.updateSync(schedule.id, scheduleUpdates, schedule);
+    });
+
+    if (!txResult.ok) {
+      // Transaction rolled back — best-effort audit trail
       await this.recordFailedExecution(
         scheduleId,
         schedule.nextRunAt ?? triggeredAt,
         triggeredAt,
-        `Failed to create task: ${taskSaveResult.error.message}`,
+        txResult.error.message,
       );
-      return taskSaveResult;
+      return txResult;
     }
 
-    // Record successful execution
-    await this.recordTriggeredExecution(scheduleId, task.id, schedule.nextRunAt ?? triggeredAt, triggeredAt);
+    // Post-commit logging
+    this.logScheduleTransition(schedule, scheduleUpdates);
 
-    // Update schedule state
-    const updateResult = await this.updateScheduleAfterTrigger(schedule, triggeredAt);
-    if (!updateResult.ok) return updateResult;
-
-    // Emit TaskDelegated event for the created task
+    // Events emitted AFTER transaction commit (never emit for uncommitted data)
     await this.eventBus.emit('TaskDelegated', { task });
 
-    // Emit ScheduleExecuted with the task ID (for concurrency tracking)
     await this.eventBus.emit('ScheduleExecuted', {
       scheduleId,
       taskId: task.id,
@@ -315,7 +340,8 @@ export class ScheduleHandler extends BaseEventHandler {
   }
 
   /**
-   * Handle pipeline trigger - create N tasks with linear dependencies
+   * Handle pipeline trigger — atomic via Database.runInTransaction().
+   * If any task save throws → automatic rollback → zero tasks persisted → no cleanup needed.
    */
   private async handlePipelineTrigger(
     schedule: Schedule,
@@ -331,95 +357,89 @@ export class ScheduleHandler extends BaseEventHandler {
     });
 
     // afterScheduleId handling: resolve predecessor dependency for step 0
+    // (reads only, needs async for history lookup — stays OUTSIDE transaction)
     const afterTaskId = await this.resolveAfterScheduleTaskId(schedule);
     const step0DependsOn: TaskId[] | undefined = afterTaskId ? [afterTaskId] : undefined;
 
-    // Create tasks for each step with linear dependencies
-    // TODO: Wrap in a proper async-safe transaction once better-sqlite3 async
-    // transaction support is available. Current db.transaction() is synchronous
-    // and does not support awaited operations inside the callback.
-    const savedTasks: Task[] = [];
+    // Pre-create ALL task domain objects OUTSIDE transaction (pure computation)
+    const tasks: Task[] = [];
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       const dependsOn: TaskId[] = [];
 
-      // Step 0 gets afterScheduleId dependency if present
       if (i === 0 && step0DependsOn) {
         dependsOn.push(...step0DependsOn);
       }
 
-      // Step i depends on step i-1
       if (i > 0) {
-        dependsOn.push(savedTasks[i - 1].id);
+        dependsOn.push(tasks[i - 1].id);
       }
 
-      const task = createTask({
-        prompt: step.prompt,
-        priority: step.priority ?? defaults.priority,
-        workingDirectory: step.workingDirectory ?? defaults.workingDirectory,
-        agent: step.agent ?? defaults.agent,
-        dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
-      });
-
-      const saveResult = await this.taskRepo.save(task);
-      if (!saveResult.ok) {
-        // ARCHITECTURE EXCEPTION: Direct taskRepo.update() instead of emitting
-        // TaskCancellationRequested events. At this point tasks are just DB rows —
-        // no TaskDelegated events have been emitted and no workers have been spawned,
-        // so there is nothing to coordinate via the event bus. Direct cleanup is correct.
-        this.logger.error('Pipeline task save failed, cleaning up', saveResult.error, {
-          scheduleId,
-          failedStep: i,
-          savedSteps: savedTasks.length,
-        });
-
-        for (const savedTask of savedTasks) {
-          const cancelResult = await this.taskRepo.update(savedTask.id, { status: TaskStatus.CANCELLED });
-          if (!cancelResult.ok) {
-            this.logger.error('Failed to cancel pipeline task during cleanup', cancelResult.error, {
-              taskId: savedTask.id,
-            });
-          }
-        }
-
-        await this.recordFailedExecution(
-          scheduleId,
-          schedule.nextRunAt ?? triggeredAt,
-          triggeredAt,
-          `Pipeline failed at step ${i + 1}: ${saveResult.error.message}`,
-        );
-        return saveResult;
-      }
-
-      savedTasks.push(task);
+      tasks.push(
+        createTask({
+          prompt: step.prompt,
+          priority: step.priority ?? defaults.priority,
+          workingDirectory: step.workingDirectory ?? defaults.workingDirectory,
+          agent: step.agent ?? defaults.agent,
+          dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
+        }),
+      );
     }
 
-    const allTaskIds = savedTasks.map((t) => t.id);
-    const firstTaskId = savedTasks[0].id;
-    const lastTaskId = savedTasks[savedTasks.length - 1].id;
+    const allTaskIds = tasks.map((t) => t.id);
+    const firstTaskId = tasks[0].id;
+    const lastTaskId = tasks[tasks.length - 1].id;
 
-    // Record execution with lastTaskId — chained schedules (afterScheduleId) resolve
-    // the predecessor's execution.taskId to check if it's terminal. Using lastTaskId
-    // ensures the chain fires when the FULL pipeline completes, not just step 1.
-    await this.recordTriggeredExecution(
-      scheduleId,
-      lastTaskId,
-      schedule.nextRunAt ?? triggeredAt,
-      triggeredAt,
-      allTaskIds,
-    );
+    // Pure computation OUTSIDE transaction
+    const scheduleUpdates = this.computeScheduleUpdates(schedule, triggeredAt);
 
-    // Update schedule state
-    const updateResult = await this.updateScheduleAfterTrigger(schedule, triggeredAt);
-    if (!updateResult.ok) return updateResult;
+    // Atomic: save N tasks + record execution + update schedule
+    const txResult = this.database.runInTransaction(() => {
+      for (let i = 0; i < tasks.length; i++) {
+        try {
+          this.taskRepo.saveSync(tasks[i]);
+        } catch (error) {
+          throw new BackbeatError(
+            ErrorCode.SYSTEM_ERROR,
+            `Pipeline failed at step ${i + 1}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
 
-    // Emit TaskDelegated for each task
-    // Step 0 failure is fatal — it's the only task that becomes runnable; all later
-    // steps block on it. If it's never delegated, the entire pipeline is orphaned.
-    // Steps 1–N failures are best-effort — they're already saved with dependencies
-    // and will be enqueued when their predecessor completes.
-    for (let ti = 0; ti < savedTasks.length; ti++) {
-      const task = savedTasks[ti];
+      // Record execution with lastTaskId for afterScheduleId chaining
+      this.scheduleRepo.recordExecutionSync({
+        scheduleId,
+        taskId: lastTaskId,
+        scheduledFor: schedule.nextRunAt ?? triggeredAt,
+        executedAt: triggeredAt,
+        status: 'triggered',
+        pipelineTaskIds: allTaskIds,
+        createdAt: Date.now(),
+      });
+
+      this.scheduleRepo.updateSync(schedule.id, scheduleUpdates, schedule);
+    });
+
+    if (!txResult.ok) {
+      // Transaction rolled back — zero tasks exist, no cleanup needed.
+      // Best-effort audit trail for the failure.
+      await this.recordFailedExecution(
+        scheduleId,
+        schedule.nextRunAt ?? triggeredAt,
+        triggeredAt,
+        txResult.error.message,
+      );
+      return txResult;
+    }
+
+    // Post-commit logging
+    this.logScheduleTransition(schedule, scheduleUpdates);
+
+    // Events emitted AFTER transaction commit (never emit for uncommitted data)
+    // Step 0 failure is fatal — it's the only task that becomes runnable.
+    // Steps 1–N failures are best-effort.
+    for (let ti = 0; ti < tasks.length; ti++) {
+      const task = tasks[ti];
       const emitResult = await this.eventBus.emit('TaskDelegated', { task });
       if (!emitResult.ok) {
         if (ti === 0) {
@@ -427,7 +447,8 @@ export class ScheduleHandler extends BaseEventHandler {
             taskId: task.id,
             scheduleId,
           });
-          for (const savedTask of savedTasks) {
+          // Post-commit cancellation — tasks are committed but event pipeline failed
+          for (const savedTask of tasks) {
             await this.taskRepo.update(savedTask.id, { status: TaskStatus.CANCELLED });
           }
           return emitResult;
@@ -519,36 +540,11 @@ export class ScheduleHandler extends BaseEventHandler {
   }
 
   /**
-   * Record a triggered execution in the audit trail
+   * Compute schedule update fields after a trigger (runCount, lastRunAt, nextRunAt, status).
+   * Pure computation — no side effects.
    */
-  private async recordTriggeredExecution(
-    scheduleId: ScheduleId,
-    taskId: TaskId,
-    scheduledFor: number,
-    triggeredAt: number,
-    pipelineTaskIds?: readonly TaskId[],
-  ): Promise<void> {
-    const result = await this.scheduleRepo.recordExecution({
-      scheduleId,
-      taskId,
-      scheduledFor,
-      executedAt: triggeredAt,
-      status: 'triggered',
-      pipelineTaskIds,
-      createdAt: Date.now(),
-    });
-    if (!result.ok) {
-      this.logger.error('Failed to record triggered execution', result.error, { scheduleId });
-    }
-  }
-
-  /**
-   * Update schedule state after a trigger (runCount, lastRunAt, nextRunAt, status)
-   */
-  private async updateScheduleAfterTrigger(schedule: Schedule, triggeredAt: number): Promise<Result<void>> {
-    const scheduleId = schedule.id;
+  private computeScheduleUpdates(schedule: Schedule, triggeredAt: number): Partial<Schedule> {
     const newRunCount = schedule.runCount + 1;
-
     let newStatus: ScheduleStatus | undefined;
     let newNextRunAt: number | undefined;
 
@@ -558,10 +554,6 @@ export class ScheduleHandler extends BaseEventHandler {
       if (nextResult.ok) {
         newNextRunAt = nextResult.value;
       } else {
-        this.logger.error('Failed to calculate next run, pausing schedule', nextResult.error, {
-          scheduleId,
-          cronExpression: schedule.cronExpression,
-        });
         newStatus = ScheduleStatus.PAUSED;
       }
     } else if (schedule.scheduleType === ScheduleType.ONE_TIME) {
@@ -573,36 +565,46 @@ export class ScheduleHandler extends BaseEventHandler {
     if (schedule.maxRuns && newRunCount >= schedule.maxRuns) {
       newStatus = ScheduleStatus.COMPLETED;
       newNextRunAt = undefined;
-      this.logger.info('Schedule reached maxRuns, marking completed', {
-        scheduleId,
-        runCount: newRunCount,
-        maxRuns: schedule.maxRuns,
-      });
     }
 
     // Check expiration
     if (schedule.expiresAt && Date.now() >= schedule.expiresAt) {
       newStatus = ScheduleStatus.EXPIRED;
       newNextRunAt = undefined;
-      this.logger.info('Schedule expired', { scheduleId, expiresAt: schedule.expiresAt });
     }
 
-    const updates: Partial<Schedule> = {
+    return {
       runCount: newRunCount,
       lastRunAt: triggeredAt,
       nextRunAt: newNextRunAt,
       ...(newStatus !== undefined ? { status: newStatus } : {}),
     };
+  }
 
-    const updateResult = await this.scheduleRepo.update(scheduleId, updates);
-    if (!updateResult.ok) {
-      this.logger.error('Failed to update schedule after trigger', updateResult.error, {
-        scheduleId,
+  /**
+   * Log schedule state transitions after successful commit.
+   * Post-commit only — never called inside a transaction.
+   */
+  private logScheduleTransition(schedule: Schedule, updates: Partial<Schedule>): void {
+    if (updates.status === ScheduleStatus.PAUSED) {
+      this.logger.warn('Failed to calculate next run, pausing schedule', {
+        scheduleId: schedule.id,
+        cronExpression: schedule.cronExpression,
       });
-      return updateResult;
     }
-
-    return ok(undefined);
+    if (updates.status === ScheduleStatus.COMPLETED && schedule.maxRuns) {
+      this.logger.info('Schedule reached maxRuns, marking completed', {
+        scheduleId: schedule.id,
+        runCount: updates.runCount,
+        maxRuns: schedule.maxRuns,
+      });
+    }
+    if (updates.status === ScheduleStatus.EXPIRED) {
+      this.logger.info('Schedule expired', {
+        scheduleId: schedule.id,
+        expiresAt: schedule.expiresAt,
+      });
+    }
   }
 
   /**
