@@ -54,8 +54,17 @@ export class QueueHandler extends BaseEventHandler {
    * Enqueue a task if it is not blocked by dependencies.
    * Called directly by PersistenceHandler after persisting a task.
    * ARCHITECTURE: Dependency-aware queueing - blocked tasks wait for TaskUnblocked event
+   * INVARIANT: setup() must be called before this method (eventBus required for TaskQueued emission)
    */
   async enqueueIfReady(task: Task): Promise<Result<void>> {
+    // Fail-fast: eventBus is required to emit TaskQueued (set in setup()).
+    // Without it, tasks enqueue silently without triggering worker spawning.
+    if (!this.eventBus) {
+      const message = 'enqueueIfReady() called before setup() - eventBus not initialized';
+      this.logger.error(message, new Error(message), { taskId: task.id });
+      return err(new Error(message));
+    }
+
     // Fast-path: if task was created with dependencies, skip DB check entirely
     // This eliminates the race condition where DependencyHandler hasn't written
     // dependency rows yet but isBlocked() returns false
@@ -98,22 +107,16 @@ export class QueueHandler extends BaseEventHandler {
     });
 
     // Emit event that task is now queued - critical for worker spawning
-    if (this.eventBus) {
-      await this.emitEvent(
-        this.eventBus,
-        'TaskQueued',
-        {
-          taskId: task.id,
-          task,
-        },
-        { context: { taskId: task.id } },
-      );
-      // Don't fail the enqueue operation - the task is in the queue
-    } else {
-      this.logger.error('No eventBus available to emit TaskQueued event', undefined, {
+    // eventBus guaranteed non-null by fail-fast guard at method entry
+    await this.emitEvent(
+      this.eventBus,
+      'TaskQueued',
+      {
         taskId: task.id,
-      });
-    }
+        task,
+      },
+      { context: { taskId: task.id } },
+    );
 
     return ok(undefined);
   }

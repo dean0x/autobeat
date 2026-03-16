@@ -37,6 +37,17 @@ export interface DependencyHandlerOptions {
   readonly checkpointLookup?: CheckpointLookup;
 }
 
+/**
+ * Discriminated union for dependency validation results.
+ * Type-safe: 'ok' has null error, failure variants have non-null error.
+ * Exhaustive checking prevents silent acceptance of new failure variants.
+ */
+type DependencyValidationResult =
+  | { depId: TaskId; error: null; type: 'ok' }
+  | { depId: TaskId; error: Error; type: 'cycle' }
+  | { depId: TaskId; error: Error; type: 'depth' }
+  | { depId: TaskId; error: Error; type: 'system' };
+
 export class DependencyHandler extends BaseEventHandler {
   private eventBus: EventBus;
   private graph: DependencyGraph;
@@ -166,12 +177,12 @@ export class DependencyHandler extends BaseEventHandler {
    * Validate a single dependency - check for cycles and depth limits
    * PURE: Read-only operation, no side effects
    *
-   * @returns Validation result with type indicating: ok, cycle, depth, or system error
+   * @returns Discriminated union: success (type: 'ok') or failure with error and reason
    */
   private validateSingleDependency(
     taskId: TaskId,
     depId: TaskId,
-  ): { depId: TaskId; error: Error | null; type: 'ok' | 'cycle' | 'depth' | 'system' } {
+  ): DependencyValidationResult {
     // Cycle detection
     const cycleCheck = this.graph.wouldCreateCycle(taskId, depId);
     if (!cycleCheck.ok) {
@@ -335,14 +346,10 @@ export class DependencyHandler extends BaseEventHandler {
       );
 
       // Step 3: Check for validation failures (INVARIANT: fail-fast on first error)
-      const failure = validationResults.find((r) => r.error !== null);
-      if (failure && failure.error) {
-        // Type narrow: failure.error is verified non-null, type is not 'ok'
-        await this.handleValidationFailure(task.id, task.dependsOn, {
-          depId: failure.depId,
-          error: failure.error,
-          type: failure.type as 'cycle' | 'depth' | 'system',
-        });
+      // Discriminated union: type !== 'ok' narrows to failure variants with non-null error
+      const failure = validationResults.find((r): r is Exclude<DependencyValidationResult, { type: 'ok' }> => r.type !== 'ok');
+      if (failure) {
+        await this.handleValidationFailure(task.id, task.dependsOn, failure);
         return err(failure.error);
       }
 
