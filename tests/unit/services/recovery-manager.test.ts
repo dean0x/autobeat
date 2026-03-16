@@ -167,11 +167,9 @@ describe('RecoveryManager', () => {
       // TaskQueued events emitted for each
       expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', {
         taskId: task1.id,
-        task: task1,
       });
       expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', {
         taskId: task2.id,
-        task: task2,
       });
     });
 
@@ -203,7 +201,6 @@ describe('RecoveryManager', () => {
       // Second task should still be enqueued
       expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', {
         taskId: task2.id,
-        task: task2,
       });
     });
   });
@@ -316,7 +313,6 @@ describe('RecoveryManager', () => {
       expect(queue.enqueue).toHaveBeenCalledWith(recentTask);
       expect(eventBus.emit).toHaveBeenCalledWith('TaskQueued', {
         taskId: recentTask.id,
-        task: recentTask,
       });
     });
 

@@ -81,16 +81,20 @@ describe('Integration: Event-driven task delegation flow', () => {
     // Setup queue handler
     eventBus.on('TaskDelegated', async (data) => {
       queue.enqueue(data.task);
-      eventBus.emit('TaskQueued', { task: data.task });
+      eventBus.emit('TaskQueued', { taskId: data.task.id });
     });
 
     // Setup worker handler
     eventBus.on('TaskQueued', async (data) => {
       const canSpawn = await resourceMonitor.hasAvailableResources();
       if (canSpawn) {
-        const result = await workerPool.spawn(data.task);
-        if (result.ok) {
-          eventBus.emit('TaskStarted', { taskId: data.task.id, workerId: result.value.id });
+        const taskResult = await repository.findById(data.taskId);
+        if (taskResult.ok && taskResult.value) {
+          const task = taskResult.value;
+          const result = await workerPool.spawn(task);
+          if (result.ok) {
+            eventBus.emit('TaskStarted', { taskId: task.id, workerId: result.value.id });
+          }
         }
       }
     });

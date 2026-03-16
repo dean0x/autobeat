@@ -142,10 +142,7 @@ export class TaskManagerService implements TaskManager {
     const task = taskResult.value;
     if (task.status !== 'queued' && task.status !== 'running') {
       return err(
-        new BackbeatError(
-          ErrorCode.TASK_CANNOT_CANCEL,
-          `Task ${taskId} cannot be cancelled in state ${task.status}`,
-        ),
+        new BackbeatError(ErrorCode.TASK_CANNOT_CANCEL, `Task ${taskId} cannot be cancelled in state ${task.status}`),
       );
     }
 

@@ -311,7 +311,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       // Set up direct dequeue result instead of event response
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
 
       // Wait for TaskStarting event (indicates processing started)
       await eventBus.waitFor('TaskStarting');
@@ -324,7 +324,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.waitFor('TaskStarting');
 
       expect(eventBus.hasEmitted('TaskStarting')).toBe(true);
@@ -336,7 +336,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       resourceMonitor.setCanSpawn(true);
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.waitFor('TaskStarted');
 
       expect(workerPool.spawnCalls.length).toBeGreaterThan(0);
@@ -348,7 +348,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       resourceMonitor.setCanSpawn(true);
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.waitFor('TaskStarted');
 
       expect(resourceMonitor.workerCount).toBeGreaterThan(0);
@@ -360,7 +360,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       resourceMonitor.setCanSpawn(true);
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.waitFor('TaskStarted');
 
       expect(eventBus.hasEmitted('TaskStarted')).toBe(true);
@@ -376,14 +376,14 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       taskQueue.setDequeueResult(ok(task1));
 
       // Spawn first task
-      await eventBus.emit('TaskQueued', { taskId: task1.id, task: task1 });
+      await eventBus.emit('TaskQueued', { taskId: task1.id });
       await eventBus.waitFor('TaskStarted');
 
       const firstSpawnTime = Date.now();
 
       // Try to spawn second task immediately
       taskQueue.setDequeueResult(ok(task2));
-      await eventBus.emit('TaskQueued', { taskId: task2.id, task: task2 });
+      await eventBus.emit('TaskQueued', { taskId: task2.id });
       // Wait for potential second spawn (rate limited)
       await eventBus.flushHandlers();
 
@@ -397,7 +397,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       resourceMonitor.setCanSpawn(false);
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.flushHandlers();
 
       // Should not spawn when resources constrained
@@ -410,7 +410,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       resourceMonitor.setCanSpawn(false);
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.flushHandlers();
 
       expect(workerPool.spawnCalls.length).toBe(0);
@@ -637,7 +637,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       resourceMonitor.setCanSpawn(true);
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.waitFor('RequeueTask');
 
       expect(eventBus.hasEmitted('RequeueTask')).toBe(true);
@@ -653,7 +653,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       resourceMonitor.setCanSpawn(true);
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.waitFor('TaskFailed');
 
       expect(eventBus.hasEmitted('TaskFailed')).toBe(true);
@@ -667,7 +667,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
       resourceMonitor.setCanSpawn(true);
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.flushHandlers();
 
       // Should not crash, handler should continue functioning
@@ -698,7 +698,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       resourceMonitor.setCanSpawn(true);
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.waitFor('TaskStarting');
 
       // Task was dequeued directly and processing started
@@ -711,7 +711,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
       resourceMonitor.setCanSpawn(true);
       taskQueue.setDequeueResult(ok(task));
 
-      await eventBus.emit('TaskQueued', { taskId: task.id, task });
+      await eventBus.emit('TaskQueued', { taskId: task.id });
       await eventBus.waitFor('TaskStarting');
 
       // Should emit TaskStarting and TaskStarted events
@@ -733,7 +733,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         // Make TaskStarting emit fail
         eventBus.setEmitFailure('TaskStarting', true);
 
-        await eventBus.emit('TaskQueued', { taskId: task.id, task });
+        await eventBus.emit('TaskQueued', { taskId: task.id });
         await eventBus.waitFor('RequeueTask');
 
         expect(eventBus.hasEmitted('TaskStarting')).toBe(true);
@@ -752,7 +752,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         resourceMonitor.setCanSpawn(true);
         taskQueue.setDequeueResult(ok(task));
 
-        await eventBus.emit('TaskQueued', { taskId: task.id, task });
+        await eventBus.emit('TaskQueued', { taskId: task.id });
         await eventBus.waitFor('TaskFailed');
 
         expect(eventBus.hasEmitted('RequeueTask')).toBe(true);
@@ -765,7 +765,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         resourceMonitor.setCanSpawn(false); // Resources constrained
         taskQueue.setDequeueResult(ok(task));
 
-        await eventBus.emit('TaskQueued', { taskId: task.id, task });
+        await eventBus.emit('TaskQueued', { taskId: task.id });
         await eventBus.flushHandlers();
 
         // Should NOT have dequeued since resources unavailable
@@ -779,7 +779,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         resourceMonitor.setCanSpawn(true);
         taskQueue.setDequeueResult(ok(task));
 
-        await eventBus.emit('TaskQueued', { taskId: task.id, task });
+        await eventBus.emit('TaskQueued', { taskId: task.id });
         await eventBus.waitFor('TaskStarted');
 
         expect(eventBus.hasEmitted('TaskStarted')).toBe(true);
@@ -797,7 +797,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
         const initialCount = resourceMonitor.workerCount;
 
-        await eventBus.emit('TaskQueued', { taskId: task.id, task });
+        await eventBus.emit('TaskQueued', { taskId: task.id });
         await eventBus.waitFor('TaskStarted');
 
         expect(resourceMonitor.workerCount).toBe(initialCount + 1);
@@ -815,7 +815,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
         const initialCount = resourceMonitor.workerCount;
 
-        await eventBus.emit('TaskQueued', { taskId: task.id, task });
+        await eventBus.emit('TaskQueued', { taskId: task.id });
         await eventBus.waitFor('TaskFailed');
 
         expect(resourceMonitor.workerCount).toBe(initialCount);
@@ -825,7 +825,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         resourceMonitor.setCanSpawn(true);
         taskQueue.setDequeueResult(ok(null)); // Empty queue
 
-        await eventBus.emit('TaskQueued', { taskId: 'test', task: {} as unknown as Task });
+        await eventBus.emit('TaskQueued', { taskId: 'test' });
         await eventBus.flushHandlers();
 
         expect(eventBus.hasEmitted('TaskStarting')).toBe(false);
@@ -845,7 +845,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
         const initialWorkerCount = resourceMonitor.workerCount;
 
-        await eventBus.emit('TaskQueued', { taskId: task.id, task });
+        await eventBus.emit('TaskQueued', { taskId: task.id });
         await eventBus.waitFor('RequeueTask');
 
         expect(resourceMonitor.workerCount).toBe(initialWorkerCount);
@@ -864,7 +864,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
 
         const initialWorkerCount = resourceMonitor.workerCount;
 
-        await eventBus.emit('TaskQueued', { taskId: task.id, task });
+        await eventBus.emit('TaskQueued', { taskId: task.id });
         await eventBus.waitFor('TaskFailed');
 
         expect(resourceMonitor.workerCount).toBe(initialWorkerCount);
@@ -900,9 +900,9 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         taskQueue.setDequeueResult(ok(task1));
 
         await Promise.all([
-          eventBus.emit('TaskQueued', { taskId: task1.id, task: task1 }),
-          eventBus.emit('TaskQueued', { taskId: task1.id, task: task1 }),
-          eventBus.emit('TaskQueued', { taskId: task1.id, task: task1 }),
+          eventBus.emit('TaskQueued', { taskId: task1.id }),
+          eventBus.emit('TaskQueued', { taskId: task1.id }),
+          eventBus.emit('TaskQueued', { taskId: task1.id }),
         ]);
 
         await eventBus.waitFor('TaskStarted');
@@ -932,8 +932,8 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         taskQueue.setDequeueResult(ok(task1));
 
         await Promise.all([
-          eventBus.emit('TaskQueued', { taskId: task1.id, task: task1 }),
-          eventBus.emit('TaskQueued', { taskId: task2.id, task: task2 }),
+          eventBus.emit('TaskQueued', { taskId: task1.id }),
+          eventBus.emit('TaskQueued', { taskId: task2.id }),
         ]);
 
         await eventBus.waitFor('TaskStarted');
@@ -961,7 +961,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         resourceMonitor.setCanSpawn(true);
         taskQueue.setDequeueResult(ok(task1));
 
-        await eventBus.emit('TaskQueued', { taskId: task1.id, task: task1 });
+        await eventBus.emit('TaskQueued', { taskId: task1.id });
         await eventBus.waitFor('TaskFailed');
 
         expect(callCount).toBe(1);
@@ -970,7 +970,7 @@ describe('WorkerHandler - Event-Driven Worker Lifecycle', () => {
         taskQueue.setDequeueResult(ok(task2));
         eventBus.clearEmittedEvents();
 
-        await eventBus.emit('TaskQueued', { taskId: task2.id, task: task2 });
+        await eventBus.emit('TaskQueued', { taskId: task2.id });
         await eventBus.waitFor('TaskStarted');
 
         expect(callCount).toBe(2);

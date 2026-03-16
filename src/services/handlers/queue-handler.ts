@@ -104,15 +104,7 @@ export class QueueHandler extends BaseEventHandler implements TaskEnqueuer {
 
     // Emit event that task is now queued - critical for worker spawning
     // eventBus guaranteed non-null by fail-fast guard at method entry
-    await this.emitEvent(
-      this.eventBus,
-      'TaskQueued',
-      {
-        taskId: task.id,
-        task,
-      },
-      { context: { taskId: task.id } },
-    );
+    await this.emitEvent(this.eventBus, 'TaskQueued', { taskId: task.id }, { context: { taskId: task.id } });
 
     return ok(undefined);
   }
@@ -179,10 +171,7 @@ export class QueueHandler extends BaseEventHandler implements TaskEnqueuer {
         await this.emitEvent(
           this.eventBus,
           'TaskQueued',
-          {
-            taskId: task.id,
-            task,
-          },
+          { taskId: task.id },
           { context: { taskId: task.id, operation: 'requeue' } },
         );
         // Don't fail the requeue operation - the task is in the queue
@@ -249,10 +238,7 @@ export class QueueHandler extends BaseEventHandler implements TaskEnqueuer {
         await this.emitEvent(
           this.eventBus,
           'TaskQueued',
-          {
-            taskId: task.id,
-            task,
-          },
+          { taskId: task.id },
           { context: { taskId: task.id, operation: 'unblocked' } },
         );
       }

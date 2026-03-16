@@ -66,7 +66,6 @@ export class RecoveryManager {
         // CRITICAL: Emit TaskQueued event to trigger worker spawning
         const queuedEventResult = await this.eventBus.emit('TaskQueued', {
           taskId: task.id,
-          task: task,
         });
 
         if (!queuedEventResult.ok) {
@@ -150,7 +149,6 @@ export class RecoveryManager {
           // Emit TaskQueued event to trigger worker spawning
           const queuedEventResult = await this.eventBus.emit('TaskQueued', {
             taskId: task.id,
-            task: task,
           });
 
           if (!queuedEventResult.ok) {
