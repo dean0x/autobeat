@@ -3,10 +3,13 @@
  * Tests worker lifecycle, resource monitoring, and output capture
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
+import type { WorkerRepository } from '../../src/core/interfaces.js';
+import { ok } from '../../src/core/result.js';
 import { EventDrivenWorkerPool } from '../../src/implementations/event-driven-worker-pool.js';
 import { BufferedOutputCapture } from '../../src/implementations/output-capture.js';
+import type { OutputRepository } from '../../src/implementations/output-repository.js';
 import { createTestConfiguration } from '../fixtures/factories.js';
 import { createAgentRegistryFromSpawner } from '../fixtures/mock-agent.js';
 import { MockProcessSpawner } from '../fixtures/mock-process-spawner.js';
@@ -14,6 +17,35 @@ import { MockResourceMonitor } from '../fixtures/mock-resource-monitor.js';
 import { createTestTask as createTask } from '../fixtures/test-data.js';
 import { TestLogger } from '../fixtures/test-doubles.js';
 import { flushEventLoop } from '../utils/event-helpers.js';
+
+/**
+ * Create a mock WorkerRepository for integration tests.
+ * Uses vi.fn() so call assertions are possible.
+ */
+function createMockWorkerRepository(): WorkerRepository {
+  return {
+    register: vi.fn().mockReturnValue(ok(undefined)),
+    unregister: vi.fn().mockReturnValue(ok(undefined)),
+    findByTaskId: vi.fn().mockReturnValue(ok(null)),
+    findByOwnerPid: vi.fn().mockReturnValue(ok([])),
+    findAll: vi.fn().mockReturnValue(ok([])),
+    getGlobalCount: vi.fn().mockReturnValue(ok(0)),
+    deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
+  };
+}
+
+/**
+ * Create a mock OutputRepository for integration tests.
+ * Uses vi.fn() so call assertions are possible.
+ */
+function createMockOutputRepository(): OutputRepository {
+  return {
+    save: vi.fn().mockResolvedValue(ok(undefined)),
+    append: vi.fn().mockResolvedValue(ok(undefined)),
+    get: vi.fn().mockResolvedValue(ok(null)),
+    delete: vi.fn().mockResolvedValue(ok(undefined)),
+  };
+}
 
 describe('Integration: Worker pool management', () => {
   it('should handle worker pool lifecycle management', async () => {
@@ -23,6 +55,8 @@ describe('Integration: Worker pool management', () => {
     const processSpawner = new MockProcessSpawner();
     const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
     const resourceMonitor = new MockResourceMonitor();
+    const workerRepository = createMockWorkerRepository();
+    const outputRepository = createMockOutputRepository();
 
     const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
     const workerPool = new EventDrivenWorkerPool(
@@ -31,6 +65,8 @@ describe('Integration: Worker pool management', () => {
       logger, // logger
       eventBus, // eventBus
       outputCapture, // outputCapture
+      workerRepository, // workerRepository
+      outputRepository, // outputRepository
     );
 
     try {
@@ -110,6 +146,8 @@ describe('Integration: Worker pool management', () => {
     const resourceMonitor = new MockResourceMonitor();
     const processSpawner = new MockProcessSpawner();
     const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
+    const workerRepository = createMockWorkerRepository();
+    const outputRepository = createMockOutputRepository();
 
     const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
     const workerPool = new EventDrivenWorkerPool(
@@ -118,6 +156,8 @@ describe('Integration: Worker pool management', () => {
       logger, // logger
       eventBus, // eventBus
       outputCapture, // outputCapture
+      workerRepository, // workerRepository
+      outputRepository, // outputRepository
     );
 
     try {
@@ -246,6 +286,174 @@ describe('Integration: Worker pool management', () => {
       }
     } finally {
       outputCapture.cleanup();
+      eventBus.dispose();
+    }
+  });
+
+  it('should register worker in repository on spawn and unregister on completion', async () => {
+    const logger = new TestLogger();
+    const config = createTestConfiguration();
+    const eventBus = new InMemoryEventBus(config, logger);
+    const processSpawner = new MockProcessSpawner();
+    const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
+    const resourceMonitor = new MockResourceMonitor();
+    const workerRepository = createMockWorkerRepository();
+    const outputRepository = createMockOutputRepository();
+
+    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
+    const workerPool = new EventDrivenWorkerPool(
+      agentRegistry,
+      resourceMonitor,
+      logger,
+      eventBus,
+      outputCapture,
+      workerRepository,
+      outputRepository,
+    );
+
+    try {
+      const task = createTask({ prompt: 'register test' });
+
+      // Spawn worker
+      const spawnResult = await workerPool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
+
+      // WorkerRepository.register should have been called with task details
+      expect(workerRepository.register).toHaveBeenCalledTimes(1);
+      const registrationArg = (workerRepository.register as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(registrationArg.taskId).toBe(task.id);
+      expect(registrationArg.agent).toBe('claude');
+      expect(registrationArg.ownerPid).toBe(process.pid);
+
+      // Complete the worker
+      processSpawner.simulateCompletion(task.id, 'Done');
+      await flushEventLoop();
+
+      // WorkerRepository.unregister should have been called
+      expect(workerRepository.unregister).toHaveBeenCalledTimes(1);
+      expect(workerPool.getWorkerCount()).toBe(0);
+    } finally {
+      await workerPool.killAll();
+      eventBus.dispose();
+    }
+  });
+
+  it('should track global worker count via repository', async () => {
+    const logger = new TestLogger();
+    const config = createTestConfiguration();
+    const eventBus = new InMemoryEventBus(config, logger);
+    const processSpawner = new MockProcessSpawner();
+    const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
+    const resourceMonitor = new MockResourceMonitor();
+    const workerRepository = createMockWorkerRepository();
+    const outputRepository = createMockOutputRepository();
+
+    // Simulate getGlobalCount returning the number of registered workers
+    let registeredCount = 0;
+    (workerRepository.register as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      registeredCount++;
+      return ok(undefined);
+    });
+    (workerRepository.unregister as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      registeredCount = Math.max(0, registeredCount - 1);
+      return ok(undefined);
+    });
+    (workerRepository.getGlobalCount as ReturnType<typeof vi.fn>).mockImplementation(() => ok(registeredCount));
+
+    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
+    const workerPool = new EventDrivenWorkerPool(
+      agentRegistry,
+      resourceMonitor,
+      logger,
+      eventBus,
+      outputCapture,
+      workerRepository,
+      outputRepository,
+    );
+
+    try {
+      const tasks = Array.from({ length: 3 }, (_, i) => createTask({ prompt: `count task ${i}` }));
+
+      // Spawn 3 workers
+      for (const task of tasks) {
+        const result = await workerPool.spawn(task);
+        expect(result.ok).toBe(true);
+        resourceMonitor.updateWorkerCount(workerPool.getWorkerCount());
+      }
+
+      // Global count should reflect 3 registered workers
+      const countResult = workerRepository.getGlobalCount();
+      expect(countResult.ok).toBe(true);
+      if (countResult.ok) {
+        expect(countResult.value).toBe(3);
+      }
+
+      // Complete one worker
+      processSpawner.simulateCompletion(tasks[0].id, 'Done');
+      await flushEventLoop();
+
+      // Global count should drop to 2
+      const countResult2 = workerRepository.getGlobalCount();
+      expect(countResult2.ok).toBe(true);
+      if (countResult2.ok) {
+        expect(countResult2.value).toBe(2);
+      }
+
+      expect(workerPool.getWorkerCount()).toBe(2);
+    } finally {
+      await workerPool.killAll();
+      eventBus.dispose();
+    }
+  });
+
+  it('should persist output to repository via ProcessConnector flush', async () => {
+    const logger = new TestLogger();
+    const config = createTestConfiguration();
+    const eventBus = new InMemoryEventBus(config, logger);
+    const processSpawner = new MockProcessSpawner();
+    const outputCapture = new BufferedOutputCapture(10 * 1024 * 1024, eventBus);
+    const resourceMonitor = new MockResourceMonitor();
+    const workerRepository = createMockWorkerRepository();
+    const outputRepository = createMockOutputRepository();
+
+    const agentRegistry = createAgentRegistryFromSpawner(processSpawner);
+    const workerPool = new EventDrivenWorkerPool(
+      agentRegistry,
+      resourceMonitor,
+      logger,
+      eventBus,
+      outputCapture,
+      workerRepository,
+      outputRepository,
+    );
+
+    try {
+      const task = createTask({ prompt: 'output persist test' });
+
+      // Spawn worker
+      const spawnResult = await workerPool.spawn(task);
+      expect(spawnResult.ok).toBe(true);
+
+      // Capture some output in the buffer
+      outputCapture.capture(task.id, 'stdout', 'Hello from worker\n');
+      outputCapture.capture(task.id, 'stderr', 'Warning: something\n');
+
+      // Complete the worker (triggers final flush via ProcessConnector)
+      processSpawner.simulateCompletion(task.id, 'Hello from worker');
+      await flushEventLoop();
+
+      // OutputRepository.save should have been called during flush
+      // The ProcessConnector flushes on completion, persisting captured output
+      expect(outputRepository.save).toHaveBeenCalled();
+
+      // Verify the save was called with the task ID
+      const saveCalls = (outputRepository.save as ReturnType<typeof vi.fn>).mock.calls;
+      const saveForTask = saveCalls.find((call: unknown[]) => call[0] === task.id);
+      expect(saveForTask).toBeDefined();
+
+      expect(workerPool.getWorkerCount()).toBe(0);
+    } finally {
+      await workerPool.killAll();
       eventBus.dispose();
     }
   });

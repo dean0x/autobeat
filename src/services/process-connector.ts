@@ -1,20 +1,24 @@
 /**
  * Process Connector Service
- * Connects process stdout/stderr to OutputCapture
+ * Connects process stdout/stderr to OutputCapture and periodically flushes to OutputRepository
  */
 
 import { ChildProcess } from 'child_process';
 import { TaskId } from '../core/domain.js';
 import { Logger, OutputCapture } from '../core/interfaces.js';
+import { OutputRepository } from '../implementations/output-repository.js';
 
 export class ProcessConnector {
+  private readonly flushIntervals = new Map<TaskId, NodeJS.Timeout>();
+
   constructor(
     private readonly outputCapture: OutputCapture,
     private readonly logger: Logger,
+    private readonly outputRepository: OutputRepository,
   ) {}
 
   /**
-   * Connect a process to output capture
+   * Connect a process to output capture with periodic DB persistence
    */
   connect(process: ChildProcess, taskId: TaskId, onExit: (code: number | null) => void): void {
     let exitHandled = false;
@@ -25,8 +29,19 @@ export class ProcessConnector {
         return;
       }
       exitHandled = true;
-      onExit(code ?? null); // Use nullish coalescing to preserve 0
+
+      // Stop periodic flushing
+      this.stopFlushing(taskId);
+
+      // Final flush, then free memory, then signal completion (Edge Cases B, C)
+      this.flushOutput(taskId)
+        .then(() => this.outputCapture.clear(taskId)) // Free in-memory buffer after persist
+        .catch((e) =>
+          this.logger.error('Final flush failed', e instanceof Error ? e : new Error(String(e)), { taskId }),
+        )
+        .finally(() => onExit(code ?? null)); // Use nullish coalescing to preserve 0
     };
+
     // Capture stdout
     if (process.stdout) {
       process.stdout.on('data', (data: Buffer) => {
@@ -51,10 +66,17 @@ export class ProcessConnector {
       });
     }
 
+    // Start periodic output flushing to DB (every 500ms)
+    const interval = setInterval(() => {
+      this.flushOutput(taskId).catch((e) =>
+        this.logger.error('Periodic flush failed', e instanceof Error ? e : new Error(String(e)), { taskId }),
+      );
+    }, 500);
+    this.flushIntervals.set(taskId, interval);
+
     // Handle process exit
     process.on('exit', (code) => {
       this.logger.debug('Process exited', { taskId, code, codeType: typeof code });
-      // Removed console.error to avoid interfering with output capture
       safeOnExit(code);
     });
 
@@ -69,5 +91,35 @@ export class ProcessConnector {
 
       safeOnExit(1);
     });
+  }
+
+  /**
+   * Stop periodic output flushing for a task.
+   * Called by WorkerPool.kill() before sending SIGTERM to prevent
+   * flush attempts after the database closes (Edge Case I).
+   */
+  stopFlushing(taskId: TaskId): void {
+    const interval = this.flushIntervals.get(taskId);
+    if (interval) {
+      clearInterval(interval);
+      this.flushIntervals.delete(taskId);
+    }
+  }
+
+  /**
+   * Flush current in-memory output to the database.
+   * Reads accumulated output from OutputCapture and writes a snapshot via save().
+   */
+  async flushOutput(taskId: TaskId): Promise<void> {
+    const outputResult = this.outputCapture.getOutput(taskId);
+    if (!outputResult.ok) return;
+
+    const output = outputResult.value;
+    if (output.totalSize === 0) return;
+
+    const saveResult = await this.outputRepository.save(taskId, output);
+    if (!saveResult.ok) {
+      this.logger.error('Failed to persist output', saveResult.error, { taskId });
+    }
   }
 }
