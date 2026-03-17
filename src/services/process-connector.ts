@@ -10,11 +10,13 @@ import { OutputRepository } from '../implementations/output-repository.js';
 
 export class ProcessConnector {
   private readonly flushIntervals = new Map<TaskId, NodeJS.Timeout>();
+  private readonly flushingInProgress = new Set<TaskId>();
 
   constructor(
     private readonly outputCapture: OutputCapture,
     private readonly logger: Logger,
     private readonly outputRepository: OutputRepository,
+    private readonly flushIntervalMs: number = 5000,
   ) {}
 
   /**
@@ -66,12 +68,23 @@ export class ProcessConnector {
       });
     }
 
-    // Start periodic output flushing to DB (every 500ms)
+    // Start periodic output flushing to DB
     const interval = setInterval(() => {
-      this.flushOutput(taskId).catch((e) =>
-        this.logger.error('Periodic flush failed', e instanceof Error ? e : new Error(String(e)), { taskId }),
-      );
-    }, 500);
+      // Backpressure guard: skip if previous flush is still in-flight
+      if (this.flushingInProgress.has(taskId)) {
+        this.logger.debug('Skipping flush — previous flush still in-flight', { taskId });
+        return;
+      }
+
+      this.flushingInProgress.add(taskId);
+      this.flushOutput(taskId)
+        .catch((e) =>
+          this.logger.error('Periodic flush failed', e instanceof Error ? e : new Error(String(e)), { taskId }),
+        )
+        .finally(() => {
+          this.flushingInProgress.delete(taskId);
+        });
+    }, this.flushIntervalMs);
     this.flushIntervals.set(taskId, interval);
 
     // Handle process exit
@@ -104,6 +117,7 @@ export class ProcessConnector {
       clearInterval(interval);
       this.flushIntervals.delete(taskId);
     }
+    this.flushingInProgress.delete(taskId);
   }
 
   /**

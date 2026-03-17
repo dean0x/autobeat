@@ -36,8 +36,9 @@ export class EventDrivenWorkerPool implements WorkerPool {
     outputCapture: OutputCapture,
     private readonly workerRepository: WorkerRepository,
     outputRepository: OutputRepository,
+    outputFlushIntervalMs?: number,
   ) {
-    this.processConnector = new ProcessConnector(outputCapture, logger, outputRepository);
+    this.processConnector = new ProcessConnector(outputCapture, logger, outputRepository, outputFlushIntervalMs);
   }
 
   async spawn(task: Task): Promise<Result<Worker>> {

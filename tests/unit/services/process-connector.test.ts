@@ -180,27 +180,28 @@ describe('ProcessConnector', () => {
     expect(onExit).toHaveBeenCalledWith(0);
   });
 
-  it('should start periodic flush that calls outputRepository.save every 500ms', async () => {
+  it('should start periodic flush at configured interval', async () => {
     const capture = createMockOutputCapture();
     (capture.getOutput as ReturnType<typeof vi.fn>).mockReturnValue(
       ok({ taskId, stdout: ['line1'], stderr: [], totalSize: 5 }),
     );
     const logger = createTestLogger();
     const outputRepo = createMockOutputRepository();
-    const connector = new ProcessConnector(capture, logger, outputRepo);
+    const flushIntervalMs = 500;
+    const connector = new ProcessConnector(capture, logger, outputRepo, flushIntervalMs);
     const proc = createMockProcess();
     const onExit = vi.fn();
 
     connector.connect(proc as never, taskId, onExit);
 
     // Advance past one flush interval
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(flushIntervalMs);
 
     expect(capture.getOutput).toHaveBeenCalledWith(taskId);
     expect(outputRepo.save).toHaveBeenCalledWith(taskId, { taskId, stdout: ['line1'], stderr: [], totalSize: 5 });
 
     // Advance another interval — should flush again
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(flushIntervalMs);
     expect(outputRepo.save).toHaveBeenCalledTimes(2);
   });
 
@@ -209,13 +210,14 @@ describe('ProcessConnector', () => {
     // Default mock returns totalSize: 0
     const logger = createTestLogger();
     const outputRepo = createMockOutputRepository();
-    const connector = new ProcessConnector(capture, logger, outputRepo);
+    const flushIntervalMs = 500;
+    const connector = new ProcessConnector(capture, logger, outputRepo, flushIntervalMs);
     const proc = createMockProcess();
     const onExit = vi.fn();
 
     connector.connect(proc as never, taskId, onExit);
 
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(flushIntervalMs);
 
     expect(capture.getOutput).toHaveBeenCalledWith(taskId);
     expect(outputRepo.save).not.toHaveBeenCalled();
@@ -228,21 +230,22 @@ describe('ProcessConnector', () => {
     );
     const logger = createTestLogger();
     const outputRepo = createMockOutputRepository();
-    const connector = new ProcessConnector(capture, logger, outputRepo);
+    const flushIntervalMs = 500;
+    const connector = new ProcessConnector(capture, logger, outputRepo, flushIntervalMs);
     const proc = createMockProcess();
     const onExit = vi.fn();
 
     connector.connect(proc as never, taskId, onExit);
 
     // First interval fires
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(flushIntervalMs);
     expect(outputRepo.save).toHaveBeenCalledTimes(1);
 
     // Stop flushing
     connector.stopFlushing(taskId);
 
     // Next interval should NOT fire
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(flushIntervalMs);
     expect(outputRepo.save).toHaveBeenCalledTimes(1);
   });
 
@@ -270,6 +273,48 @@ describe('ProcessConnector', () => {
 
     // onExit should still be called
     expect(onExit).toHaveBeenCalledWith(0);
+  });
+
+  it('should skip flush when previous flush is still in-flight (backpressure)', async () => {
+    const capture = createMockOutputCapture();
+    (capture.getOutput as ReturnType<typeof vi.fn>).mockReturnValue(
+      ok({ taskId, stdout: ['data'], stderr: [], totalSize: 4 }),
+    );
+    const logger = createTestLogger();
+    const outputRepo = createMockOutputRepository();
+
+    // Make save hang indefinitely (never resolves during test)
+    let resolveSave: (() => void) | undefined;
+    (outputRepo.save as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    const flushIntervalMs = 500;
+    const connector = new ProcessConnector(capture, logger, outputRepo, flushIntervalMs);
+    const proc = createMockProcess();
+    const onExit = vi.fn();
+
+    connector.connect(proc as never, taskId, onExit);
+
+    // First interval fires — starts a flush that hangs
+    await vi.advanceTimersByTimeAsync(flushIntervalMs);
+    expect(outputRepo.save).toHaveBeenCalledTimes(1);
+
+    // Second interval fires — should skip because first is still in-flight
+    await vi.advanceTimersByTimeAsync(flushIntervalMs);
+    expect(outputRepo.save).toHaveBeenCalledTimes(1);
+    expect(logger.debug).toHaveBeenCalledWith('Skipping flush — previous flush still in-flight', { taskId });
+
+    // Resolve the hanging flush
+    resolveSave!();
+    await vi.advanceTimersByTimeAsync(0); // Let promise resolve
+
+    // Third interval fires — should flush again now that previous completed
+    await vi.advanceTimersByTimeAsync(flushIntervalMs);
+    expect(outputRepo.save).toHaveBeenCalledTimes(2);
   });
 
   it('should call onExit even when final flush fails', async () => {

@@ -342,6 +342,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       getFromContainer<OutputCapture>(container, 'outputCapture'),
       getFromContainer<WorkerRepository>(container, 'workerRepository'),
       getFromContainer<OutputRepository>(container, 'outputRepository'),
+      config.outputFlushIntervalMs,
     );
     return pool;
   });
