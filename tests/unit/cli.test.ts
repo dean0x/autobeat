@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReadOnlyContext } from '../../src/cli/read-only-context';
 import { AGENT_PROVIDERS, isAgentProvider } from '../../src/core/agents';
 import { loadConfiguration } from '../../src/core/configuration';
 import type { Container } from '../../src/core/container';
@@ -42,9 +43,8 @@ import type {
   TaskTimeoutEvent,
 } from '../../src/core/events/events';
 import type { ScheduleRepository, ScheduleService, TaskManager, TaskRepository } from '../../src/core/interfaces';
-import type { OutputRepository } from '../../src/implementations/output-repository';
-import type { ReadOnlyContext } from '../../src/cli/read-only-context';
 import { err, ok, type Result } from '../../src/core/result';
+import type { OutputRepository } from '../../src/implementations/output-repository';
 import { TaskFactory } from '../fixtures/factories';
 
 // Test constants
@@ -355,7 +355,10 @@ class MockReadOnlyContext {
     },
   };
 
-  readonly scheduleRepository: Pick<ScheduleRepository, 'findAll' | 'findByStatus' | 'findById' | 'getExecutionHistory'> = {
+  readonly scheduleRepository: Pick<
+    ScheduleRepository,
+    'findAll' | 'findByStatus' | 'findById' | 'getExecutionHistory'
+  > = {
     findAll: async (limit?: number) => {
       const all = Array.from(this.scheduleStorage.values());
       return ok(limit ? all.slice(0, limit) : all);
@@ -2081,10 +2084,7 @@ async function simulateRunCommand(taskManager: MockTaskManager, prompt: string, 
  * Simulates `beat status <task-id>` — mirrors production code in status.ts
  * which calls ctx.taskRepository.findById(TaskId(taskId))
  */
-async function simulateStatusCommand(
-  ctx: MockReadOnlyContext,
-  taskId: string,
-): Promise<Result<Task | null>> {
+async function simulateStatusCommand(ctx: MockReadOnlyContext, taskId: string): Promise<Result<Task | null>> {
   return await ctx.taskRepository.findById(TaskId(taskId));
 }
 
@@ -2092,9 +2092,7 @@ async function simulateStatusCommand(
  * Simulates `beat status` (no task ID) — mirrors production code in status.ts
  * which calls ctx.taskRepository.findAll()
  */
-async function simulateStatusCommandAll(
-  ctx: MockReadOnlyContext,
-): Promise<Result<readonly Task[]>> {
+async function simulateStatusCommandAll(ctx: MockReadOnlyContext): Promise<Result<readonly Task[]>> {
   return await ctx.taskRepository.findAll();
 }
 

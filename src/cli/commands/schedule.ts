@@ -286,9 +286,7 @@ async function scheduleList(repo: ScheduleRepository, scheduleArgs: string[]): P
     }
   }
 
-  const result = statusValue
-    ? await repo.findByStatus(statusValue, limit)
-    : await repo.findAll(limit);
+  const result = statusValue ? await repo.findByStatus(statusValue, limit) : await repo.findAll(limit);
 
   if (result.ok) {
     const schedules = result.value;
