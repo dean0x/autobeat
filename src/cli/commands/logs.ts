@@ -5,9 +5,10 @@ import * as ui from '../ui.js';
 
 export async function getTaskLogs(taskId: string, tail?: number) {
   const s = ui.createSpinner();
+  let ctx: ReturnType<typeof withReadOnlyContext> | undefined;
   try {
     s.start(`Fetching logs for ${taskId}...`);
-    const ctx = withReadOnlyContext(s);
+    ctx = withReadOnlyContext(s);
 
     // Validate task exists
     const taskResult = await ctx.taskRepository.findById(TaskId(taskId));
@@ -72,5 +73,7 @@ export async function getTaskLogs(taskId: string, tail?: number) {
     s.stop('Failed');
     ui.error(errorMessage(error));
     process.exit(1);
+  } finally {
+    ctx?.close();
   }
 }
