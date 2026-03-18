@@ -34,7 +34,7 @@ export async function getTaskLogs(taskId: string, tail?: number): Promise<void> 
 
     if (!outputResult.value) {
       s.stop('No output captured');
-      process.exit(0);
+      return;
     }
 
     const output = outputResult.value;
@@ -52,7 +52,7 @@ export async function getTaskLogs(taskId: string, tail?: number): Promise<void> 
 
     if (!hasOutput) {
       s.stop('No output captured');
-      process.exit(0);
+      return;
     }
 
     s.stop(`Logs for ${taskId}`);
@@ -60,7 +60,7 @@ export async function getTaskLogs(taskId: string, tail?: number): Promise<void> 
     if (stdoutLines.length > 0) {
       ui.step(`stdout${tail ? ` (last ${tail} lines)` : ''}`);
       for (const line of stdoutLines) {
-        process.stderr.write(`${line}\n`);
+        process.stdout.write(`${line}\n`);
       }
     }
     if (stderrLines.length > 0) {
@@ -69,7 +69,6 @@ export async function getTaskLogs(taskId: string, tail?: number): Promise<void> 
         process.stderr.write(`${line}\n`);
       }
     }
-    process.exit(0);
   } catch (error) {
     s.stop('Failed');
     ui.error(errorMessage(error));
@@ -77,4 +76,5 @@ export async function getTaskLogs(taskId: string, tail?: number): Promise<void> 
   } finally {
     ctx?.close();
   }
+  process.exit(0);
 }

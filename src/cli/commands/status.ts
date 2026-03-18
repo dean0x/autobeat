@@ -77,7 +77,6 @@ export async function getTaskStatus(taskId?: string): Promise<void> {
         process.exit(1);
       }
     }
-    process.exit(0);
   } catch (error) {
     s.stop('Failed');
     ui.error(errorMessage(error));
@@ -85,4 +84,5 @@ export async function getTaskStatus(taskId?: string): Promise<void> {
   } finally {
     ctx?.close();
   }
+  process.exit(0);
 }
