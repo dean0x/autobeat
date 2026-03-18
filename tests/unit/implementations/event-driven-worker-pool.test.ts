@@ -5,12 +5,7 @@ import type { Task } from '../../../src/core/domain';
 import { TaskId, WorkerId } from '../../../src/core/domain';
 import { BackbeatError, ErrorCode } from '../../../src/core/errors';
 import type { EventBus } from '../../../src/core/events/event-bus';
-import type {
-  Logger,
-  OutputCapture,
-  ProcessSpawner,
-  ResourceMonitor,
-} from '../../../src/core/interfaces';
+import type { Logger, OutputCapture, ProcessSpawner, ResourceMonitor } from '../../../src/core/interfaces';
 import { err, ok } from '../../../src/core/result';
 import { InMemoryAgentRegistry } from '../../../src/implementations/agent-registry';
 import { EventDrivenWorkerPool } from '../../../src/implementations/event-driven-worker-pool';
@@ -78,7 +73,6 @@ const createTestEventBus = () =>
     unsubscribeAll: vi.fn(),
     dispose: vi.fn(),
   }) as unknown as EventBus;
-
 
 /**
  * Helper to build a Task object without using withId() (which mutates a frozen object).

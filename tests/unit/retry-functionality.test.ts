@@ -18,8 +18,8 @@ import { PersistenceHandler } from '../../src/services/handlers/persistence-hand
 import { QueueHandler } from '../../src/services/handlers/queue-handler.js';
 import { TaskManagerService } from '../../src/services/task-manager.js';
 import { BUFFER_SIZES, TIMEOUTS } from '../constants.js';
-import { TestLogger } from '../fixtures/test-doubles.js';
 import { createMockOutputRepository } from '../fixtures/mocks.js';
+import { TestLogger } from '../fixtures/test-doubles.js';
 
 describe('Retry Functionality', () => {
   let taskManager: TaskManagerService;
@@ -51,7 +51,14 @@ describe('Retry Functionality', () => {
     const outputCapture = new BufferedOutputCapture(BUFFER_SIZES.MEDIUM, eventBus);
 
     // Initialize task manager with hybrid architecture: direct repository + event bus
-    taskManager = new TaskManagerService(eventBus, logger, config, repository, outputCapture, createMockOutputRepository());
+    taskManager = new TaskManagerService(
+      eventBus,
+      logger,
+      config,
+      repository,
+      outputCapture,
+      createMockOutputRepository(),
+    );
 
     // Set up persistence handler for task save on TaskDelegated
     const dependencyRepo = new SQLiteDependencyRepository(database);

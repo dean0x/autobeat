@@ -138,23 +138,17 @@ export class SQLiteWorkerRepository implements WorkerRepository {
   }
 
   findAll(): Result<readonly WorkerRegistration[]> {
-    return tryCatch(
-      () => {
-        const rows = this.findAllStmt.all() as WorkerRow[];
-        return rows.map((row) => this.rowToRegistration(row));
-      },
-      operationErrorHandler('find all workers'),
-    );
+    return tryCatch(() => {
+      const rows = this.findAllStmt.all() as WorkerRow[];
+      return rows.map((row) => this.rowToRegistration(row));
+    }, operationErrorHandler('find all workers'));
   }
 
   getGlobalCount(): Result<number> {
-    return tryCatch(
-      () => {
-        const row = this.countStmt.get() as { count: number };
-        return row.count;
-      },
-      operationErrorHandler('get global worker count'),
-    );
+    return tryCatch(() => {
+      const row = this.countStmt.get() as { count: number };
+      return row.count;
+    }, operationErrorHandler('get global worker count'));
   }
 
   deleteByOwnerPid(ownerPid: number): Result<number> {
