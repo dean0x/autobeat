@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReadOnlyContext } from '../../src/cli/read-only-context';
 import { AGENT_PROVIDERS, isAgentProvider } from '../../src/core/agents';
 import { loadConfiguration } from '../../src/core/configuration';
 import type { Container } from '../../src/core/container';
@@ -21,6 +22,7 @@ import type {
   ScheduledPipelineCreateRequest,
   ScheduleExecution,
   Task,
+  TaskOutput,
   TaskRequest,
 } from '../../src/core/domain';
 import {
@@ -40,8 +42,9 @@ import type {
   TaskFailedEvent,
   TaskTimeoutEvent,
 } from '../../src/core/events/events';
-import type { ScheduleService, TaskManager } from '../../src/core/interfaces';
-import { err, ok } from '../../src/core/result';
+import type { ScheduleRepository, ScheduleService, TaskManager, TaskRepository } from '../../src/core/interfaces';
+import { err, ok, type Result } from '../../src/core/result';
+import type { OutputRepository } from '../../src/implementations/output-repository';
 import { TaskFactory } from '../fixtures/factories';
 
 // Test constants
@@ -322,12 +325,90 @@ class MockContainer implements Container {
   }
 }
 
+/**
+ * Mock ReadOnlyContext for CLI read-only command testing
+ *
+ * Production code (status, logs, schedule list/get) uses withReadOnlyContext()
+ * which creates a ReadOnlyContext with taskRepository, outputRepository,
+ * scheduleRepository, and close(). These mock repositories mirror the same
+ * interfaces used by the production code paths.
+ */
+class MockReadOnlyContext {
+  readonly taskStorage = new Map<string, Task>();
+  readonly outputStorage = new Map<string, TaskOutput>();
+  readonly scheduleStorage = new Map<string, Schedule>();
+
+  readonly taskRepository: Pick<TaskRepository, 'findById' | 'findAll'> = {
+    findById: async (taskId: string) => {
+      const task = this.taskStorage.get(taskId);
+      return ok(task ?? null);
+    },
+    findAll: async () => {
+      return ok(Array.from(this.taskStorage.values()));
+    },
+  };
+
+  readonly outputRepository: Pick<OutputRepository, 'get'> = {
+    get: async (taskId: string) => {
+      const output = this.outputStorage.get(taskId);
+      return ok(output ?? null);
+    },
+  };
+
+  readonly scheduleRepository: Pick<
+    ScheduleRepository,
+    'findAll' | 'findByStatus' | 'findById' | 'getExecutionHistory'
+  > = {
+    findAll: async (limit?: number) => {
+      const all = Array.from(this.scheduleStorage.values());
+      return ok(limit ? all.slice(0, limit) : all);
+    },
+    findByStatus: async (status: string, limit?: number) => {
+      const filtered = Array.from(this.scheduleStorage.values()).filter((s) => s.status === status);
+      return ok(limit ? filtered.slice(0, limit) : filtered);
+    },
+    findById: async (scheduleId: string) => {
+      const schedule = this.scheduleStorage.get(scheduleId);
+      return ok(schedule ?? null);
+    },
+    getExecutionHistory: async (_scheduleId: string, _limit?: number) => {
+      return ok([] as readonly ScheduleExecution[]);
+    },
+  };
+
+  close = vi.fn();
+
+  /** Seed a task into the mock storage */
+  addTask(task: Task): void {
+    this.taskStorage.set(task.id, task);
+  }
+
+  /** Seed task output into the mock storage */
+  addOutput(taskId: string, output: TaskOutput): void {
+    this.outputStorage.set(taskId, output);
+  }
+
+  /** Seed a schedule into the mock storage */
+  addSchedule(schedule: Schedule): void {
+    this.scheduleStorage.set(schedule.id, schedule);
+  }
+
+  reset(): void {
+    this.taskStorage.clear();
+    this.outputStorage.clear();
+    this.scheduleStorage.clear();
+    this.close.mockClear();
+  }
+}
+
 describe('CLI - Command Parsing and Validation', () => {
   let mockTaskManager: MockTaskManager;
   let mockContainer: MockContainer;
+  let mockReadOnlyCtx: MockReadOnlyContext;
 
   beforeEach(() => {
     mockTaskManager = new MockTaskManager();
+    mockReadOnlyCtx = new MockReadOnlyContext();
     mockContainer = new MockContainer();
     mockContainer.registerValue('taskManager', mockTaskManager);
     mockContainer.registerValue('logger', {
@@ -346,6 +427,7 @@ describe('CLI - Command Parsing and Validation', () => {
 
   afterEach(() => {
     mockTaskManager.reset();
+    mockReadOnlyCtx.reset();
   });
 
   describe('Help Command', () => {
@@ -573,75 +655,64 @@ describe('CLI - Command Parsing and Validation', () => {
     });
   });
 
-  describe('Status Command - Single Task', () => {
-    it('should fetch status for specific task ID', async () => {
-      // First delegate a task
-      const runResult = await simulateRunCommand(mockTaskManager, VALID_PROMPT);
-      expect(runResult.ok).toBe(true);
+  describe('Status Command - Single Task (ReadOnlyContext)', () => {
+    it('should find task by ID via taskRepository.findById()', async () => {
+      const task = new TaskFactory().withId(VALID_TASK_ID).withPrompt(VALID_PROMPT).build();
+      mockReadOnlyCtx.addTask(task);
 
-      if (!runResult.ok) return;
-      const taskId = runResult.value.id;
+      const result = await simulateStatusCommand(mockReadOnlyCtx, VALID_TASK_ID);
 
-      // Then get status
-      const statusResult = await simulateStatusCommand(mockTaskManager, taskId);
-
-      expect(statusResult.ok).toBe(true);
-      expect(mockTaskManager.statusCalls).toHaveLength(1);
-      expect(mockTaskManager.statusCalls[0]).toBe(taskId);
-    });
-
-    it('should return task with all status fields', async () => {
-      const runResult = await simulateRunCommand(mockTaskManager, VALID_PROMPT);
-      expect(runResult.ok).toBe(true);
-
-      if (!runResult.ok) return;
-      const taskId = runResult.value.id;
-
-      const statusResult = await simulateStatusCommand(mockTaskManager, taskId);
-
-      expect(statusResult.ok).toBe(true);
-      if (statusResult.ok) {
-        expect(statusResult.value).toHaveProperty('id');
-        expect(statusResult.value).toHaveProperty('status');
-        expect(statusResult.value).toHaveProperty('prompt');
-        expect(statusResult.value).toHaveProperty('priority');
-        expect(statusResult.value).toHaveProperty('createdAt');
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).not.toBeNull();
+        expect(result.value!.id).toBe(VALID_TASK_ID);
       }
     });
 
-    it('should return error for non-existent task ID', async () => {
-      const result = await simulateStatusCommand(mockTaskManager, 'non-existent-task');
+    it('should return task with all status fields', async () => {
+      const task = new TaskFactory().withId(VALID_TASK_ID).withPrompt(VALID_PROMPT).build();
+      mockReadOnlyCtx.addTask(task);
 
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.code).toBe(ErrorCode.TASK_NOT_FOUND);
+      const result = await simulateStatusCommand(mockReadOnlyCtx, VALID_TASK_ID);
+
+      expect(result.ok).toBe(true);
+      if (result.ok && result.value) {
+        expect(result.value).toHaveProperty('id');
+        expect(result.value).toHaveProperty('status');
+        expect(result.value).toHaveProperty('prompt');
+        expect(result.value).toHaveProperty('priority');
+        expect(result.value).toHaveProperty('createdAt');
+      }
+    });
+
+    it('should return null for non-existent task ID', async () => {
+      const result = await simulateStatusCommand(mockReadOnlyCtx, 'non-existent-task');
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toBeNull();
       }
     });
 
     it('should handle task status transitions correctly', async () => {
-      const runResult = await simulateRunCommand(mockTaskManager, VALID_PROMPT);
-      expect(runResult.ok).toBe(true);
+      const task = new TaskFactory().withId(VALID_TASK_ID).withPrompt(VALID_PROMPT).build();
+      mockReadOnlyCtx.addTask(task);
 
-      if (!runResult.ok) return;
-      const taskId = runResult.value.id;
-
-      // Initial status should be queued
-      const statusResult = await simulateStatusCommand(mockTaskManager, taskId);
-      expect(statusResult.ok).toBe(true);
-      if (statusResult.ok) {
-        expect(['queued', 'running', 'completed']).toContain(statusResult.value.status);
+      const result = await simulateStatusCommand(mockReadOnlyCtx, VALID_TASK_ID);
+      expect(result.ok).toBe(true);
+      if (result.ok && result.value) {
+        expect(['queued', 'running', 'completed']).toContain(result.value.status);
       }
     });
   });
 
-  describe('Status Command - All Tasks', () => {
+  describe('Status Command - All Tasks (ReadOnlyContext)', () => {
     it('should list all tasks when no task ID provided', async () => {
-      // Delegate multiple tasks
-      await simulateRunCommand(mockTaskManager, 'task 1');
-      await simulateRunCommand(mockTaskManager, 'task 2');
-      await simulateRunCommand(mockTaskManager, 'task 3');
+      mockReadOnlyCtx.addTask(new TaskFactory().withId('task-1').withPrompt('task 1').build());
+      mockReadOnlyCtx.addTask(new TaskFactory().withId('task-2').withPrompt('task 2').build());
+      mockReadOnlyCtx.addTask(new TaskFactory().withId('task-3').withPrompt('task 3').build());
 
-      const result = await simulateStatusCommand(mockTaskManager);
+      const result = await simulateStatusCommandAll(mockReadOnlyCtx);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -651,7 +722,7 @@ describe('CLI - Command Parsing and Validation', () => {
     });
 
     it('should return empty array when no tasks exist', async () => {
-      const result = await simulateStatusCommand(mockTaskManager);
+      const result = await simulateStatusCommandAll(mockReadOnlyCtx);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -661,10 +732,10 @@ describe('CLI - Command Parsing and Validation', () => {
     });
 
     it('should include tasks with different statuses in listing', async () => {
-      await simulateRunCommand(mockTaskManager, 'task 1');
-      await simulateRunCommand(mockTaskManager, 'task 2');
+      mockReadOnlyCtx.addTask(new TaskFactory().withId('task-1').withPrompt('task 1').build());
+      mockReadOnlyCtx.addTask(new TaskFactory().withId('task-2').withPrompt('task 2').running().build());
 
-      const result = await simulateStatusCommand(mockTaskManager);
+      const result = await simulateStatusCommandAll(mockReadOnlyCtx);
 
       expect(result.ok).toBe(true);
       if (result.ok && Array.isArray(result.value)) {
@@ -676,73 +747,86 @@ describe('CLI - Command Parsing and Validation', () => {
     });
   });
 
-  describe('Logs Command', () => {
-    it('should fetch logs for specific task ID', async () => {
-      const runResult = await simulateRunCommand(mockTaskManager, VALID_PROMPT);
-      expect(runResult.ok).toBe(true);
+  describe('Logs Command (ReadOnlyContext)', () => {
+    it('should fetch logs via taskRepository.findById() then outputRepository.get()', async () => {
+      const task = new TaskFactory().withId(VALID_TASK_ID).withPrompt(VALID_PROMPT).build();
+      mockReadOnlyCtx.addTask(task);
+      mockReadOnlyCtx.addOutput(VALID_TASK_ID, {
+        taskId: TaskId(VALID_TASK_ID),
+        stdout: ['line 1', 'line 2', 'line 3'],
+        stderr: [],
+        totalSize: 24,
+      });
 
-      if (!runResult.ok) return;
-      const taskId = runResult.value.id;
-
-      const logsResult = await simulateLogsCommand(mockTaskManager, taskId);
+      const logsResult = await simulateLogsCommand(mockReadOnlyCtx, VALID_TASK_ID);
 
       expect(logsResult.ok).toBe(true);
-      expect(mockTaskManager.logsCalls).toHaveLength(1);
-      expect(mockTaskManager.logsCalls[0].taskId).toBe(taskId);
+      if (logsResult.ok && logsResult.value) {
+        expect(logsResult.value.stdout).toEqual(['line 1', 'line 2', 'line 3']);
+      }
     });
 
-    it('should return stdout and stderr arrays', async () => {
-      const runResult = await simulateRunCommand(mockTaskManager, VALID_PROMPT);
-      expect(runResult.ok).toBe(true);
+    it('should return stdout and stderr arrays from outputRepository', async () => {
+      const task = new TaskFactory().withId(VALID_TASK_ID).withPrompt(VALID_PROMPT).build();
+      mockReadOnlyCtx.addTask(task);
+      mockReadOnlyCtx.addOutput(VALID_TASK_ID, {
+        taskId: TaskId(VALID_TASK_ID),
+        stdout: ['output line'],
+        stderr: ['error line'],
+        totalSize: 30,
+      });
 
-      if (!runResult.ok) return;
-      const taskId = runResult.value.id;
-
-      const logsResult = await simulateLogsCommand(mockTaskManager, taskId);
+      const logsResult = await simulateLogsCommand(mockReadOnlyCtx, VALID_TASK_ID);
 
       expect(logsResult.ok).toBe(true);
-      if (logsResult.ok) {
+      if (logsResult.ok && logsResult.value) {
         expect(Array.isArray(logsResult.value.stdout)).toBe(true);
         expect(Array.isArray(logsResult.value.stderr)).toBe(true);
         expect(logsResult.value).toHaveProperty('totalSize');
       }
     });
 
-    it('should support tail option to limit output lines', async () => {
-      const runResult = await simulateRunCommand(mockTaskManager, VALID_PROMPT);
-      expect(runResult.ok).toBe(true);
+    it('should support tail option to slice output lines', async () => {
+      const task = new TaskFactory().withId(VALID_TASK_ID).withPrompt(VALID_PROMPT).build();
+      mockReadOnlyCtx.addTask(task);
+      mockReadOnlyCtx.addOutput(VALID_TASK_ID, {
+        taskId: TaskId(VALID_TASK_ID),
+        stdout: ['line 1', 'line 2', 'line 3', 'line 4', 'line 5'],
+        stderr: [],
+        totalSize: 50,
+      });
 
-      if (!runResult.ok) return;
-      const taskId = runResult.value.id;
+      const tailCount = 2;
+      const logsResult = await simulateLogsCommand(mockReadOnlyCtx, VALID_TASK_ID, tailCount);
 
-      const tailCount = 100;
-      await simulateLogsCommand(mockTaskManager, taskId, tailCount);
-
-      expect(mockTaskManager.logsCalls[0].tail).toBe(tailCount);
+      expect(logsResult.ok).toBe(true);
+      if (logsResult.ok && logsResult.value) {
+        // Production code slices: stdoutLines = output.stdout.slice(-tail)
+        expect(logsResult.value.stdout).toEqual(['line 4', 'line 5']);
+      }
     });
 
-    it('should return error for non-existent task', async () => {
-      const result = await simulateLogsCommand(mockTaskManager, 'non-existent-task');
+    it('should return null output for non-existent task', async () => {
+      const result = await simulateLogsCommand(mockReadOnlyCtx, 'non-existent-task');
 
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.code).toBe(ErrorCode.TASK_NOT_FOUND);
+      // Production code: taskRepository.findById() returns null -> error exit
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toBeNull();
       }
     });
 
     it('should handle tasks with no output gracefully', async () => {
-      const runResult = await simulateRunCommand(mockTaskManager, VALID_PROMPT);
-      expect(runResult.ok).toBe(true);
+      const task = new TaskFactory().withId(VALID_TASK_ID).withPrompt(VALID_PROMPT).build();
+      mockReadOnlyCtx.addTask(task);
+      // No output added — outputRepository.get() returns null
 
-      if (!runResult.ok) return;
-      const taskId = runResult.value.id;
-
-      const logsResult = await simulateLogsCommand(mockTaskManager, taskId);
+      const logsResult = await simulateLogsCommand(mockReadOnlyCtx, VALID_TASK_ID);
 
       expect(logsResult.ok).toBe(true);
       if (logsResult.ok) {
-        expect(logsResult.value.stdout.length).toBeGreaterThanOrEqual(0);
-        expect(logsResult.value.stderr.length).toBeGreaterThanOrEqual(0);
+        // Task exists but no output -> null output
+        expect(logsResult.value).toBeNull();
       }
     });
   });
@@ -793,7 +877,8 @@ describe('CLI - Command Parsing and Validation', () => {
 
       await simulateCancelCommand(mockTaskManager, taskId);
 
-      const statusResult = await simulateStatusCommand(mockTaskManager, taskId);
+      // Verify via TaskManager.getStatus() — cancel is a mutation command, not read-only
+      const statusResult = await mockTaskManager.getStatus(taskId);
       expect(statusResult.ok).toBe(true);
       if (statusResult.ok) {
         expect(statusResult.value.status).toBe('cancelled');
@@ -866,13 +951,16 @@ describe('CLI - Command Parsing and Validation', () => {
 
 describe('CLI - Schedule Commands', () => {
   let mockScheduleService: MockScheduleService;
+  let mockScheduleReadOnlyCtx: MockReadOnlyContext;
 
   beforeEach(() => {
     mockScheduleService = new MockScheduleService();
+    mockScheduleReadOnlyCtx = new MockReadOnlyContext();
   });
 
   afterEach(() => {
     mockScheduleService.reset();
+    mockScheduleReadOnlyCtx.reset();
   });
 
   describe('schedule create', () => {
@@ -999,15 +1087,37 @@ describe('CLI - Schedule Commands', () => {
     });
   });
 
-  describe('schedule list', () => {
-    it('should list all schedules without filter', async () => {
-      await simulateScheduleCreate(mockScheduleService, {
-        prompt: 'task 1',
-        type: 'cron',
-        cron: '0 9 * * *',
+  describe('schedule list (ReadOnlyContext)', () => {
+    it('should list all schedules via scheduleRepository.findAll()', async () => {
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'task 1' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
       });
+      mockScheduleReadOnlyCtx.addSchedule(schedule);
 
-      const result = await mockScheduleService.listSchedules();
+      const result = await simulateScheduleListCommand(mockScheduleReadOnlyCtx);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.length).toBe(1);
+        expect(result.value[0].id).toBe(schedule.id);
+      }
+    });
+
+    it('should filter by status via scheduleRepository.findByStatus()', async () => {
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'active task' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+      });
+      mockScheduleReadOnlyCtx.addSchedule(schedule);
+
+      const result = await simulateScheduleListCommand(mockScheduleReadOnlyCtx, ScheduleStatus.ACTIVE);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -1015,35 +1125,41 @@ describe('CLI - Schedule Commands', () => {
       }
     });
 
-    it('should filter by status', async () => {
-      const result = await mockScheduleService.listSchedules(ScheduleStatus.ACTIVE);
+    it('should return empty array when no schedules match status filter', async () => {
+      const result = await simulateScheduleListCommand(mockScheduleReadOnlyCtx, ScheduleStatus.PAUSED);
 
       expect(result.ok).toBe(true);
-      expect(mockScheduleService.listCalls).toHaveLength(1);
-      expect(mockScheduleService.listCalls[0].status).toBe(ScheduleStatus.ACTIVE);
+      if (result.ok) {
+        expect(result.value.length).toBe(0);
+      }
     });
   });
 
-  describe('schedule get', () => {
-    it('should get schedule details by ID', async () => {
-      const createResult = await simulateScheduleCreate(mockScheduleService, {
-        prompt: 'test',
-        type: 'cron',
-        cron: '0 9 * * *',
+  describe('schedule get (ReadOnlyContext)', () => {
+    it('should get schedule details by ID via scheduleRepository.findById()', async () => {
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'test' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
       });
-      expect(createResult.ok).toBe(true);
-      if (!createResult.ok) return;
+      mockScheduleReadOnlyCtx.addSchedule(schedule);
 
-      const result = await mockScheduleService.getSchedule(createResult.value.id);
+      const result = await simulateScheduleGetCommand(mockScheduleReadOnlyCtx, schedule.id);
       expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.schedule.id).toBe(createResult.value.id);
+      if (result.ok && result.value) {
+        expect(result.value.id).toBe(schedule.id);
+        expect(result.value.scheduleType).toBe(ScheduleType.CRON);
       }
     });
 
-    it('should return error for non-existent schedule', async () => {
-      const result = await mockScheduleService.getSchedule(ScheduleId('non-existent'));
-      expect(result.ok).toBe(false);
+    it('should return null for non-existent schedule', async () => {
+      const result = await simulateScheduleGetCommand(mockScheduleReadOnlyCtx, ScheduleId('non-existent'));
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toBeNull();
+      }
     });
   });
 
@@ -1964,12 +2080,80 @@ async function simulateRunCommand(taskManager: MockTaskManager, prompt: string, 
   return await taskManager.delegate(request);
 }
 
-async function simulateStatusCommand(taskManager: MockTaskManager, taskId?: string) {
-  return await taskManager.getStatus(taskId);
+/**
+ * Simulates `beat status <task-id>` — mirrors production code in status.ts
+ * which calls ctx.taskRepository.findById(TaskId(taskId))
+ */
+async function simulateStatusCommand(ctx: MockReadOnlyContext, taskId: string): Promise<Result<Task | null>> {
+  return await ctx.taskRepository.findById(TaskId(taskId));
 }
 
-async function simulateLogsCommand(taskManager: MockTaskManager, taskId: string, tail?: number) {
-  return await taskManager.getLogs(taskId, tail);
+/**
+ * Simulates `beat status` (no task ID) — mirrors production code in status.ts
+ * which calls ctx.taskRepository.findAll()
+ */
+async function simulateStatusCommandAll(ctx: MockReadOnlyContext): Promise<Result<readonly Task[]>> {
+  return await ctx.taskRepository.findAll();
+}
+
+/**
+ * Simulates `beat logs <task-id> [--tail N]` — mirrors production code in logs.ts
+ * which calls ctx.taskRepository.findById() then ctx.outputRepository.get()
+ * with optional tail slicing on the result.
+ */
+async function simulateLogsCommand(
+  ctx: MockReadOnlyContext,
+  taskId: string,
+  tail?: number,
+): Promise<Result<TaskOutput | null>> {
+  // Step 1: Validate task exists (mirrors logs.ts line 14)
+  const taskResult = await ctx.taskRepository.findById(TaskId(taskId));
+  if (!taskResult.ok) return taskResult as Result<null>;
+  if (!taskResult.value) return ok(null);
+
+  // Step 2: Read output (mirrors logs.ts line 27)
+  const outputResult = await ctx.outputRepository.get(TaskId(taskId));
+  if (!outputResult.ok) return outputResult;
+  if (!outputResult.value) return ok(null);
+
+  const output = outputResult.value;
+
+  // Step 3: Apply tail slicing (mirrors logs.ts lines 42-48)
+  if (tail && tail > 0) {
+    return ok({
+      ...output,
+      stdout: output.stdout.slice(-tail),
+      stderr: output.stderr.slice(-tail),
+    });
+  }
+
+  return ok(output);
+}
+
+/**
+ * Simulates `beat schedule list [--status X]` — mirrors production code in schedule.ts
+ * which calls ctx.scheduleRepository.findAll() or ctx.scheduleRepository.findByStatus()
+ */
+async function simulateScheduleListCommand(
+  ctx: MockReadOnlyContext,
+  status?: ScheduleStatus,
+  limit?: number,
+): Promise<Result<readonly Schedule[]>> {
+  if (status) {
+    return await ctx.scheduleRepository.findByStatus(status, limit);
+  }
+  return await ctx.scheduleRepository.findAll(limit);
+}
+
+/**
+ * Simulates `beat schedule get <schedule-id>` — mirrors production code in schedule.ts
+ * which calls ctx.scheduleRepository.findById()
+ */
+async function simulateScheduleGetCommand(
+  ctx: MockReadOnlyContext,
+  scheduleId: string,
+): Promise<Result<Schedule | null>> {
+  return await ctx.scheduleRepository.findById(ScheduleId(scheduleId));
 }
 
 async function simulateCancelCommand(taskManager: MockTaskManager, taskId: string, reason?: string) {

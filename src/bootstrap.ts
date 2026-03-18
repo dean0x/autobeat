@@ -39,6 +39,8 @@ export interface BootstrapOptions {
   skipResourceMonitoring?: boolean;
   /** Skip starting ScheduleExecutor (for short-lived CLI commands that exit before workers finish) */
   skipScheduleExecutor?: boolean;
+  /** Skip running RecoveryManager on startup (for short-lived CLI commands) */
+  skipRecovery?: boolean;
 }
 
 // Adapters
@@ -410,15 +412,19 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     );
   });
 
-  // Run recovery on startup
-  const recoveryResult = container.get('recoveryManager');
-  if (recoveryResult.ok) {
-    const recovery = recoveryResult.value as RecoveryManager;
-    recovery.recover().then((result) => {
-      if (!result.ok) {
-        logger.error('Recovery failed', result.error);
-      }
-    });
+  // Run recovery on startup (skip for short-lived CLI commands)
+  if (!options.skipRecovery) {
+    const recoveryResult = container.get('recoveryManager');
+    if (recoveryResult.ok) {
+      const recovery = recoveryResult.value as RecoveryManager;
+      recovery.recover().then((result) => {
+        if (!result.ok) {
+          logger.error('Recovery failed', result.error);
+        }
+      });
+    }
+  } else {
+    logger.info('Skipping recovery (skipRecovery=true)');
   }
 
   // Register schedule executor for task scheduling (v0.4.0)

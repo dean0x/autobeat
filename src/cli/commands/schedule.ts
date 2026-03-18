@@ -1,17 +1,37 @@
 import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
-import { ScheduleId } from '../../core/domain.js';
-import type { ScheduleService } from '../../core/interfaces.js';
+import { Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../core/domain.js';
+import type { ScheduleExecution, ScheduleRepository, ScheduleService } from '../../core/interfaces.js';
 import { toMissedRunPolicy } from '../../services/schedule-manager.js';
 import { validatePath } from '../../utils/validation.js';
-import { withServices } from '../services.js';
+import { withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
 
-export async function handleScheduleCommand(subCmd: string | undefined, scheduleArgs: string[]) {
+export async function handleScheduleCommand(subCmd: string | undefined, scheduleArgs: string[]): Promise<void> {
   if (!subCmd) {
     ui.error('Usage: beat schedule <create|list|get|cancel|pause|resume>');
     process.exit(1);
   }
 
+  // Read-only subcommands: lightweight context, no full bootstrap
+  if (subCmd === 'list' || subCmd === 'get') {
+    const s = ui.createSpinner();
+    s.start(subCmd === 'list' ? 'Fetching schedules...' : 'Fetching schedule...');
+    const ctx = withReadOnlyContext(s);
+    s.stop('Ready');
+
+    try {
+      if (subCmd === 'list') {
+        await scheduleList(ctx.scheduleRepository, scheduleArgs);
+      } else {
+        await scheduleGet(ctx.scheduleRepository, scheduleArgs);
+      }
+    } finally {
+      ctx.close();
+    }
+    process.exit(0);
+  }
+
+  // Mutation subcommands: full bootstrap
   const s = ui.createSpinner();
   s.start('Initializing...');
   const { scheduleService } = await withServices(s);
@@ -20,12 +40,6 @@ export async function handleScheduleCommand(subCmd: string | undefined, schedule
   switch (subCmd) {
     case 'create':
       await scheduleCreate(scheduleService, scheduleArgs);
-      break;
-    case 'list':
-      await scheduleList(scheduleService, scheduleArgs);
-      break;
-    case 'get':
-      await scheduleGet(scheduleService, scheduleArgs);
       break;
     case 'cancel':
       await scheduleCancel(scheduleService, scheduleArgs);
@@ -155,8 +169,6 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
     process.exit(1);
   }
 
-  const { ScheduleType, Priority } = await import('../../core/domain.js');
-
   // Pipeline mode: --pipeline with --step flags
   if (isPipeline) {
     if (promptWords.length > 0) {
@@ -245,7 +257,7 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) 
   }
 }
 
-async function scheduleList(service: ScheduleService, scheduleArgs: string[]) {
+async function scheduleList(repo: ScheduleRepository, scheduleArgs: string[]): Promise<void> {
   let status: string | undefined;
   let limit: number | undefined;
 
@@ -262,13 +274,19 @@ async function scheduleList(service: ScheduleService, scheduleArgs: string[]) {
     }
   }
 
-  const { ScheduleStatus } = await import('../../core/domain.js');
-  const statusEnum = status ? (status as keyof typeof ScheduleStatus) : undefined;
+  const validStatuses = Object.values(ScheduleStatus);
 
-  const result = await service.listSchedules(
-    statusEnum ? ScheduleStatus[statusEnum.toUpperCase() as keyof typeof ScheduleStatus] : undefined,
-    limit,
-  );
+  let statusValue: ScheduleStatus | undefined;
+  if (status) {
+    const normalized = status.toLowerCase();
+    statusValue = validStatuses.find((v) => v === normalized);
+    if (!statusValue) {
+      ui.error(`Invalid status: ${status}. Valid values: ${validStatuses.join(', ')}`);
+      process.exit(1);
+    }
+  }
+
+  const result = statusValue ? await repo.findByStatus(statusValue, limit) : await repo.findAll(limit);
 
   if (result.ok) {
     const schedules = result.value;
@@ -289,7 +307,7 @@ async function scheduleList(service: ScheduleService, scheduleArgs: string[]) {
   }
 }
 
-async function scheduleGet(service: ScheduleService, scheduleArgs: string[]) {
+async function scheduleGet(repo: ScheduleRepository, scheduleArgs: string[]): Promise<void> {
   const scheduleId = scheduleArgs[0];
   if (!scheduleId) {
     ui.error('Usage: beat schedule get <schedule-id> [--history] [--history-limit N]');
@@ -303,53 +321,68 @@ async function scheduleGet(service: ScheduleService, scheduleArgs: string[]) {
     historyLimit = parseInt(scheduleArgs[hlIdx + 1]);
   }
 
-  const result = await service.getSchedule(ScheduleId(scheduleId), includeHistory, historyLimit);
-
-  if (result.ok) {
-    const { schedule, history } = result.value;
-    const lines: string[] = [];
-    lines.push(`ID:          ${schedule.id}`);
-    lines.push(`Status:      ${ui.colorStatus(schedule.status)}`);
-    lines.push(`Type:        ${schedule.scheduleType}`);
-    if (schedule.cronExpression) lines.push(`Cron:        ${schedule.cronExpression}`);
-    if (schedule.scheduledAt) lines.push(`Scheduled:   ${new Date(schedule.scheduledAt).toISOString()}`);
-    lines.push(`Timezone:    ${schedule.timezone}`);
-    lines.push(`Missed Policy: ${schedule.missedRunPolicy}`);
-    lines.push(`Run Count:   ${schedule.runCount}${schedule.maxRuns ? '/' + schedule.maxRuns : ''}`);
-    if (schedule.lastRunAt) lines.push(`Last Run:    ${new Date(schedule.lastRunAt).toISOString()}`);
-    if (schedule.nextRunAt) lines.push(`Next Run:    ${new Date(schedule.nextRunAt).toISOString()}`);
-    if (schedule.expiresAt) lines.push(`Expires:     ${new Date(schedule.expiresAt).toISOString()}`);
-    if (schedule.afterScheduleId) lines.push(`After:       ${schedule.afterScheduleId}`);
-    lines.push(`Created:     ${new Date(schedule.createdAt).toISOString()}`);
-    lines.push(
-      `Prompt:      ${schedule.taskTemplate.prompt.substring(0, 100)}${schedule.taskTemplate.prompt.length > 100 ? '...' : ''}`,
-    );
-    if (schedule.taskTemplate.agent) lines.push(`Agent:       ${schedule.taskTemplate.agent}`);
-
-    if (schedule.pipelineSteps && schedule.pipelineSteps.length > 0) {
-      lines.push(`Pipeline:    ${schedule.pipelineSteps.length} steps`);
-      for (let i = 0; i < schedule.pipelineSteps.length; i++) {
-        const step = schedule.pipelineSteps[i];
-        const stepInfo = `  Step ${i + 1}: ${step.prompt.substring(0, 60)}${step.prompt.length > 60 ? '...' : ''}`;
-        lines.push(stepInfo);
-      }
-    }
-
-    ui.note(lines.join('\n'), 'Schedule Details');
-
-    if (history && history.length > 0) {
-      ui.step(`Execution History (${history.length} entries)`);
-      for (const h of history) {
-        const scheduled = new Date(h.scheduledFor).toISOString();
-        const executed = h.executedAt ? new Date(h.executedAt).toISOString() : 'n/a';
-        process.stderr.write(
-          `  ${h.status} | scheduled: ${scheduled} | executed: ${executed}${h.taskId ? ' | task: ' + h.taskId : ''}${h.errorMessage ? ' | error: ' + h.errorMessage : ''}\n`,
-        );
-      }
-    }
-  } else {
-    ui.error(`Failed to get schedule: ${result.error.message}`);
+  const scheduleResult = await repo.findById(ScheduleId(scheduleId));
+  if (!scheduleResult.ok) {
+    ui.error(`Failed to get schedule: ${scheduleResult.error.message}`);
     process.exit(1);
+  }
+  if (!scheduleResult.value) {
+    ui.error(`Schedule ${scheduleId} not found`);
+    process.exit(1);
+  }
+
+  const schedule = scheduleResult.value;
+
+  let history: readonly ScheduleExecution[] | undefined;
+  if (includeHistory) {
+    const historyResult = await repo.getExecutionHistory(ScheduleId(scheduleId), historyLimit);
+    if (historyResult.ok) {
+      history = historyResult.value;
+    } else {
+      ui.error(`Failed to fetch execution history: ${historyResult.error.message}`);
+      process.exit(1);
+    }
+  }
+
+  const lines: string[] = [];
+  lines.push(`ID:          ${schedule.id}`);
+  lines.push(`Status:      ${ui.colorStatus(schedule.status)}`);
+  lines.push(`Type:        ${schedule.scheduleType}`);
+  if (schedule.cronExpression) lines.push(`Cron:        ${schedule.cronExpression}`);
+  if (schedule.scheduledAt) lines.push(`Scheduled:   ${new Date(schedule.scheduledAt).toISOString()}`);
+  lines.push(`Timezone:    ${schedule.timezone}`);
+  lines.push(`Missed Policy: ${schedule.missedRunPolicy}`);
+  lines.push(`Run Count:   ${schedule.runCount}${schedule.maxRuns ? '/' + schedule.maxRuns : ''}`);
+  if (schedule.lastRunAt) lines.push(`Last Run:    ${new Date(schedule.lastRunAt).toISOString()}`);
+  if (schedule.nextRunAt) lines.push(`Next Run:    ${new Date(schedule.nextRunAt).toISOString()}`);
+  if (schedule.expiresAt) lines.push(`Expires:     ${new Date(schedule.expiresAt).toISOString()}`);
+  if (schedule.afterScheduleId) lines.push(`After:       ${schedule.afterScheduleId}`);
+  lines.push(`Created:     ${new Date(schedule.createdAt).toISOString()}`);
+  lines.push(
+    `Prompt:      ${schedule.taskTemplate.prompt.substring(0, 100)}${schedule.taskTemplate.prompt.length > 100 ? '...' : ''}`,
+  );
+  if (schedule.taskTemplate.agent) lines.push(`Agent:       ${schedule.taskTemplate.agent}`);
+
+  if (schedule.pipelineSteps && schedule.pipelineSteps.length > 0) {
+    lines.push(`Pipeline:    ${schedule.pipelineSteps.length} steps`);
+    for (let i = 0; i < schedule.pipelineSteps.length; i++) {
+      const step = schedule.pipelineSteps[i];
+      const stepInfo = `  Step ${i + 1}: ${step.prompt.substring(0, 60)}${step.prompt.length > 60 ? '...' : ''}`;
+      lines.push(stepInfo);
+    }
+  }
+
+  ui.note(lines.join('\n'), 'Schedule Details');
+
+  if (history && history.length > 0) {
+    ui.step(`Execution History (${history.length} entries)`);
+    for (const h of history) {
+      const scheduled = new Date(h.scheduledFor).toISOString();
+      const executed = h.executedAt ? new Date(h.executedAt).toISOString() : 'n/a';
+      process.stderr.write(
+        `  ${h.status} | scheduled: ${scheduled} | executed: ${executed}${h.taskId ? ' | task: ' + h.taskId : ''}${h.errorMessage ? ' | error: ' + h.errorMessage : ''}\n`,
+      );
+    }
   }
 }
 
