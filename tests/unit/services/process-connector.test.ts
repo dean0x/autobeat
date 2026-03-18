@@ -361,6 +361,9 @@ describe('ProcessConnector', () => {
     // onExit must still be called despite flush failure (.finally)
     expect(onExit).toHaveBeenCalledWith(0);
 
+    // In-memory buffer must be freed even on flush failure
+    expect(capture.clear).toHaveBeenCalledWith(taskId);
+
     // Error should be logged
     expect(logger.error).toHaveBeenCalled();
   });

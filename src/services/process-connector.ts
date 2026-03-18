@@ -41,11 +41,11 @@ export class ProcessConnector {
 
       // Final flush, then free memory, then signal completion (Edge Cases B, C)
       this.flushOutput(taskId)
-        .then(() => this.outputCapture.clear(taskId)) // Free in-memory buffer after persist
-        .catch((e) =>
-          this.logger.error('Final flush failed', toError(e), { taskId }),
-        )
-        .finally(() => onExit(code ?? null)); // Use nullish coalescing to preserve 0
+        .catch((e) => this.logger.error('Final flush failed', toError(e), { taskId }))
+        .finally(() => {
+          this.outputCapture.clear(taskId); // Free buffer regardless of flush outcome
+          onExit(code ?? null); // Use nullish coalescing to preserve 0
+        });
     };
 
     // Capture stdout
@@ -82,9 +82,7 @@ export class ProcessConnector {
 
       this.flushingInProgress.add(taskId);
       this.flushOutput(taskId)
-        .catch((e) =>
-          this.logger.error('Periodic flush failed', toError(e), { taskId }),
-        )
+        .catch((e) => this.logger.error('Periodic flush failed', toError(e), { taskId }))
         .finally(() => {
           this.flushingInProgress.delete(taskId);
         });
