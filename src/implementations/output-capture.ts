@@ -9,6 +9,11 @@ import { EventBus } from '../core/events/event-bus.js';
 import { OutputCapture } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 
+/** Sum the character lengths of all lines in an array */
+function linesSize(lines: readonly string[]): number {
+  return lines.reduce((sum, line) => sum + line.length, 0);
+}
+
 interface OutputBuffer {
   stdout: string[];
   stderr: string[];
@@ -109,9 +114,9 @@ export class BufferedOutputCapture implements OutputCapture {
 
     const frozenStdout = Object.freeze([...stdout]);
     const frozenStderr = Object.freeze([...stderr]);
-    const totalSize = (tail !== undefined && tail > 0)
-      ? frozenStdout.reduce((sum, line) => sum + line.length, 0)
-        + frozenStderr.reduce((sum, line) => sum + line.length, 0)
+    const wasTailSliced = tail !== undefined && tail > 0;
+    const totalSize = wasTailSliced
+      ? linesSize(frozenStdout) + linesSize(frozenStderr)
       : buffer.totalSize;
     return ok({
       taskId,

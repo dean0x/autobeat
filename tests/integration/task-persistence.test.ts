@@ -80,7 +80,14 @@ describe('Integration: Task persistence', () => {
 
       // Create recovery manager
       const dependencyRepo2 = new SQLiteDependencyRepository(database2);
-      const recoveryManager = new RecoveryManager(repository2, queue2, eventBus, logger, createMockWorkerRepository(), dependencyRepo2);
+      const recoveryManager = new RecoveryManager(
+        repository2,
+        queue2,
+        eventBus,
+        logger,
+        createMockWorkerRepository(),
+        dependencyRepo2,
+      );
 
       // Perform recovery
       await recoveryManager.recover();

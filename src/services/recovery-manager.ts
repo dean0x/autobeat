@@ -121,11 +121,16 @@ export class RecoveryManager {
           });
 
           // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
-          await this.eventBus.emit('TaskFailed', {
+          const failedEmitResult = await this.eventBus.emit('TaskFailed', {
             taskId: reg.taskId,
             error: new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Worker process died (dead PID detected)'),
             exitCode: -1,
           });
+          if (!failedEmitResult.ok) {
+            this.logger.error('Failed to emit TaskFailed event for dead worker task', failedEmitResult.error, {
+              taskId: reg.taskId,
+            });
+          }
         } else {
           this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
             taskId: reg.taskId,
@@ -258,11 +263,16 @@ export class RecoveryManager {
         });
 
         // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
-        await this.eventBus.emit('TaskFailed', {
+        const failedEmitResult = await this.eventBus.emit('TaskFailed', {
           taskId: task.id,
           error: new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Worker process crashed during execution'),
           exitCode: -1,
         });
+        if (!failedEmitResult.ok) {
+          this.logger.error('Failed to emit TaskFailed event for crashed task', failedEmitResult.error, {
+            taskId: task.id,
+          });
+        }
       } else {
         this.logger.error('Failed to update crashed task', updateResult.error, {
           taskId: task.id,

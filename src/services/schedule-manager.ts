@@ -20,6 +20,7 @@ import {
   ScheduleId,
   ScheduleStatus,
   ScheduleType,
+  TaskId,
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
@@ -182,11 +183,9 @@ export class ScheduleManagerService implements ScheduleService {
       const historyResult = await this.scheduleRepository.getExecutionHistory(scheduleId);
       if (historyResult.ok) {
         const activeExecutions = historyResult.value.filter((e) => e.status === 'triggered');
-        const allTaskIds: import('../core/domain.js').TaskId[] = [];
-        for (const execution of activeExecutions) {
-          const ids = execution.pipelineTaskIds ?? (execution.taskId ? [execution.taskId] : []);
-          allTaskIds.push(...ids);
-        }
+        const allTaskIds: TaskId[] = activeExecutions.flatMap(
+          (execution) => execution.pipelineTaskIds ?? (execution.taskId ? [execution.taskId] : []),
+        );
         for (const taskId of allTaskIds) {
           const cancelResult = await this.eventBus.emit('TaskCancellationRequested', {
             taskId,
