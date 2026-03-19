@@ -465,6 +465,18 @@ export interface CheckpointLookup {
 }
 
 /**
+ * Output persistence for task stdout/stderr
+ * ARCHITECTURE: Moved from implementations layer to core (DIP compliance)
+ * Pattern: Repository pattern — all repo interfaces live in core/interfaces.ts
+ */
+export interface OutputRepository {
+  save(taskId: TaskId, output: TaskOutput): Promise<Result<void>>;
+  append(taskId: TaskId, stream: 'stdout' | 'stderr', data: string): Promise<Result<void>>;
+  get(taskId: TaskId): Promise<Result<TaskOutput | null>>;
+  delete(taskId: TaskId): Promise<Result<void>>;
+}
+
+/**
  * Narrow interface for dependency-aware task enqueuing
  * ARCHITECTURE: PersistenceHandler depends on this, not full QueueHandler
  * Rationale: Follows Interface Segregation Principle - handlers only see what they need

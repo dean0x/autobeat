@@ -22,6 +22,7 @@ import {
   TaskQueue,
   TaskRepository,
   WorkerPool,
+  OutputRepository,
   WorkerRepository,
 } from './core/interfaces.js';
 import { err, ok, Result } from './core/result.js';
@@ -60,7 +61,7 @@ import { EventDrivenWorkerPool } from './implementations/event-driven-worker-poo
 import { GeminiAdapter } from './implementations/gemini-adapter.js';
 import { ConsoleLogger, LogLevel, StructuredLogger } from './implementations/logger.js';
 import { BufferedOutputCapture } from './implementations/output-capture.js';
-import { OutputRepository, SQLiteOutputRepository } from './implementations/output-repository.js';
+import { SQLiteOutputRepository } from './implementations/output-repository.js';
 import { ClaudeProcessSpawner } from './implementations/process-spawner.js';
 import { ProcessSpawnerAdapter } from './implementations/process-spawner-adapter.js';
 import { SystemResourceMonitor } from './implementations/resource-monitor.js';
