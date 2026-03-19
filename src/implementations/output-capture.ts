@@ -107,11 +107,17 @@ export class BufferedOutputCapture implements OutputCapture {
       stderr = stderr.slice(-tail);
     }
 
+    const frozenStdout = Object.freeze([...stdout]);
+    const frozenStderr = Object.freeze([...stderr]);
+    const totalSize = (tail !== undefined && tail > 0)
+      ? frozenStdout.reduce((sum, line) => sum + line.length, 0)
+        + frozenStderr.reduce((sum, line) => sum + line.length, 0)
+      : buffer.totalSize;
     return ok({
       taskId,
-      stdout: Object.freeze([...stdout]),
-      stderr: Object.freeze([...stderr]),
-      totalSize: buffer.totalSize,
+      stdout: frozenStdout,
+      stderr: frozenStderr,
+      totalSize,
     });
   }
 

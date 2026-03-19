@@ -139,11 +139,14 @@ export class TaskManagerService implements TaskManager {
       const output = dbResult.value;
       // Apply tail slicing if requested
       if (tail && tail > 0) {
+        const slicedStdout = output.stdout.slice(-tail);
+        const slicedStderr = output.stderr.slice(-tail);
         return ok({
           taskId: output.taskId,
-          stdout: output.stdout.slice(-tail),
-          stderr: output.stderr.slice(-tail),
-          totalSize: output.totalSize,
+          stdout: slicedStdout,
+          stderr: slicedStderr,
+          totalSize: slicedStdout.reduce((sum, line) => sum + line.length, 0)
+            + slicedStderr.reduce((sum, line) => sum + line.length, 0),
         });
       }
       return ok(output);
