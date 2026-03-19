@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
 import { ok } from '../../src/core/result.js';
 import { Database } from '../../src/implementations/database.js';
+import { SQLiteDependencyRepository } from '../../src/implementations/dependency-repository.js';
 import { PriorityTaskQueue } from '../../src/implementations/task-queue.js';
 import { SQLiteTaskRepository } from '../../src/implementations/task-repository.js';
 import { RecoveryManager } from '../../src/services/recovery-manager.js';
@@ -78,7 +79,8 @@ describe('Integration: Task persistence', () => {
       });
 
       // Create recovery manager
-      const recoveryManager = new RecoveryManager(repository2, queue2, eventBus, logger, createMockWorkerRepository());
+      const dependencyRepo2 = new SQLiteDependencyRepository(database2);
+      const recoveryManager = new RecoveryManager(repository2, queue2, eventBus, logger, createMockWorkerRepository(), dependencyRepo2);
 
       // Perform recovery
       await recoveryManager.recover();
@@ -334,12 +336,14 @@ describe('Integration: Task persistence', () => {
         recoveredTaskIds.push(data.taskId);
       });
 
+      const dependencyRepo = new SQLiteDependencyRepository(database);
       const recoveryManager = new RecoveryManager(
         repository,
         new PriorityTaskQueue(logger),
         eventBus,
         logger,
         createMockWorkerRepository(),
+        dependencyRepo,
       );
 
       await recoveryManager.recover();

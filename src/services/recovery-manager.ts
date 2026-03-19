@@ -4,8 +4,9 @@
  */
 
 import { isTerminalState, Task, TaskStatus } from '../core/domain.js';
+import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
-import { Logger, TaskQueue, TaskRepository, WorkerRepository } from '../core/interfaces.js';
+import { DependencyRepository, Logger, TaskQueue, TaskRepository, WorkerRepository } from '../core/interfaces.js';
 import { ok, Result } from '../core/result.js';
 
 export class RecoveryManager {
@@ -15,6 +16,7 @@ export class RecoveryManager {
     private readonly eventBus: EventBus,
     private readonly logger: Logger,
     private readonly workerRepository: WorkerRepository,
+    private readonly dependencyRepo: DependencyRepository,
   ) {}
 
   /**
@@ -59,13 +61,14 @@ export class RecoveryManager {
     }
 
     // Phase 2 & 3: Recover tasks
-    const queuedCount = await this.recoverQueuedTasks(queuedResult.value);
+    const { queuedCount, blockedCount } = await this.recoverQueuedTasks(queuedResult.value);
     const failedCount = await this.recoverRunningTasks(runningResult.value);
 
     this.logger.info('Recovery complete', {
       queuedTasks: queuedResult.value.length,
       runningTasks: runningResult.value.length,
       requeued: queuedCount,
+      blockedByDependencies: blockedCount,
       markedFailed: failedCount,
     });
 
@@ -116,6 +119,13 @@ export class RecoveryManager {
             taskId: reg.taskId,
             deadPid: reg.ownerPid,
           });
+
+          // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
+          await this.eventBus.emit('TaskFailed', {
+            taskId: reg.taskId,
+            error: new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Worker process died (dead PID detected)'),
+            exitCode: -1,
+          });
         } else {
           this.logger.error('Failed to mark dead worker task as failed', updateResult.error, {
             taskId: reg.taskId,
@@ -134,13 +144,31 @@ export class RecoveryManager {
     }
   }
 
-  private async recoverQueuedTasks(tasks: readonly Task[]): Promise<number> {
+  private async recoverQueuedTasks(tasks: readonly Task[]): Promise<{ queuedCount: number; blockedCount: number }> {
     let queuedCount = 0;
+    let blockedCount = 0;
 
     for (const task of tasks) {
       // Safety check: don't re-queue if already in queue
       if (this.queue.contains(task.id)) {
         this.logger.warn('Task already in queue, skipping re-queue', { taskId: task.id });
+        continue;
+      }
+
+      // Check if task is blocked by unresolved dependencies
+      // Fail-safe: skip enqueue on DB error (task stays QUEUED in DB,
+      // will be enqueued via TaskUnblocked when dependencies complete)
+      const isBlockedResult = await this.dependencyRepo.isBlocked(task.id);
+      if (!isBlockedResult.ok) {
+        this.logger.warn('Failed to check task dependencies during recovery, skipping enqueue', {
+          taskId: task.id,
+          error: isBlockedResult.error.message,
+        });
+        continue;
+      }
+      if (isBlockedResult.value) {
+        blockedCount++;
+        this.logger.info('Task blocked by dependencies, skipping recovery enqueue', { taskId: task.id });
         continue;
       }
 
@@ -165,7 +193,7 @@ export class RecoveryManager {
       }
     }
 
-    return queuedCount;
+    return { queuedCount, blockedCount };
   }
 
   /**
@@ -227,6 +255,13 @@ export class RecoveryManager {
         failedCount++;
         this.logger.info('Marked crashed task as failed (no live worker)', {
           taskId: task.id,
+        });
+
+        // Emit TaskFailed so DependencyHandler resolves deps for downstream tasks
+        await this.eventBus.emit('TaskFailed', {
+          taskId: task.id,
+          error: new BackbeatError(ErrorCode.SYSTEM_ERROR, 'Worker process crashed during execution'),
+          exitCode: -1,
         });
       } else {
         this.logger.error('Failed to update crashed task', updateResult.error, {
