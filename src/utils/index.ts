@@ -2,9 +2,6 @@
  * Utility module exports
  */
 
-// Output measurement utilities
-export { linesByteSize } from './output.js';
-
 // Cron utilities for task scheduling
 export {
   getNextRunTime,
@@ -14,6 +11,8 @@ export {
   validateCronExpression,
   validateTimezone,
 } from './cron.js';
+// Output measurement utilities
+export { linesByteSize } from './output.js';
 export type { RetryOptions } from './retry.js';
 // Retry utilities
 export {

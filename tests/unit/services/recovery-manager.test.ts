@@ -15,7 +15,13 @@ import type { Task } from '../../../src/core/domain';
 import { TaskId, TaskStatus, WorkerId } from '../../../src/core/domain';
 import { BackbeatError, ErrorCode } from '../../../src/core/errors';
 import type { EventBus } from '../../../src/core/events/event-bus';
-import type { DependencyRepository, Logger, TaskQueue, TaskRepository, WorkerRepository } from '../../../src/core/interfaces';
+import type {
+  DependencyRepository,
+  Logger,
+  TaskQueue,
+  TaskRepository,
+  WorkerRepository,
+} from '../../../src/core/interfaces';
 import { err, ok } from '../../../src/core/result';
 import { RecoveryManager } from '../../../src/services/recovery-manager';
 import { TaskFactory } from '../../fixtures/factories';
@@ -615,11 +621,9 @@ describe('RecoveryManager', () => {
 
       // Recovery should succeed despite emit failure
       expect(result.ok).toBe(true);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Failed to emit TaskFailed event for dead worker task',
-        emitError,
-        { taskId: TaskId('task-dead-fail') },
-      );
+      expect(logger.error).toHaveBeenCalledWith('Failed to emit TaskFailed event for dead worker task', emitError, {
+        taskId: TaskId('task-dead-fail'),
+      });
       // Task was still marked as FAILED in the repository
       expect(repo.update).toHaveBeenCalledWith(
         TaskId('task-dead-fail'),
@@ -640,16 +644,11 @@ describe('RecoveryManager', () => {
 
       // Recovery should succeed despite emit failure
       expect(result.ok).toBe(true);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Failed to emit TaskFailed event for crashed task',
-        emitError,
-        { taskId: task.id },
-      );
+      expect(logger.error).toHaveBeenCalledWith('Failed to emit TaskFailed event for crashed task', emitError, {
+        taskId: task.id,
+      });
       // Task was still marked as FAILED in the repository
-      expect(repo.update).toHaveBeenCalledWith(
-        task.id,
-        expect.objectContaining({ status: TaskStatus.FAILED }),
-      );
+      expect(repo.update).toHaveBeenCalledWith(task.id, expect.objectContaining({ status: TaskStatus.FAILED }));
     });
 
     it('should emit TaskFailed event when failing dead worker task', async () => {
