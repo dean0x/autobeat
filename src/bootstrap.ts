@@ -36,9 +36,31 @@ import { err, ok, Result } from './core/result.js';
  */
 export type BootstrapMode = 'server' | 'cli' | 'run';
 
+export interface ModeFlags {
+  skipResourceMonitoring: boolean;
+  skipScheduleExecutor: boolean;
+  skipRecovery: boolean;
+}
+
+/**
+ * Derive subsystem flags from a BootstrapMode.
+ *
+ * Pure function — no side effects, safe for unit testing.
+ */
+export function deriveModeFlags(mode: BootstrapMode): ModeFlags {
+  return {
+    skipResourceMonitoring: mode === 'run',
+    skipScheduleExecutor: mode === 'cli' || mode === 'run',
+    skipRecovery: mode === 'cli',
+  };
+}
+
 export interface BootstrapOptions {
+  /** Bootstrap mode controlling which subsystems are initialised (default: 'server') */
   mode?: BootstrapMode;
+  /** Custom ProcessSpawner (e.g., NoOpProcessSpawner for tests) */
   processSpawner?: ProcessSpawner;
+  /** Custom ResourceMonitor (e.g., TestResourceMonitor for tests) */
   resourceMonitor?: ResourceMonitor;
 }
 
@@ -117,9 +139,7 @@ const getFromContainerSafe = <T>(container: Container, key: string): Result<T> =
  */
 export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<Container>> {
   const mode = options.mode ?? 'server';
-  const skipResourceMonitoring = mode === 'run';
-  const skipScheduleExecutor = mode === 'cli' || mode === 'run';
-  const skipRecovery = mode === 'cli';
+  const { skipResourceMonitoring, skipScheduleExecutor, skipRecovery } = deriveModeFlags(mode);
 
   const container = new Container();
   const config = loadConfiguration();

@@ -7,7 +7,7 @@ import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { bootstrap } from '../../src/bootstrap.js';
+import { bootstrap, deriveModeFlags } from '../../src/bootstrap.js';
 import { Configuration, loadConfiguration } from '../../src/core/configuration.js';
 import { Container } from '../../src/core/container.js';
 import { InMemoryEventBus } from '../../src/core/events/event-bus.js';
@@ -390,10 +390,7 @@ describe('Integration: Service initialization', () => {
       ['cli',    { skipResourceMonitoring: false, skipScheduleExecutor: true,  skipRecovery: true  }],
       ['run',    { skipResourceMonitoring: true,  skipScheduleExecutor: true,  skipRecovery: false }],
     ] as const)('mode "%s" produces correct flags', (mode, expected) => {
-      const skipResourceMonitoring = mode === 'run';
-      const skipScheduleExecutor = mode === 'cli' || mode === 'run';
-      const skipRecovery = mode === 'cli';
-      expect({ skipResourceMonitoring, skipScheduleExecutor, skipRecovery }).toEqual(expected);
+      expect(deriveModeFlags(mode)).toEqual(expected);
     });
   });
 });
