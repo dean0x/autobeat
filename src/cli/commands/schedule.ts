@@ -58,7 +58,7 @@ export async function handleScheduleCommand(subCmd: string | undefined, schedule
   process.exit(0);
 }
 
-async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]) {
+async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]): Promise<void> {
   let promptWords: string[] = [];
   let scheduleType: 'cron' | 'one_time' | undefined;
   let cronExpression: string | undefined;
@@ -359,7 +359,7 @@ async function scheduleGet(repo: ScheduleRepository, scheduleArgs: string[]): Pr
   }
 }
 
-async function scheduleCancel(service: ScheduleService, scheduleArgs: string[]) {
+async function scheduleCancel(service: ScheduleService, scheduleArgs: string[]): Promise<void> {
   let cancelTasks = false;
   const filteredArgs: string[] = [];
 
@@ -385,7 +385,7 @@ async function scheduleCancel(service: ScheduleService, scheduleArgs: string[]) 
   if (reason) ui.info(`Reason: ${reason}`);
 }
 
-async function schedulePause(service: ScheduleService, scheduleArgs: string[]) {
+async function schedulePause(service: ScheduleService, scheduleArgs: string[]): Promise<void> {
   const scheduleId = scheduleArgs[0];
   if (!scheduleId) {
     ui.error('Usage: beat schedule pause <schedule-id>');
@@ -397,7 +397,7 @@ async function schedulePause(service: ScheduleService, scheduleArgs: string[]) {
   ui.success(`Schedule ${scheduleId} paused`);
 }
 
-async function scheduleResume(service: ScheduleService, scheduleArgs: string[]) {
+async function scheduleResume(service: ScheduleService, scheduleArgs: string[]): Promise<void> {
   const scheduleId = scheduleArgs[0];
   if (!scheduleId) {
     ui.error('Usage: beat schedule resume <schedule-id>');

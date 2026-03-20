@@ -52,20 +52,18 @@ export async function getTaskStatus(taskId?: string): Promise<void> {
       ui.note(lines.join('\n'), 'Task Details');
     } else {
       const result = await ctx.taskRepository.findAll();
-      if (result.ok && Array.isArray(result.value) && result.value.length > 0) {
-        s.stop(`${result.value.length} task${result.value.length === 1 ? '' : 's'}`);
+      const tasks = exitOnError(result, s, 'Failed to get tasks');
 
-        for (const task of result.value) {
+      if (tasks.length > 0) {
+        s.stop(`${tasks.length} task${tasks.length === 1 ? '' : 's'}`);
+
+        for (const task of tasks) {
           const prompt = task.prompt.substring(0, 50) + (task.prompt.length > 50 ? '...' : '');
           ui.step(`${ui.dim(task.id)}  ${ui.colorStatus(task.status.padEnd(10))}  ${prompt}`);
         }
-      } else if (result.ok) {
+      } else {
         s.stop('Done');
         ui.info('No tasks found');
-      } else {
-        s.stop('Failed');
-        ui.error(`Failed to get tasks: ${result.error.message}`);
-        process.exit(1);
       }
     }
   } catch (error) {

@@ -22,9 +22,14 @@ export function exitOnError<T>(result: Result<T>, s?: Spinner, prefix?: string):
 }
 
 /** Guard: exit on null/undefined, returning the narrowed value on success. */
-export function exitOnNull<T>(value: T | null | undefined, s: Spinner | undefined, msg: string): T {
+export function exitOnNull<T>(
+  value: T | null | undefined,
+  s: Spinner | undefined,
+  msg: string,
+  stopMsg = 'Not found',
+): T {
   if (value == null) {
-    s?.stop('Not found');
+    s?.stop(stopMsg);
     ui.error(msg);
     process.exit(1);
   }
@@ -43,13 +48,7 @@ export function exitOnNull<T>(value: T | null | undefined, s: Spinner | undefine
  * **MCP server**: Uses full `bootstrap()` directly.
  */
 export function withReadOnlyContext(s?: Spinner): ReadOnlyContext {
-  const result = createReadOnlyContext();
-  if (!result.ok) {
-    s?.stop('Initialization failed');
-    ui.error(`Failed to initialize: ${result.error.message}`);
-    process.exit(1);
-  }
-  return result.value;
+  return exitOnError(createReadOnlyContext(), s, 'Failed to initialize');
 }
 
 /**
@@ -66,31 +65,13 @@ export async function withServices(s?: Spinner): Promise<{
   scheduleService: ScheduleService;
 }> {
   s?.message('Initializing...');
-  const containerResult = await bootstrap({ mode: 'cli' });
-  if (!containerResult.ok) {
-    s?.stop('Initialization failed');
-    ui.error(`Bootstrap failed: ${containerResult.error.message}`);
-    process.exit(1);
-  }
-  const container = containerResult.value;
+  const container = exitOnError(await bootstrap({ mode: 'cli' }), s, 'Bootstrap failed');
+  const taskManager = exitOnError(await container.resolve<TaskManager>('taskManager'), s, 'Failed to get task manager');
+  const scheduleService = exitOnError(
+    container.get<ScheduleService>('scheduleService'),
+    s,
+    'Failed to get schedule service',
+  );
 
-  const taskManagerResult = await container.resolve<TaskManager>('taskManager');
-  if (!taskManagerResult.ok) {
-    s?.stop('Initialization failed');
-    ui.error(`Failed to get task manager: ${taskManagerResult.error.message}`);
-    process.exit(1);
-  }
-
-  const scheduleServiceResult = container.get<ScheduleService>('scheduleService');
-  if (!scheduleServiceResult.ok) {
-    s?.stop('Initialization failed');
-    ui.error(`Failed to get schedule service: ${scheduleServiceResult.error.message}`);
-    process.exit(1);
-  }
-
-  return {
-    container,
-    taskManager: taskManagerResult.value,
-    scheduleService: scheduleServiceResult.value,
-  };
+  return { container, taskManager, scheduleService };
 }
