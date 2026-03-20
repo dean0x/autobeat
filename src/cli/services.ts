@@ -66,7 +66,12 @@ export async function withServices(s?: Spinner): Promise<{
 }> {
   s?.message('Initializing...');
   const container = exitOnError(await bootstrap({ mode: 'cli' }), s, 'Bootstrap failed', 'Initialization failed');
-  const taskManager = exitOnError(await container.resolve<TaskManager>('taskManager'), s, 'Failed to get task manager', 'Initialization failed');
+  const taskManager = exitOnError(
+    await container.resolve<TaskManager>('taskManager'),
+    s,
+    'Failed to get task manager',
+    'Initialization failed',
+  );
   const scheduleService = exitOnError(
     container.get<ScheduleService>('scheduleService'),
     s,

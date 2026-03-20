@@ -13,8 +13,11 @@ export async function getTaskLogs(taskId: string, tail?: number): Promise<void> 
 
     // Validate task exists
     const taskResult = await ctx.taskRepository.findById(TaskId(taskId));
-    const task = exitOnError(taskResult, s, 'Failed to get task logs');
-    exitOnNull(task, s, `Failed to get task logs: ${taskNotFound(taskId).message}`);
+    exitOnNull(
+      exitOnError(taskResult, s, 'Failed to get task logs'),
+      s,
+      `Failed to get task logs: ${taskNotFound(taskId).message}`,
+    );
 
     // Read output directly from repository (skip in-memory OutputCapture — always empty for CLI)
     const outputResult = await ctx.outputRepository.get(TaskId(taskId));

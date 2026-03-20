@@ -6,8 +6,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { err, ok, type Result } from '../../src/core/result';
 import type { Spinner } from '../../src/cli/ui';
+import { err, ok, type Result } from '../../src/core/result';
 
 // Mock ui module before importing services
 vi.mock('../../src/cli/ui.js', () => ({
@@ -15,8 +15,8 @@ vi.mock('../../src/cli/ui.js', () => ({
 }));
 
 // Must import after mock setup
-import * as ui from '../../src/cli/ui.js';
 import { errorMessage, exitOnError, exitOnNull } from '../../src/cli/services';
+import * as ui from '../../src/cli/ui.js';
 
 const mockError = vi.mocked(ui.error);
 
