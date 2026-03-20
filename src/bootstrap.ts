@@ -56,7 +56,7 @@ export function deriveModeFlags(mode: BootstrapMode): ModeFlags {
 }
 
 export interface BootstrapOptions {
-  /** Bootstrap mode controlling which subsystems are initialised (default: 'server') */
+  /** Bootstrap mode controlling which subsystems are initialized (default: 'server') */
   mode?: BootstrapMode;
   /** Custom ProcessSpawner (e.g., NoOpProcessSpawner for tests) */
   processSpawner?: ProcessSpawner;
