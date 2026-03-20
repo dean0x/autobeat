@@ -12,9 +12,9 @@ export function errorMessage(error: unknown): string {
 }
 
 /** Guard: exit on Result error, returning the unwrapped value on success. */
-export function exitOnError<T>(result: Result<T>, s?: Spinner, prefix?: string): T {
+export function exitOnError<T>(result: Result<T>, s?: Spinner, prefix?: string, stopMsg = 'Failed'): T {
   if (!result.ok) {
-    s?.stop('Failed');
+    s?.stop(stopMsg);
     ui.error(prefix ? `${prefix}: ${result.error.message}` : result.error.message);
     process.exit(1);
   }
@@ -48,7 +48,7 @@ export function exitOnNull<T>(
  * **MCP server**: Uses full `bootstrap()` directly.
  */
 export function withReadOnlyContext(s?: Spinner): ReadOnlyContext {
-  return exitOnError(createReadOnlyContext(), s, 'Failed to initialize');
+  return exitOnError(createReadOnlyContext(), s, 'Failed to initialize', 'Initialization failed');
 }
 
 /**
@@ -65,12 +65,13 @@ export async function withServices(s?: Spinner): Promise<{
   scheduleService: ScheduleService;
 }> {
   s?.message('Initializing...');
-  const container = exitOnError(await bootstrap({ mode: 'cli' }), s, 'Bootstrap failed');
-  const taskManager = exitOnError(await container.resolve<TaskManager>('taskManager'), s, 'Failed to get task manager');
+  const container = exitOnError(await bootstrap({ mode: 'cli' }), s, 'Bootstrap failed', 'Initialization failed');
+  const taskManager = exitOnError(await container.resolve<TaskManager>('taskManager'), s, 'Failed to get task manager', 'Initialization failed');
   const scheduleService = exitOnError(
     container.get<ScheduleService>('scheduleService'),
     s,
     'Failed to get schedule service',
+    'Initialization failed',
   );
 
   return { container, taskManager, scheduleService };
