@@ -1,6 +1,7 @@
 import { bootstrap } from '../bootstrap.js';
 import type { Container } from '../core/container.js';
 import type { ScheduleService, TaskManager } from '../core/interfaces.js';
+import type { Result } from '../core/result.js';
 import { createReadOnlyContext, type ReadOnlyContext } from './read-only-context.js';
 import type { Spinner } from './ui.js';
 import * as ui from './ui.js';
@@ -8,6 +9,26 @@ import * as ui from './ui.js';
 /** Extract a safe error message from an unknown catch value. */
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Guard: exit on Result error, returning the unwrapped value on success. */
+export function exitOnError<T>(result: Result<T>, s?: Spinner, prefix?: string): T {
+  if (!result.ok) {
+    s?.stop('Failed');
+    ui.error(prefix ? `${prefix}: ${result.error.message}` : result.error.message);
+    process.exit(1);
+  }
+  return result.value;
+}
+
+/** Guard: exit on null/undefined, returning the narrowed value on success. */
+export function exitOnNull<T>(value: T | null | undefined, s: Spinner | undefined, msg: string): T {
+  if (value == null) {
+    s?.stop('Not found');
+    ui.error(msg);
+    process.exit(1);
+  }
+  return value;
 }
 
 /**

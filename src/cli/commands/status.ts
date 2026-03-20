@@ -1,7 +1,7 @@
 import { TaskId } from '../../core/domain.js';
 import { taskNotFound } from '../../core/errors.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
-import { errorMessage, withReadOnlyContext } from '../services.js';
+import { errorMessage, exitOnError, exitOnNull, withReadOnlyContext } from '../services.js';
 import * as ui from '../ui.js';
 
 export async function getTaskStatus(taskId?: string): Promise<void> {
@@ -13,17 +13,8 @@ export async function getTaskStatus(taskId?: string): Promise<void> {
 
     if (taskId) {
       const result = await ctx.taskRepository.findById(TaskId(taskId));
-      if (!result.ok) {
-        s.stop('Failed');
-        ui.error(`Failed to get task status: ${result.error.message}`);
-        process.exit(1);
-      }
-      if (!result.value) {
-        s.stop('Not found');
-        ui.error(`Failed to get task status: ${taskNotFound(taskId).message}`);
-        process.exit(1);
-      }
-      const task = result.value;
+      const found = exitOnError(result, s, 'Failed to get task status');
+      const task = exitOnNull(found, s, `Failed to get task status: ${taskNotFound(taskId).message}`);
       s.stop('Task found');
 
       const lines: string[] = [];
