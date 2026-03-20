@@ -370,6 +370,11 @@ describe('ScheduleExecutor - Unit Tests', () => {
         nextRunAt: Date.now() - GRACE_PERIOD_MS - 60000,
       });
 
+      const missedEvents: unknown[] = [];
+      eventBus.subscribe('ScheduleMissed', async (e: unknown) => {
+        missedEvents.push(e);
+      });
+
       // Sabotage recordExecutionSync to throw mid-transaction
       const original = scheduleRepo.recordExecutionSync.bind(scheduleRepo);
       scheduleRepo.recordExecutionSync = () => {
@@ -391,6 +396,9 @@ describe('ScheduleExecutor - Unit Tests', () => {
       expect(history.ok).toBe(true);
       if (!history.ok) return;
       expect(history.value).toHaveLength(0);
+
+      // No ScheduleMissed event — emission is gated on txResult.ok
+      expect(missedEvents).toHaveLength(0);
     });
 
     it('should trigger normally when within grace period', async () => {
