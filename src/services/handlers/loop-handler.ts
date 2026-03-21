@@ -1112,85 +1112,95 @@ export class LoopHandler extends BaseEventHandler {
     }
 
     for (const loop of runningLoopsResult.value) {
-      const iterationsResult = await this.loopRepo.getIterations(loop.id, 1);
-      if (!iterationsResult.ok || iterationsResult.value.length === 0) {
-        // No iterations yet — start first iteration
-        this.logger.info('Recovering loop with no iterations', { loopId: loop.id });
-        await this.startNextIteration(loop);
-        continue;
-      }
-
-      const latestIteration = iterationsResult.value[0];
-
-      // If latest iteration is still running, check task status
-      if (latestIteration.status === 'running') {
-        // Skip if task was cleaned up (ON DELETE SET NULL)
-        if (!latestIteration.taskId) {
-          this.logger.warn('Running iteration has no task ID, marking as cancelled', {
-            loopId: loop.id,
-            iterationNumber: latestIteration.iterationNumber,
-          });
-          await this.loopRepo.updateIteration({
-            ...latestIteration,
-            status: 'cancelled',
-            completedAt: Date.now(),
-          });
-          continue;
-        }
-        const taskResult = await this.taskRepo.findById(latestIteration.taskId);
-        if (!taskResult.ok || !taskResult.value) {
-          this.logger.warn('Iteration task not found during recovery', {
-            loopId: loop.id,
-            taskId: latestIteration.taskId,
-          });
-          continue;
-        }
-
-        const task = taskResult.value;
-        if (isTerminalState(task.status)) {
-          // Task is terminal but iteration wasn't updated — recover
-          this.logger.info('Recovering stuck iteration', {
-            loopId: loop.id,
-            taskId: task.id,
-            taskStatus: task.status,
-            iterationNumber: latestIteration.iterationNumber,
-          });
-
-          if (task.status === TaskStatus.COMPLETED) {
-            const evalResult = await this.exitConditionEvaluator.evaluate(loop, task.id);
-            await this.handleIterationResult(loop, latestIteration, evalResult);
-          } else if (task.status === TaskStatus.FAILED) {
-            // Record as fail and continue
-            const newConsecutiveFailures = loop.consecutiveFailures + 1;
-            await this.loopRepo.updateIteration({
-              ...latestIteration,
-              status: 'fail',
-              completedAt: Date.now(),
-            });
-
-            if (loop.maxConsecutiveFailures > 0 && newConsecutiveFailures >= loop.maxConsecutiveFailures) {
-              await this.completeLoop(loop, LoopStatus.FAILED, 'Max consecutive failures reached (recovered)', {
-                consecutiveFailures: newConsecutiveFailures,
-              });
-            } else {
-              const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
-              await this.loopRepo.update(updatedLoop);
-              await this.scheduleNextIteration(updatedLoop);
-            }
-          } else {
-            // CANCELLED — mark iteration as cancelled
-            await this.loopRepo.updateIteration({
-              ...latestIteration,
-              status: 'cancelled',
-              completedAt: Date.now(),
-            });
-          }
-        }
-        // else: task still running — do nothing, will complete normally
-      }
-      // else: iteration already has a terminal status — no recovery needed
+      await this.recoverSingleLoop(loop);
     }
 
     this.logger.info('Loop recovery complete');
+  }
+
+  /**
+   * Recover a single loop — check latest iteration status and handle terminal task states
+   * ARCHITECTURE: Early-return style for readability (flattened from nested if/else)
+   */
+  private async recoverSingleLoop(loop: Loop): Promise<void> {
+    const iterationsResult = await this.loopRepo.getIterations(loop.id, 1);
+    if (!iterationsResult.ok || iterationsResult.value.length === 0) {
+      this.logger.info('Recovering loop with no iterations', { loopId: loop.id });
+      await this.startNextIteration(loop);
+      return;
+    }
+
+    const latestIteration = iterationsResult.value[0];
+
+    // Iteration already has a terminal status — no recovery needed
+    if (latestIteration.status !== 'running') {
+      return;
+    }
+
+    // Task was cleaned up (ON DELETE SET NULL) — mark iteration cancelled and move on
+    if (!latestIteration.taskId) {
+      this.logger.warn('Running iteration has no task ID, marking as cancelled', {
+        loopId: loop.id,
+        iterationNumber: latestIteration.iterationNumber,
+      });
+      await this.loopRepo.updateIteration({
+        ...latestIteration,
+        status: 'cancelled',
+        completedAt: Date.now(),
+      });
+      await this.startNextIteration(loop);
+      return;
+    }
+
+    const taskResult = await this.taskRepo.findById(latestIteration.taskId);
+    if (!taskResult.ok || !taskResult.value) {
+      return;
+    }
+
+    // Task still running — will complete normally via event handler
+    if (!isTerminalState(taskResult.value.status)) {
+      return;
+    }
+
+    const task = taskResult.value;
+    this.logger.info('Recovering stuck iteration', {
+      loopId: loop.id,
+      taskId: task.id,
+      taskStatus: task.status,
+      iterationNumber: latestIteration.iterationNumber,
+    });
+
+    if (task.status === TaskStatus.COMPLETED) {
+      const evalResult = await this.exitConditionEvaluator.evaluate(loop, task.id);
+      await this.handleIterationResult(loop, latestIteration, evalResult);
+      return;
+    }
+
+    if (task.status === TaskStatus.FAILED) {
+      const newConsecutiveFailures = loop.consecutiveFailures + 1;
+      await this.loopRepo.updateIteration({
+        ...latestIteration,
+        status: 'fail',
+        completedAt: Date.now(),
+      });
+
+      if (loop.maxConsecutiveFailures > 0 && newConsecutiveFailures >= loop.maxConsecutiveFailures) {
+        await this.completeLoop(loop, LoopStatus.FAILED, 'Max consecutive failures reached (recovered)', {
+          consecutiveFailures: newConsecutiveFailures,
+        });
+      } else {
+        const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
+        await this.loopRepo.update(updatedLoop);
+        await this.scheduleNextIteration(updatedLoop);
+      }
+      return;
+    }
+
+    // CANCELLED — mark iteration as cancelled
+    await this.loopRepo.updateIteration({
+      ...latestIteration,
+      status: 'cancelled',
+      completedAt: Date.now(),
+    });
   }
 }
