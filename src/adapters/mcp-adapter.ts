@@ -21,7 +21,6 @@ import {
   LoopId,
   LoopStatus,
   LoopStrategy,
-  OptimizeDirection,
   PipelineCreateRequest,
   Priority,
   ResumeTaskRequest,
@@ -36,6 +35,7 @@ import {
 } from '../core/domain.js';
 import { Logger, LoopService, ScheduleService, TaskManager } from '../core/interfaces.js';
 import { match } from '../core/result.js';
+import { toOptimizeDirection } from '../services/loop-manager.js';
 import { toMissedRunPolicy } from '../services/schedule-manager.js';
 import { truncatePrompt } from '../utils/format.js';
 import { validatePath } from '../utils/validation.js';
@@ -1870,12 +1870,7 @@ export class MCPAdapter {
       prompt: data.prompt,
       strategy: data.strategy === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE,
       exitCondition: data.exitCondition,
-      evalDirection:
-        data.evalDirection === 'minimize'
-          ? OptimizeDirection.MINIMIZE
-          : data.evalDirection === 'maximize'
-            ? OptimizeDirection.MAXIMIZE
-            : undefined,
+      evalDirection: toOptimizeDirection(data.evalDirection),
       evalTimeout: data.evalTimeout,
       workingDirectory: data.workingDirectory,
       maxIterations: data.maxIterations,

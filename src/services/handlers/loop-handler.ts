@@ -480,20 +480,13 @@ export class LoopHandler extends BaseEventHandler {
     // Pre-create ALL task domain objects OUTSIDE transaction (pure computation)
     const tasks: Task[] = [];
     for (let i = 0; i < steps.length; i++) {
-      const stepPrompt = steps[i];
-      const dependsOn: TaskId[] = [];
-
-      if (i > 0) {
-        dependsOn.push(tasks[i - 1].id);
-      }
-
       tasks.push(
         createTask({
-          prompt: stepPrompt,
+          prompt: steps[i],
           priority: defaults.priority,
           workingDirectory: loop.workingDirectory,
           agent: defaults.agent,
-          dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
+          dependsOn: i > 0 ? [tasks[i - 1].id] : undefined,
         }),
       );
     }
@@ -644,12 +637,9 @@ export class LoopHandler extends BaseEventHandler {
   private async handleIterationResult(
     loop: Loop,
     iteration: LoopIteration,
-    taskId: TaskId,
+    _taskId: TaskId,
     evalResult: EvalResult,
   ): Promise<void> {
-    const loopId = loop.id;
-    const iterationNumber = iteration.iterationNumber;
-
     if (loop.strategy === LoopStrategy.RETRY) {
       await this.handleRetryResult(loop, iteration, evalResult);
     } else {
@@ -974,13 +964,14 @@ export class LoopHandler extends BaseEventHandler {
    * ARCHITECTURE: NO dependsOn for iteration chaining — LoopHandler manages sequencing directly
    */
   private async enrichPromptWithCheckpoint(loop: Loop, iterationNumber: number, prompt: string): Promise<string> {
-    // Get the previous iteration's task ID
-    const iterationsResult = await this.loopRepo.getIterations(loop.id, 1, 0);
+    // Get enough iterations to find the previous one (ordered by iteration_number DESC)
+    // We need at least 2: the current iteration we just started + the previous one
+    const iterationsResult = await this.loopRepo.getIterations(loop.id, iterationNumber, 0);
     if (!iterationsResult.ok || iterationsResult.value.length === 0) {
       return prompt;
     }
 
-    // Find the previous iteration (latest completed)
+    // Find the previous iteration (must be terminal, not still running)
     const previousIteration = iterationsResult.value.find(
       (i) => i.iterationNumber === iterationNumber - 1 && i.status !== 'running',
     );

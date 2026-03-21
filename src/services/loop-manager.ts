@@ -15,6 +15,7 @@ import {
   LoopIteration,
   LoopStatus,
   LoopStrategy,
+  OptimizeDirection,
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
@@ -22,6 +23,21 @@ import { Logger, LoopRepository, LoopService } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { truncatePrompt } from '../utils/format.js';
 import { validatePath } from '../utils/validation.js';
+
+/**
+ * Map evalDirection string to OptimizeDirection enum
+ * Returns undefined for unrecognized values
+ */
+export function toOptimizeDirection(value: string | undefined): OptimizeDirection | undefined {
+  switch (value) {
+    case 'minimize':
+      return OptimizeDirection.MINIMIZE;
+    case 'maximize':
+      return OptimizeDirection.MAXIMIZE;
+    default:
+      return undefined;
+  }
+}
 
 export class LoopManagerService implements LoopService {
   constructor(
@@ -215,9 +231,8 @@ export class LoopManagerService implements LoopService {
       const iterationsResult = await this.loopRepository.getIterations(loopId, historyLimit);
       if (iterationsResult.ok) {
         iterations = iterationsResult.value;
-      }
-      // Non-fatal: log warning but still return loop data
-      if (!iterationsResult.ok) {
+      } else {
+        // Non-fatal: log warning but still return loop data
         this.logger.warn('Failed to fetch loop iterations', {
           loopId,
           error: iterationsResult.error.message,
@@ -251,19 +266,10 @@ export class LoopManagerService implements LoopService {
 
     this.logger.info('Cancelling loop', { loopId, reason, cancelTasks });
 
-    const emitResult = await this.eventBus.emit('LoopCancelled', {
-      loopId,
-      reason,
-    });
-
-    if (!emitResult.ok) {
-      this.logger.error('Failed to emit LoopCancelled event', emitResult.error, {
-        loopId,
-      });
-      return err(emitResult.error);
-    }
-
-    // Optionally cancel running iteration tasks
+    // Cancel running iteration tasks BEFORE emitting LoopCancelled event.
+    // The handler marks iterations as 'cancelled', so we must read running
+    // iterations and emit TaskCancellationRequested while they still have
+    // 'running' status.
     if (cancelTasks) {
       const iterationsResult = await this.loopRepository.getIterations(loopId);
       if (iterationsResult.ok) {
@@ -286,6 +292,18 @@ export class LoopManagerService implements LoopService {
           taskCount: runningIterations.length,
         });
       }
+    }
+
+    const emitResult = await this.eventBus.emit('LoopCancelled', {
+      loopId,
+      reason,
+    });
+
+    if (!emitResult.ok) {
+      this.logger.error('Failed to emit LoopCancelled event', emitResult.error, {
+        loopId,
+      });
+      return err(emitResult.error);
     }
 
     return ok(undefined);

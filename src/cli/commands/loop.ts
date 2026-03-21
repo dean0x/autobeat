@@ -1,6 +1,7 @@
 import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
-import { LoopId, LoopStatus, LoopStrategy, OptimizeDirection, Priority } from '../../core/domain.js';
+import { LoopId, LoopStatus, LoopStrategy, Priority } from '../../core/domain.js';
 import type { LoopRepository, LoopService } from '../../core/interfaces.js';
+import { toOptimizeDirection } from '../../services/loop-manager.js';
 import { truncatePrompt } from '../../utils/format.js';
 import { validatePath } from '../../utils/validation.js';
 import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../services.js';
@@ -192,12 +193,7 @@ async function handleLoopCreate(loopArgs: string[]): Promise<void> {
     prompt: isPipeline ? undefined : prompt,
     strategy: isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY,
     exitCondition,
-    evalDirection:
-      direction === 'minimize'
-        ? OptimizeDirection.MINIMIZE
-        : direction === 'maximize'
-          ? OptimizeDirection.MAXIMIZE
-          : undefined,
+    evalDirection: toOptimizeDirection(direction),
     evalTimeout,
     workingDirectory,
     maxIterations,
