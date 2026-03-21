@@ -441,6 +441,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       getFromContainer<Logger>(container, 'logger').child({ module: 'Recovery' }),
       getFromContainer<WorkerRepository>(container, 'workerRepository'),
       getFromContainer<DependencyRepository>(container, 'dependencyRepository'),
+      getFromContainer<LoopRepository>(container, 'loopRepository'),
     );
   });
 

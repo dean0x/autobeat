@@ -153,6 +153,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
   private readonly getIterationsStmt: SQLite.Statement;
   private readonly findIterationByTaskIdStmt: SQLite.Statement;
   private readonly findRunningIterationsStmt: SQLite.Statement;
+  private readonly cleanupOldLoopsStmt: SQLite.Statement;
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -250,6 +251,11 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       JOIN loops l ON li.loop_id = l.id
       WHERE l.status = 'running' AND li.status = 'running'
     `);
+
+    // ARCHITECTURE: FK cascade (ON DELETE CASCADE) auto-deletes associated iterations
+    this.cleanupOldLoopsStmt = this.db.prepare(`
+      DELETE FROM loops WHERE status IN ('completed', 'failed', 'cancelled') AND completed_at < ?
+    `);
   }
 
   // ============================================================================
@@ -319,6 +325,17 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         this.deleteStmt.run(id);
       },
       operationErrorHandler('delete loop', { loopId: id }),
+    );
+  }
+
+  async cleanupOldLoops(olderThanMs: number): Promise<Result<number>> {
+    return tryCatchAsync(
+      async () => {
+        const cutoff = Date.now() - olderThanMs;
+        const result = this.cleanupOldLoopsStmt.run(cutoff);
+        return result.changes;
+      },
+      operationErrorHandler('cleanup old loops'),
     );
   }
 

@@ -801,6 +801,114 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
     });
   });
 
+  describe('cleanupOldLoops()', () => {
+    it('should delete completed loops older than threshold', async () => {
+      const loop = createTestLoop();
+      await repo.save(loop);
+      const completedLoop = {
+        ...loop,
+        status: LoopStatus.COMPLETED,
+        completedAt: Date.now() - 8 * 24 * 60 * 60 * 1000, // 8 days ago
+        updatedAt: Date.now(),
+      };
+      await repo.update(completedLoop);
+
+      // Create a running loop (should NOT be deleted)
+      const runningLoop = createTestLoop();
+      await repo.save(runningLoop);
+
+      const result = await repo.cleanupOldLoops(7 * 24 * 60 * 60 * 1000);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBe(1);
+
+      // Running loop should still exist
+      const remaining = await repo.findAll();
+      expect(remaining.ok).toBe(true);
+      if (!remaining.ok) return;
+      expect(remaining.value).toHaveLength(1);
+      expect(remaining.value[0].id).toBe(runningLoop.id);
+    });
+
+    it('should not delete recently completed loops', async () => {
+      const loop = createTestLoop();
+      await repo.save(loop);
+      const completedLoop = {
+        ...loop,
+        status: LoopStatus.COMPLETED,
+        completedAt: Date.now() - 1 * 24 * 60 * 60 * 1000, // 1 day ago
+        updatedAt: Date.now(),
+      };
+      await repo.update(completedLoop);
+
+      const result = await repo.cleanupOldLoops(7 * 24 * 60 * 60 * 1000);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBe(0);
+    });
+
+    it('should cascade delete iterations when loop is cleaned up', async () => {
+      const loop = createTestLoop();
+      await repo.save(loop);
+
+      // Add iterations
+      await saveIteration(loop.id, 1);
+      await saveIteration(loop.id, 2);
+
+      // Complete the loop with old timestamp
+      const completedLoop = {
+        ...loop,
+        status: LoopStatus.COMPLETED,
+        completedAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
+        updatedAt: Date.now(),
+      };
+      await repo.update(completedLoop);
+
+      const result = await repo.cleanupOldLoops(7 * 24 * 60 * 60 * 1000);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBe(1);
+
+      // Iterations should also be gone (cascade)
+      const iters = await repo.getIterations(loop.id);
+      expect(iters.ok).toBe(true);
+      if (!iters.ok) return;
+      expect(iters.value).toHaveLength(0);
+    });
+
+    it('should delete failed and cancelled loops older than threshold', async () => {
+      const failedLoop = createTestLoop();
+      await repo.save(failedLoop);
+      await repo.update({
+        ...failedLoop,
+        status: LoopStatus.FAILED,
+        completedAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
+        updatedAt: Date.now(),
+      });
+
+      const cancelledLoop = createTestLoop();
+      await repo.save(cancelledLoop);
+      await repo.update({
+        ...cancelledLoop,
+        status: LoopStatus.CANCELLED,
+        completedAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
+        updatedAt: Date.now(),
+      });
+
+      const result = await repo.cleanupOldLoops(7 * 24 * 60 * 60 * 1000);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBe(2);
+    });
+
+    it('should return 0 when no loops qualify for cleanup', async () => {
+      const result = await repo.cleanupOldLoops(7 * 24 * 60 * 60 * 1000);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value).toBe(0);
+    });
+  });
+
   describe('NULL task_id handling (ON DELETE SET NULL)', () => {
     it('should return undefined taskId when task_id is NULL in database', async () => {
       const loop = createTestLoop();

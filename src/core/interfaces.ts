@@ -602,6 +602,14 @@ export interface LoopRepository {
    * Update an existing iteration
    */
   updateIteration(iteration: LoopIteration): Promise<Result<void>>;
+
+  /**
+   * Clean up old completed/failed/cancelled loops
+   * @param olderThanMs Age threshold in milliseconds — loops completed before (Date.now() - olderThanMs) are deleted
+   * @returns Number of loops deleted
+   * ARCHITECTURE: FK cascade (ON DELETE CASCADE) auto-deletes associated iterations
+   */
+  cleanupOldLoops(olderThanMs: number): Promise<Result<number>>;
 }
 
 /**
