@@ -59,7 +59,7 @@ export async function handleScheduleCommand(subCmd: string | undefined, schedule
 }
 
 async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]): Promise<void> {
-  let promptWords: string[] = [];
+  const promptWords: string[] = [];
   let scheduleType: 'cron' | 'one_time' | undefined;
   let cronExpression: string | undefined;
   let scheduledAt: string | undefined;

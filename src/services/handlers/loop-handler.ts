@@ -209,8 +209,7 @@ export class LoopHandler extends BaseEventHandler {
       const iterationResult = await this.loopRepo.findIterationByTaskId(taskId);
       if (!iterationResult.ok || !iterationResult.value) {
         // Not the tail task — check if it's a non-tail pipeline intermediate task
-        const intermediateResult = await this.handlePipelineIntermediateTask(event, taskId, loop);
-        return intermediateResult;
+        return this.handlePipelineIntermediateTask(event, taskId, loop);
       }
 
       const iteration = iterationResult.value;

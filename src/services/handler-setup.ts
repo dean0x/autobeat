@@ -26,9 +26,9 @@ import {
   WorkerPool,
 } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
+import { ShellExitConditionEvaluator } from './exit-condition-evaluator.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
-import { ShellExitConditionEvaluator } from './exit-condition-evaluator.js';
 import { LoopHandler } from './handlers/loop-handler.js';
 import { PersistenceHandler } from './handlers/persistence-handler.js';
 import { QueueHandler } from './handlers/queue-handler.js';

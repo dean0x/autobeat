@@ -122,9 +122,8 @@ export class ScheduleManagerService implements ScheduleService {
       const historyResult = await this.scheduleRepository.getExecutionHistory(scheduleId, historyLimit);
       if (historyResult.ok) {
         history = historyResult.value;
-      }
-      // Non-fatal: log warning but still return schedule data
-      if (!historyResult.ok) {
+      } else {
+        // Non-fatal: log warning but still return schedule data
         this.logger.warn('Failed to fetch execution history', {
           scheduleId,
           error: historyResult.error.message,

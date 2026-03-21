@@ -18,9 +18,9 @@ import {
   TaskId,
   type TaskRequest,
 } from '../core/domain.js';
-import { BackbeatError, ErrorCode, operationErrorHandler } from '../core/errors.js';
+import { operationErrorHandler } from '../core/errors.js';
 import { LoopRepository, SyncLoopOperations } from '../core/interfaces.js';
-import { err, ok, Result, tryCatch, tryCatchAsync } from '../core/result.js';
+import { Result, tryCatchAsync } from '../core/result.js';
 import { Database } from './database.js';
 
 // ============================================================================

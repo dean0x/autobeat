@@ -1,6 +1,5 @@
 import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
 import { LoopId, LoopStatus, LoopStrategy, Priority } from '../../core/domain.js';
-import type { LoopRepository, LoopService } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
 import { toOptimizeDirection, truncatePrompt } from '../../utils/format.js';
 import { validatePath } from '../../utils/validation.js';
@@ -107,7 +106,7 @@ export function parseLoopCreateArgs(loopArgs: string[]): Result<ParsedLoopArgs, 
       workingDirectory = pathResult.value;
       i++;
     } else if ((arg === '--agent' || arg === '-a') && next) {
-      if (!next || next.startsWith('-')) {
+      if (next.startsWith('-')) {
         return err(`--agent requires an agent name (${AGENT_PROVIDERS.join(', ')})`);
       }
       if (!isAgentProvider(next)) {
