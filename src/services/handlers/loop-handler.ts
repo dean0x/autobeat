@@ -653,8 +653,6 @@ export class LoopHandler extends BaseEventHandler {
    * - fail → increment consecutiveFailures, check limits
    */
   private async handleRetryResult(loop: Loop, iteration: LoopIteration, evalResult: EvalResult): Promise<void> {
-    const loopId = loop.id;
-
     if (evalResult.passed) {
       // Exit condition passed — mark iteration as 'pass', complete loop
       await this.loopRepo.updateIteration({
@@ -671,30 +669,14 @@ export class LoopHandler extends BaseEventHandler {
     // Exit condition failed — increment consecutiveFailures
     const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
-    await this.loopRepo.updateIteration({
-      ...iteration,
-      status: 'fail',
-      exitCode: evalResult.exitCode,
-      errorMessage: evalResult.error,
-      completedAt: Date.now(),
-    });
-
-    // Emit iteration completed event
-    await this.eventBus.emit('LoopIterationCompleted', {
-      loopId,
-      iterationNumber: iteration.iterationNumber,
-      result: { ...iteration, status: 'fail' as const },
-    });
-
-    // Check termination conditions
-    if (await this.checkTerminationConditions(loop, newConsecutiveFailures)) {
-      return;
-    }
-
-    // Continue — update loop state and schedule next
-    const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
-    await this.loopRepo.update(updatedLoop);
-    await this.scheduleNextIteration(updatedLoop);
+    await this.recordAndContinue(
+      loop,
+      iteration,
+      'fail',
+      newConsecutiveFailures,
+      { consecutiveFailures: newConsecutiveFailures },
+      { exitCode: evalResult.exitCode, errorMessage: evalResult.error },
+    );
   }
 
   /**
@@ -712,27 +694,14 @@ export class LoopHandler extends BaseEventHandler {
     if (!evalResult.passed || evalResult.score === undefined) {
       const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
-      await this.loopRepo.updateIteration({
-        ...iteration,
-        status: 'crash',
-        exitCode: evalResult.exitCode,
-        errorMessage: evalResult.error,
-        completedAt: Date.now(),
-      });
-
-      await this.eventBus.emit('LoopIterationCompleted', {
-        loopId,
-        iterationNumber,
-        result: { ...iteration, status: 'crash' as const },
-      });
-
-      if (await this.checkTerminationConditions(loop, newConsecutiveFailures)) {
-        return;
-      }
-
-      const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
-      await this.loopRepo.update(updatedLoop);
-      await this.scheduleNextIteration(updatedLoop);
+      await this.recordAndContinue(
+        loop,
+        iteration,
+        'crash',
+        newConsecutiveFailures,
+        { consecutiveFailures: newConsecutiveFailures },
+        { exitCode: evalResult.exitCode, errorMessage: evalResult.error },
+      );
       return;
     }
 
@@ -740,35 +709,15 @@ export class LoopHandler extends BaseEventHandler {
 
     // First iteration or no bestScore yet: always 'keep' as baseline (R5)
     if (loop.bestScore === undefined) {
-      await this.loopRepo.updateIteration({
-        ...iteration,
-        status: 'keep',
-        score,
-        exitCode: evalResult.exitCode,
-        completedAt: Date.now(),
-      });
-
-      const updatedLoop = updateLoop(loop, {
-        bestScore: score,
-        bestIterationId: iterationNumber,
-        consecutiveFailures: 0,
-      });
-      await this.loopRepo.update(updatedLoop);
-
-      await this.eventBus.emit('LoopIterationCompleted', {
-        loopId,
-        iterationNumber,
-        result: { ...iteration, status: 'keep' as const, score },
-      });
-
+      await this.recordAndContinue(
+        loop,
+        iteration,
+        'keep',
+        0,
+        { bestScore: score, bestIterationId: iterationNumber, consecutiveFailures: 0 },
+        { score, exitCode: evalResult.exitCode },
+      );
       this.logger.info('Baseline score established', { loopId, score, iterationNumber });
-
-      // Check if maxIterations reached
-      if (await this.checkTerminationConditions(updatedLoop, 0)) {
-        return;
-      }
-
-      await this.scheduleNextIteration(updatedLoop);
       return;
     }
 
@@ -777,27 +726,6 @@ export class LoopHandler extends BaseEventHandler {
 
     if (isBetter) {
       // Better score → 'keep'
-      await this.loopRepo.updateIteration({
-        ...iteration,
-        status: 'keep',
-        score,
-        exitCode: evalResult.exitCode,
-        completedAt: Date.now(),
-      });
-
-      const updatedLoop = updateLoop(loop, {
-        bestScore: score,
-        bestIterationId: iterationNumber,
-        consecutiveFailures: 0, // Reset on improvement
-      });
-      await this.loopRepo.update(updatedLoop);
-
-      await this.eventBus.emit('LoopIterationCompleted', {
-        loopId,
-        iterationNumber,
-        result: { ...iteration, status: 'keep' as const, score },
-      });
-
       this.logger.info('New best score', {
         loopId,
         score,
@@ -805,36 +733,26 @@ export class LoopHandler extends BaseEventHandler {
         iterationNumber,
       });
 
-      if (await this.checkTerminationConditions(updatedLoop, 0)) {
-        return;
-      }
-
-      await this.scheduleNextIteration(updatedLoop);
+      await this.recordAndContinue(
+        loop,
+        iteration,
+        'keep',
+        0,
+        { bestScore: score, bestIterationId: iterationNumber, consecutiveFailures: 0 },
+        { score, exitCode: evalResult.exitCode },
+      );
     } else {
       // Equal or worse → 'discard'
       const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
-      await this.loopRepo.updateIteration({
-        ...iteration,
-        status: 'discard',
-        score,
-        exitCode: evalResult.exitCode,
-        completedAt: Date.now(),
-      });
-
-      await this.eventBus.emit('LoopIterationCompleted', {
-        loopId,
-        iterationNumber,
-        result: { ...iteration, status: 'discard' as const, score },
-      });
-
-      if (await this.checkTerminationConditions(loop, newConsecutiveFailures)) {
-        return;
-      }
-
-      const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
-      await this.loopRepo.update(updatedLoop);
-      await this.scheduleNextIteration(updatedLoop);
+      await this.recordAndContinue(
+        loop,
+        iteration,
+        'discard',
+        newConsecutiveFailures,
+        { consecutiveFailures: newConsecutiveFailures },
+        { score, exitCode: evalResult.exitCode },
+      );
     }
   }
 
@@ -946,6 +864,48 @@ export class LoopHandler extends BaseEventHandler {
     } else {
       await this.startNextIteration(loop);
     }
+  }
+
+  /**
+   * Record iteration result, emit event, check termination, update loop, and schedule next
+   * ARCHITECTURE: Reduces duplication across 5 non-terminal iteration branches
+   */
+  private async recordAndContinue(
+    loop: Loop,
+    iteration: LoopIteration,
+    iterationStatus: LoopIteration['status'],
+    consecutiveFailures: number,
+    loopUpdate: Partial<Loop>,
+    evalResult?: { score?: number; exitCode?: number; errorMessage?: string },
+  ): Promise<void> {
+    // 1. Update iteration in DB
+    await this.loopRepo.updateIteration({
+      ...iteration,
+      status: iterationStatus,
+      score: evalResult?.score ?? iteration.score,
+      exitCode: evalResult?.exitCode ?? iteration.exitCode,
+      errorMessage: evalResult?.errorMessage ?? iteration.errorMessage,
+      completedAt: Date.now(),
+    });
+
+    // 2. Emit LoopIterationCompleted event
+    await this.eventBus.emit('LoopIterationCompleted', {
+      loopId: loop.id,
+      iterationNumber: iteration.iterationNumber,
+      result: { ...iteration, status: iterationStatus },
+    });
+
+    // 3. Apply loop update + persist
+    const updatedLoop = updateLoop(loop, loopUpdate);
+    await this.loopRepo.update(updatedLoop);
+
+    // 4. Check termination conditions (using updated loop for correct state)
+    if (await this.checkTerminationConditions(updatedLoop, consecutiveFailures)) {
+      return;
+    }
+
+    // 5. Schedule next iteration
+    await this.scheduleNextIteration(updatedLoop);
   }
 
   /**
