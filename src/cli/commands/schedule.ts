@@ -1,8 +1,7 @@
 import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
 import { Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../core/domain.js';
 import type { ScheduleExecution, ScheduleRepository, ScheduleService } from '../../core/interfaces.js';
-import { toMissedRunPolicy } from '../../services/schedule-manager.js';
-import { truncatePrompt } from '../../utils/format.js';
+import { toMissedRunPolicy, truncatePrompt } from '../../utils/format.js';
 import { validatePath } from '../../utils/validation.js';
 import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';

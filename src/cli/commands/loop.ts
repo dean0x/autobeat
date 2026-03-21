@@ -2,8 +2,7 @@ import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core
 import { LoopId, LoopStatus, LoopStrategy, Priority } from '../../core/domain.js';
 import type { LoopRepository, LoopService } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
-import { toOptimizeDirection } from '../../services/loop-manager.js';
-import { truncatePrompt } from '../../utils/format.js';
+import { toOptimizeDirection, truncatePrompt } from '../../utils/format.js';
 import { validatePath } from '../../utils/validation.js';
 import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';

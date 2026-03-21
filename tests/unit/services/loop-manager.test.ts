@@ -9,7 +9,8 @@ import type { Loop, LoopCreateRequest } from '../../../src/core/domain.js';
 import { createLoop, LoopId, LoopStatus, LoopStrategy, OptimizeDirection } from '../../../src/core/domain.js';
 import { Database } from '../../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../../src/implementations/loop-repository.js';
-import { LoopManagerService, toOptimizeDirection } from '../../../src/services/loop-manager.js';
+import { LoopManagerService } from '../../../src/services/loop-manager.js';
+import { toOptimizeDirection } from '../../../src/utils/format.js';
 import { createTestConfiguration } from '../../fixtures/factories.js';
 import { TestEventBus, TestLogger } from '../../fixtures/test-doubles.js';
 

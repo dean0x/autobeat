@@ -35,9 +35,7 @@ import {
 } from '../core/domain.js';
 import { Logger, LoopService, ScheduleService, TaskManager } from '../core/interfaces.js';
 import { match } from '../core/result.js';
-import { toOptimizeDirection } from '../services/loop-manager.js';
-import { toMissedRunPolicy } from '../services/schedule-manager.js';
-import { truncatePrompt } from '../utils/format.js';
+import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
 import { validatePath } from '../utils/validation.js';
 
 // Zod schemas for MCP protocol validation

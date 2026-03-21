@@ -9,7 +9,6 @@ import { resolveDefaultAgent } from '../core/agents.js';
 import { Configuration } from '../core/configuration.js';
 import {
   createSchedule,
-  MissedRunPolicy,
   PipelineCreateRequest,
   PipelineResult,
   PipelineStep,
@@ -27,23 +26,8 @@ import { EventBus } from '../core/events/event-bus.js';
 import { Logger, ScheduleExecution, ScheduleRepository, ScheduleService } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { getNextRunTime, isValidTimezone, validateCronExpression } from '../utils/cron.js';
-import { truncatePrompt } from '../utils/format.js';
+import { toMissedRunPolicy, truncatePrompt } from '../utils/format.js';
 import { validatePath } from '../utils/validation.js';
-
-/**
- * Map missedRunPolicy string to MissedRunPolicy enum
- * Defaults to SKIP for unrecognized values
- */
-export function toMissedRunPolicy(value: string | undefined): MissedRunPolicy {
-  switch (value) {
-    case 'catchup':
-      return MissedRunPolicy.CATCHUP;
-    case 'fail':
-      return MissedRunPolicy.FAIL;
-    default:
-      return MissedRunPolicy.SKIP;
-  }
-}
 
 export class ScheduleManagerService implements ScheduleService {
   constructor(

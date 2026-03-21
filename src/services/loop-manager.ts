@@ -15,7 +15,6 @@ import {
   LoopIteration,
   LoopStatus,
   LoopStrategy,
-  OptimizeDirection,
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
@@ -23,21 +22,6 @@ import { Logger, LoopRepository, LoopService } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { truncatePrompt } from '../utils/format.js';
 import { validatePath } from '../utils/validation.js';
-
-/**
- * Map evalDirection string to OptimizeDirection enum
- * Returns undefined for unrecognized values
- */
-export function toOptimizeDirection(value: string | undefined): OptimizeDirection | undefined {
-  switch (value) {
-    case 'minimize':
-      return OptimizeDirection.MINIMIZE;
-    case 'maximize':
-      return OptimizeDirection.MAXIMIZE;
-    default:
-      return undefined;
-  }
-}
 
 export class LoopManagerService implements LoopService {
   constructor(
