@@ -919,9 +919,9 @@ export class LoopHandler extends BaseEventHandler {
    * ARCHITECTURE: NO dependsOn for iteration chaining — LoopHandler manages sequencing directly
    */
   private async enrichPromptWithCheckpoint(loop: Loop, iterationNumber: number, prompt: string): Promise<string> {
-    // Get enough iterations to find the previous one (ordered by iteration_number DESC)
-    // We need at least 2: the current iteration we just started + the previous one
-    const iterationsResult = await this.loopRepo.getIterations(loop.id, iterationNumber, 0);
+    // Get the 2 most recent iterations (ordered by iteration_number DESC):
+    // the current iteration we just started + the previous one for checkpoint context
+    const iterationsResult = await this.loopRepo.getIterations(loop.id, 2, 0);
     if (!iterationsResult.ok || iterationsResult.value.length === 0) {
       return prompt;
     }

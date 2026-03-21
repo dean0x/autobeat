@@ -129,10 +129,18 @@ export class LoopManagerService implements LoopService {
       );
     }
 
-    // Validate evalTimeout: >= 1000ms (minimum 1 second)
+    // Validate evalTimeout: >= 1000ms (1 second) and <= 300000ms (5 minutes)
     if (request.evalTimeout !== undefined && request.evalTimeout < 1000) {
       return err(
         new BackbeatError(ErrorCode.INVALID_INPUT, 'evalTimeout must be >= 1000ms (1 second minimum)', {
+          field: 'evalTimeout',
+          value: request.evalTimeout,
+        }),
+      );
+    }
+    if (request.evalTimeout !== undefined && request.evalTimeout > 300000) {
+      return err(
+        new BackbeatError(ErrorCode.INVALID_INPUT, 'evalTimeout must be <= 300000ms (5 minute maximum)', {
           field: 'evalTimeout',
           value: request.evalTimeout,
         }),
@@ -275,6 +283,14 @@ export class LoopManagerService implements LoopService {
       if (iterationsResult.ok) {
         const runningIterations = iterationsResult.value.filter((i) => i.status === 'running');
         for (const iteration of runningIterations) {
+          // Guard: taskId can be undefined due to ON DELETE SET NULL
+          if (!iteration.taskId) {
+            this.logger.warn('Skipping cancel for iteration with no taskId (cleaned up)', {
+              loopId,
+              iterationNumber: iteration.iterationNumber,
+            });
+            continue;
+          }
           const cancelResult = await this.eventBus.emit('TaskCancellationRequested', {
             taskId: iteration.taskId,
             reason: `Loop ${loopId} cancelled`,
