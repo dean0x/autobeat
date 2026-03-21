@@ -349,7 +349,7 @@ async function handleLoopGet(loopArgs: string[]): Promise<void> {
         ui.step(`Iteration History (${iterations.length} entries)`);
         for (const iter of iterations) {
           const score = iter.score !== undefined ? ` | score: ${iter.score}` : '';
-          const task = iter.taskId ? ` | task: ${iter.taskId}` : '';
+          const task = iter.taskId ? ` | task: ${iter.taskId}` : ' | task: cleaned up';
           const error = iter.errorMessage ? ` | error: ${iter.errorMessage}` : '';
           process.stderr.write(`  #${iter.iterationNumber} ${ui.colorStatus(iter.status)}${score}${task}${error}\n`);
         }

@@ -979,6 +979,11 @@ export class LoopHandler extends BaseEventHandler {
       return prompt;
     }
 
+    // Skip if previous iteration's task was cleaned up (ON DELETE SET NULL)
+    if (!previousIteration.taskId) {
+      return prompt;
+    }
+
     // Fetch checkpoint for previous iteration's task
     const checkpointResult = await this.checkpointRepo.findLatest(previousIteration.taskId);
     if (!checkpointResult.ok || !checkpointResult.value) {
@@ -1033,6 +1038,8 @@ export class LoopHandler extends BaseEventHandler {
     }
 
     for (const iteration of runningResult.value) {
+      // Skip iterations with cleaned-up tasks (ON DELETE SET NULL)
+      if (!iteration.taskId) continue;
       this.taskToLoop.set(iteration.taskId, iteration.loopId);
 
       // Rebuild pipeline task entries
@@ -1072,6 +1079,19 @@ export class LoopHandler extends BaseEventHandler {
 
       // If latest iteration is still running, check task status
       if (latestIteration.status === 'running') {
+        // Skip if task was cleaned up (ON DELETE SET NULL)
+        if (!latestIteration.taskId) {
+          this.logger.warn('Running iteration has no task ID, marking as cancelled', {
+            loopId: loop.id,
+            iterationNumber: latestIteration.iterationNumber,
+          });
+          await this.loopRepo.updateIteration({
+            ...latestIteration,
+            status: 'cancelled',
+            completedAt: Date.now(),
+          });
+          continue;
+        }
         const taskResult = await this.taskRepo.findById(latestIteration.taskId);
         if (!taskResult.ok || !taskResult.value) {
           this.logger.warn('Iteration task not found during recovery', {

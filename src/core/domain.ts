@@ -534,7 +534,7 @@ export interface LoopIteration {
   readonly id: number; // Autoincrement
   readonly loopId: LoopId;
   readonly iterationNumber: number;
-  readonly taskId: TaskId;
+  readonly taskId?: TaskId; // Optional: NULL after ON DELETE SET NULL when task is cleaned up
   readonly pipelineTaskIds?: readonly TaskId[];
   readonly status: 'running' | 'pass' | 'fail' | 'keep' | 'discard' | 'crash' | 'cancelled';
   readonly score?: number;

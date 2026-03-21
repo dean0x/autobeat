@@ -800,4 +800,41 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       expect(result.value!.evalDirection).toBeUndefined();
     });
   });
+
+  describe('NULL task_id handling (ON DELETE SET NULL)', () => {
+    it('should return undefined taskId when task_id is NULL in database', async () => {
+      const loop = createTestLoop();
+      await repo.save(loop);
+
+      // Create a task, record iteration, then delete the task (triggers ON DELETE SET NULL)
+      const taskId = TaskId('task-to-delete');
+      await createTaskInRepo(taskId);
+      await repo.recordIteration(createTestIteration(loop.id, 1, { taskId }));
+
+      // Delete the task — ON DELETE SET NULL should set task_id to NULL
+      db.getDatabase().prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+
+      // Retrieve iteration — taskId should be undefined (not empty string)
+      const iters = await repo.getIterations(loop.id);
+      expect(iters.ok).toBe(true);
+      if (!iters.ok) return;
+      expect(iters.value).toHaveLength(1);
+      expect(iters.value[0].taskId).toBeUndefined();
+    });
+
+    it('should pass null to SQLite when taskId is undefined in recordIteration', async () => {
+      const loop = createTestLoop();
+      await repo.save(loop);
+
+      // Record iteration with no taskId (simulates edge case)
+      const iteration = createTestIteration(loop.id, 1, { taskId: undefined });
+      await repo.recordIteration(iteration);
+
+      const iters = await repo.getIterations(loop.id);
+      expect(iters.ok).toBe(true);
+      if (!iters.ok) return;
+      expect(iters.value).toHaveLength(1);
+      expect(iters.value[0].taskId).toBeUndefined();
+    });
+  });
 });

@@ -332,7 +332,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         this.recordIterationStmt.run(
           iteration.loopId,
           iteration.iterationNumber,
-          iteration.taskId,
+          iteration.taskId ?? null,
           iteration.pipelineTaskIds ? JSON.stringify(iteration.pipelineTaskIds) : null,
           iteration.status,
           iteration.score ?? null,
@@ -411,7 +411,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
     this.recordIterationStmt.run(
       iteration.loopId,
       iteration.iterationNumber,
-      iteration.taskId,
+      iteration.taskId ?? null,
       iteration.pipelineTaskIds ? JSON.stringify(iteration.pipelineTaskIds) : null,
       iteration.status,
       iteration.score ?? null,
@@ -549,7 +549,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       id: data.id,
       loopId: LoopId(data.loop_id),
       iterationNumber: data.iteration_number,
-      taskId: data.task_id ? TaskId(data.task_id) : ('' as TaskId), // task_id should always exist
+      taskId: data.task_id ? TaskId(data.task_id) : undefined, // undefined when ON DELETE SET NULL cleans up task
       pipelineTaskIds,
       status: data.status as LoopIteration['status'],
       score: data.score ?? undefined,

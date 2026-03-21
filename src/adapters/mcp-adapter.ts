@@ -1966,7 +1966,7 @@ export class MCPAdapter {
           response.iterations = iterations.map((iter) => ({
             iterationNumber: iter.iterationNumber,
             status: iter.status,
-            taskId: iter.taskId,
+            taskId: iter.taskId ?? null,
             score: iter.score ?? null,
             exitCode: iter.exitCode ?? null,
             errorMessage: iter.errorMessage ?? null,
