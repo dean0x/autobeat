@@ -2,6 +2,7 @@ import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core
 import { Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../core/domain.js';
 import type { ScheduleExecution, ScheduleRepository, ScheduleService } from '../../core/interfaces.js';
 import { toMissedRunPolicy } from '../../services/schedule-manager.js';
+import { truncatePrompt } from '../../utils/format.js';
 import { validatePath } from '../../utils/validation.js';
 import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
@@ -331,16 +332,14 @@ async function scheduleGet(repo: ScheduleRepository, scheduleArgs: string[]): Pr
   if (schedule.expiresAt) lines.push(`Expires:     ${new Date(schedule.expiresAt).toISOString()}`);
   if (schedule.afterScheduleId) lines.push(`After:       ${schedule.afterScheduleId}`);
   lines.push(`Created:     ${new Date(schedule.createdAt).toISOString()}`);
-  lines.push(
-    `Prompt:      ${schedule.taskTemplate.prompt.substring(0, 100)}${schedule.taskTemplate.prompt.length > 100 ? '...' : ''}`,
-  );
+  lines.push(`Prompt:      ${truncatePrompt(schedule.taskTemplate.prompt, 100)}`);
   if (schedule.taskTemplate.agent) lines.push(`Agent:       ${schedule.taskTemplate.agent}`);
 
   if (schedule.pipelineSteps && schedule.pipelineSteps.length > 0) {
     lines.push(`Pipeline:    ${schedule.pipelineSteps.length} steps`);
     for (let i = 0; i < schedule.pipelineSteps.length; i++) {
       const step = schedule.pipelineSteps[i];
-      const stepInfo = `  Step ${i + 1}: ${step.prompt.substring(0, 60)}${step.prompt.length > 60 ? '...' : ''}`;
+      const stepInfo = `  Step ${i + 1}: ${truncatePrompt(step.prompt, 60)}`;
       lines.push(stepInfo);
     }
   }

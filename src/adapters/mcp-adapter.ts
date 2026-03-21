@@ -1124,14 +1124,18 @@ export class MCPAdapter {
     return match(result, {
       ok: (data) => {
         if (Array.isArray(data)) {
-          // Multiple tasks
+          // Multiple tasks — add promptPreview for concise display
+          const tasks = data.map((task) => ({
+            ...task,
+            promptPreview: truncatePrompt(task.prompt),
+          }));
           return {
             content: [
               {
                 type: 'text',
                 text: JSON.stringify({
                   success: true,
-                  tasks: data,
+                  tasks,
                 }),
               },
             ],
@@ -1147,7 +1151,7 @@ export class MCPAdapter {
                   success: true,
                   taskId: task.id,
                   status: task.status,
-                  prompt: task.prompt.substring(0, 100) + '...',
+                  prompt: truncatePrompt(task.prompt, 100),
                   startTime: task.startedAt,
                   endTime: task.completedAt,
                   duration: task.completedAt && task.startedAt ? task.completedAt - task.startedAt : undefined,
@@ -1522,9 +1526,7 @@ export class MCPAdapter {
             createdAt: new Date(schedule.createdAt).toISOString(),
             updatedAt: new Date(schedule.updatedAt).toISOString(),
             taskTemplate: {
-              prompt:
-                schedule.taskTemplate.prompt.substring(0, 100) +
-                (schedule.taskTemplate.prompt.length > 100 ? '...' : ''),
+              prompt: truncatePrompt(schedule.taskTemplate.prompt, 100),
               priority: schedule.taskTemplate.priority,
               workingDirectory: schedule.taskTemplate.workingDirectory,
             },
@@ -1533,7 +1535,7 @@ export class MCPAdapter {
                   isPipeline: true,
                   pipelineSteps: schedule.pipelineSteps.map((s, i) => ({
                     index: i,
-                    prompt: s.prompt.substring(0, 100) + (s.prompt.length > 100 ? '...' : ''),
+                    prompt: truncatePrompt(s.prompt, 100),
                     priority: s.priority,
                     workingDirectory: s.workingDirectory,
                     agent: s.agent,

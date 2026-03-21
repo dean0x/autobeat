@@ -29,7 +29,7 @@ export async function getTaskStatus(taskId?: string): Promise<void> {
       if (task.completedAt && task.startedAt) {
         lines.push(`Duration: ${ui.formatDuration(task.completedAt - task.startedAt)}`);
       }
-      lines.push(`Prompt:   ${task.prompt.substring(0, 100)}${task.prompt.length > 100 ? '...' : ''}`);
+      lines.push(`Prompt:   ${truncatePrompt(task.prompt, 100)}`);
 
       // Dependencies
       if (task.dependsOn && task.dependsOn.length > 0) {
