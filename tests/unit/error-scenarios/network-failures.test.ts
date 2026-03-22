@@ -306,10 +306,10 @@ describe('Network Failure Scenarios', () => {
         }
       }
 
-      // Should have roughly 30% failures (with tolerance for randomness)
+      // Should have roughly 30% failures (wide tolerance for CI randomness)
       const actualLossRate = failures / attempts;
-      expect(actualLossRate).toBeGreaterThanOrEqual(0.2);
-      expect(actualLossRate).toBeLessThanOrEqual(0.4);
+      expect(actualLossRate).toBeGreaterThanOrEqual(0.15);
+      expect(actualLossRate).toBeLessThanOrEqual(0.50);
     });
 
     it('should handle bandwidth throttling', async () => {

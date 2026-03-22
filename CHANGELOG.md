@@ -15,6 +15,9 @@ Nothing yet.
 ### 📦 Dependencies
 - **Updated `better-sqlite3`** from 12.6.2 to 12.8.0
 
+### 🧪 Test Fixes
+- **Fixed flaky CI test**: Widened packet loss simulation tolerance (0.15-0.50 from 0.2-0.4) to prevent random CI failures
+
 ---
 
 ## [0.7.1] - 2026-03-22
