@@ -10,6 +10,13 @@ Nothing yet.
 
 ---
 
+## [0.7.2] - 2026-03-22
+
+### 📦 Dependencies
+- **Updated `better-sqlite3`** from 12.6.2 to 12.8.0
+
+---
+
 ## [0.7.1] - 2026-03-22
 
 ### 🐛 Bug Fixes
