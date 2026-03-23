@@ -1087,16 +1087,8 @@ describe('SQLiteLoopRepository - Unit Tests', () => {
       await createScheduleInRepo('sched-find-test');
 
       // Use createLoop with scheduleId as third arg
-      const loop1 = createLoop(
-        { prompt: 'loop 1', strategy: LoopStrategy.RETRY, exitCondition: 'true' },
-        '/tmp',
-        sid,
-      );
-      const loop2 = createLoop(
-        { prompt: 'loop 2', strategy: LoopStrategy.RETRY, exitCondition: 'true' },
-        '/tmp',
-        sid,
-      );
+      const loop1 = createLoop({ prompt: 'loop 1', strategy: LoopStrategy.RETRY, exitCondition: 'true' }, '/tmp', sid);
+      const loop2 = createLoop({ prompt: 'loop 2', strategy: LoopStrategy.RETRY, exitCondition: 'true' }, '/tmp', sid);
       const loop3 = createTestLoop(); // No scheduleId
 
       await repo.save(loop1);

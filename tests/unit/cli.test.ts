@@ -2702,17 +2702,11 @@ async function simulateLoopCancel(
   return service.cancelLoop(LoopId(options.loopId), options.reason, options.cancelTasks);
 }
 
-async function simulateLoopPause(
-  service: MockLoopService,
-  options: { loopId: string; force?: boolean },
-) {
+async function simulateLoopPause(service: MockLoopService, options: { loopId: string; force?: boolean }) {
   return service.pauseLoop(LoopId(options.loopId), { force: options.force });
 }
 
-async function simulateLoopResume(
-  service: MockLoopService,
-  options: { loopId: string },
-) {
+async function simulateLoopResume(service: MockLoopService, options: { loopId: string }) {
   return service.resumeLoop(LoopId(options.loopId));
 }
 
@@ -3309,14 +3303,7 @@ describe('CLI - Schedule --loop flag', () => {
   });
 
   it('should parse --loop with --until for retry strategy', () => {
-    const result = parseScheduleCreateArgs([
-      '--loop',
-      '--until',
-      'npm test',
-      '--cron',
-      '0 9 * * *',
-      'Fix the tests',
-    ]);
+    const result = parseScheduleCreateArgs(['--loop', '--until', 'npm test', '--cron', '0 9 * * *', 'Fix the tests']);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.isLoop).toBe(true);
@@ -3383,14 +3370,7 @@ describe('CLI - Schedule --loop flag', () => {
   });
 
   it('should parse --loop with --continue-context', () => {
-    const result = parseScheduleCreateArgs([
-      '--loop',
-      '--until',
-      'true',
-      '--continue-context',
-      '--cron',
-      '0 0 * * *',
-    ]);
+    const result = parseScheduleCreateArgs(['--loop', '--until', 'true', '--continue-context', '--cron', '0 0 * * *']);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.isLoop).toBe(true);

@@ -2205,10 +2205,7 @@ async function simulatePauseLoop(
   };
 }
 
-async function simulateResumeLoop(
-  loopService: MockLoopService,
-  args: { loopId: string },
-): Promise<MCPToolResponse> {
+async function simulateResumeLoop(loopService: MockLoopService, args: { loopId: string }): Promise<MCPToolResponse> {
   const result = await loopService.resumeLoop(LoopId(args.loopId));
 
   if (!result.ok) {

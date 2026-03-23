@@ -44,7 +44,11 @@ interface ParsedLoopConfig {
 }
 
 type ParsedScheduleCreateArgs =
-  | (ParsedScheduleBaseArgs & { readonly isPipeline: true; readonly isLoop?: false; readonly pipelineSteps: readonly string[] })
+  | (ParsedScheduleBaseArgs & {
+      readonly isPipeline: true;
+      readonly isLoop?: false;
+      readonly pipelineSteps: readonly string[];
+    })
   | (ParsedScheduleBaseArgs & { readonly isPipeline: false; readonly isLoop?: false; readonly prompt: string })
   | (ParsedScheduleBaseArgs & { readonly isLoop: true; readonly loopConfig: ParsedLoopConfig });
 
