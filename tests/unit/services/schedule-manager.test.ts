@@ -8,10 +8,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type {
   PipelineCreateRequest,
   ScheduleCreateRequest,
+  ScheduledLoopCreateRequest,
   ScheduledPipelineCreateRequest,
 } from '../../../src/core/domain';
 import {
   createSchedule,
+  LoopStrategy,
   MissedRunPolicy,
   Priority,
   ScheduleId,
@@ -882,6 +884,215 @@ describe('ScheduleManagerService - Unit Tests', () => {
       expect(emittedSchedule.pipelineSteps![0].prompt).toBe('Step one');
       expect(emittedSchedule.pipelineSteps![1].prompt).toBe('Step two');
       expect(emittedSchedule.pipelineSteps![2].prompt).toBe('Step three');
+    });
+  });
+
+  describe('createScheduledLoop()', () => {
+    // Helper: create a valid scheduled loop request with cron
+    function scheduledLoopRequest(overrides: Partial<ScheduledLoopCreateRequest> = {}): ScheduledLoopCreateRequest {
+      return {
+        loopConfig: {
+          prompt: 'Fix failing tests',
+          strategy: LoopStrategy.RETRY,
+          exitCondition: 'npm test',
+        },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        ...overrides,
+      };
+    }
+
+    it('should create a cron scheduled loop with loopConfig', async () => {
+      const request = scheduledLoopRequest();
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const schedule = result.value;
+      expect(schedule.scheduleType).toBe(ScheduleType.CRON);
+      expect(schedule.cronExpression).toBe('0 9 * * *');
+      expect(schedule.timezone).toBe('UTC');
+      expect(schedule.status).toBe(ScheduleStatus.ACTIVE);
+      expect(schedule.loopConfig).toBeDefined();
+      expect(schedule.loopConfig!.strategy).toBe(LoopStrategy.RETRY);
+      expect(schedule.loopConfig!.exitCondition).toBe('npm test');
+    });
+
+    it('should create a one-time scheduled loop', async () => {
+      const futureDate = new Date(Date.now() + 3600000); // 1 hour from now
+      const request = scheduledLoopRequest({
+        scheduleType: ScheduleType.ONE_TIME,
+        cronExpression: undefined,
+        scheduledAt: futureDate.toISOString(),
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const schedule = result.value;
+      expect(schedule.scheduleType).toBe(ScheduleType.ONE_TIME);
+      expect(schedule.scheduledAt).toBeDefined();
+      expect(schedule.loopConfig).toBeDefined();
+    });
+
+    it('should reject empty exitCondition', async () => {
+      const request = scheduledLoopRequest({
+        loopConfig: {
+          prompt: 'Fix tests',
+          strategy: LoopStrategy.RETRY,
+          exitCondition: '',
+        },
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('exitCondition is required');
+    });
+
+    it('should reject whitespace-only exitCondition', async () => {
+      const request = scheduledLoopRequest({
+        loopConfig: {
+          prompt: 'Fix tests',
+          strategy: LoopStrategy.RETRY,
+          exitCondition: '   ',
+        },
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('exitCondition is required');
+    });
+
+    it('should emit ScheduleCreated event with loopConfig', async () => {
+      const request = scheduledLoopRequest();
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      expect(eventBus.hasEmitted('ScheduleCreated')).toBe(true);
+      expect(eventBus.getEventCount('ScheduleCreated')).toBe(1);
+
+      const events = eventBus.getEmittedEvents('ScheduleCreated');
+      const emittedSchedule = events[0].schedule;
+      expect(emittedSchedule.loopConfig).toBeDefined();
+      expect(emittedSchedule.loopConfig!.strategy).toBe(LoopStrategy.RETRY);
+      expect(emittedSchedule.loopConfig!.exitCondition).toBe('npm test');
+    });
+
+    it('should apply toMissedRunPolicy normalization', async () => {
+      const request = scheduledLoopRequest({
+        missedRunPolicy: MissedRunPolicy.CATCHUP,
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.missedRunPolicy).toBe(MissedRunPolicy.CATCHUP);
+    });
+
+    it('should default missedRunPolicy to SKIP when not provided', async () => {
+      const request = scheduledLoopRequest({
+        missedRunPolicy: undefined,
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.missedRunPolicy).toBe(MissedRunPolicy.SKIP);
+    });
+
+    it('should return error for invalid cron expression', async () => {
+      const request = scheduledLoopRequest({
+        cronExpression: 'not-a-cron',
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('Invalid cron expression');
+    });
+
+    it('should return error for invalid timezone', async () => {
+      const request = scheduledLoopRequest({
+        timezone: 'Fake/Zone',
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('Invalid timezone');
+    });
+
+    it('should return error when event emission fails', async () => {
+      eventBus.setEmitFailure('ScheduleCreated', true);
+      const request = scheduledLoopRequest();
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(false);
+    });
+
+    it('should propagate loopConfig fields to schedule', async () => {
+      const request = scheduledLoopRequest({
+        loopConfig: {
+          prompt: 'Optimize perf',
+          strategy: LoopStrategy.OPTIMIZE,
+          exitCondition: 'node benchmark.js',
+          maxIterations: 20,
+          maxConsecutiveFailures: 5,
+          cooldownMs: 1000,
+          freshContext: false,
+          priority: Priority.P0,
+        },
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const loopConfig = result.value.loopConfig!;
+      expect(loopConfig.strategy).toBe(LoopStrategy.OPTIMIZE);
+      expect(loopConfig.exitCondition).toBe('node benchmark.js');
+      expect(loopConfig.maxIterations).toBe(20);
+      expect(loopConfig.maxConsecutiveFailures).toBe(5);
+      expect(loopConfig.cooldownMs).toBe(1000);
+      expect(loopConfig.freshContext).toBe(false);
+      expect(loopConfig.priority).toBe(Priority.P0);
+    });
+
+    it('should respect maxRuns when provided', async () => {
+      const request = scheduledLoopRequest({ maxRuns: 3 });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.maxRuns).toBe(3);
+    });
+
+    it('should set nextRunAt on the schedule', async () => {
+      const request = scheduledLoopRequest();
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.nextRunAt).toBeDefined();
+      expect(typeof result.value.nextRunAt).toBe('number');
     });
   });
 });
