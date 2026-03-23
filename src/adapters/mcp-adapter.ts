@@ -328,6 +328,75 @@ export class MCPAdapter {
     return this.server;
   }
 
+  /**
+   * Public tool dispatch method for testing.
+   * ARCHITECTURE: Extracts the switch body from the tools/call handler so tests
+   * can exercise the full Zod validation + dispatch + response formatting pipeline
+   * without requiring a live MCP transport.
+   */
+  async callTool(name: string, args: unknown): Promise<MCPToolResponse> {
+    this.logger.debug('MCP tool call received', { tool: name });
+
+    switch (name) {
+      case 'DelegateTask':
+        return await this.handleDelegateTask(args);
+      case 'TaskStatus':
+        return await this.handleTaskStatus(args);
+      case 'TaskLogs':
+        return await this.handleTaskLogs(args);
+      case 'CancelTask':
+        return await this.handleCancelTask(args);
+      case 'RetryTask':
+        return await this.handleRetryTask(args);
+      case 'ResumeTask':
+        return await this.handleResumeTask(args);
+      case 'ScheduleTask':
+        return await this.handleScheduleTask(args);
+      case 'ListSchedules':
+        return await this.handleListSchedules(args);
+      case 'GetSchedule':
+        return await this.handleGetSchedule(args);
+      case 'CancelSchedule':
+        return await this.handleCancelSchedule(args);
+      case 'PauseSchedule':
+        return await this.handlePauseSchedule(args);
+      case 'ResumeSchedule':
+        return await this.handleResumeSchedule(args);
+      case 'CreatePipeline':
+        return await this.handleCreatePipeline(args);
+      case 'SchedulePipeline':
+        return await this.handleSchedulePipeline(args);
+      case 'CreateLoop':
+        return await this.handleCreateLoop(args);
+      case 'LoopStatus':
+        return await this.handleLoopStatus(args);
+      case 'ListLoops':
+        return await this.handleListLoops(args);
+      case 'CancelLoop':
+        return await this.handleCancelLoop(args);
+      case 'PauseLoop':
+        return await this.handlePauseLoop(args);
+      case 'ResumeLoop':
+        return await this.handleResumeLoop(args);
+      case 'ScheduleLoop':
+        return await this.handleScheduleLoop(args);
+      case 'ListAgents':
+        return this.handleListAgents();
+      case 'ConfigureAgent':
+        return this.handleConfigureAgent(args);
+      default:
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({ error: `Unknown tool: ${name}`, code: 'INVALID_TOOL' }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+    }
+  }
+
   private setupHandlers(): void {
     // Handle tool calls
     this.server.setRequestHandler(
@@ -345,76 +414,7 @@ export class MCPAdapter {
         // - Queue size limit (RESOURCE_EXHAUSTED error when queue full)
         // - Resource monitoring (workers only spawn when system has capacity)
         // - Spawn throttling (prevents fork bombs)
-        this.logger.debug('MCP tool call received', { tool: name });
-
-        switch (name) {
-          case 'DelegateTask':
-            return await this.handleDelegateTask(args);
-          case 'TaskStatus':
-            return await this.handleTaskStatus(args);
-          case 'TaskLogs':
-            return await this.handleTaskLogs(args);
-          case 'CancelTask':
-            return await this.handleCancelTask(args);
-          case 'RetryTask':
-            return await this.handleRetryTask(args);
-          case 'ResumeTask':
-            return await this.handleResumeTask(args);
-          // Schedule tools (v0.4.0 Task Scheduling)
-          case 'ScheduleTask':
-            return await this.handleScheduleTask(args);
-          case 'ListSchedules':
-            return await this.handleListSchedules(args);
-          case 'GetSchedule':
-            return await this.handleGetSchedule(args);
-          case 'CancelSchedule':
-            return await this.handleCancelSchedule(args);
-          case 'PauseSchedule':
-            return await this.handlePauseSchedule(args);
-          case 'ResumeSchedule':
-            return await this.handleResumeSchedule(args);
-          case 'CreatePipeline':
-            return await this.handleCreatePipeline(args);
-          case 'SchedulePipeline':
-            return await this.handleSchedulePipeline(args);
-          // Loop tools (v0.7.0 Task/Pipeline Loops, v0.8.0 Pause/Resume/Schedule)
-          case 'CreateLoop':
-            return await this.handleCreateLoop(args);
-          case 'LoopStatus':
-            return await this.handleLoopStatus(args);
-          case 'ListLoops':
-            return await this.handleListLoops(args);
-          case 'CancelLoop':
-            return await this.handleCancelLoop(args);
-          case 'PauseLoop':
-            return await this.handlePauseLoop(args);
-          case 'ResumeLoop':
-            return await this.handleResumeLoop(args);
-          case 'ScheduleLoop':
-            return await this.handleScheduleLoop(args);
-          case 'ListAgents':
-            return this.handleListAgents();
-          case 'ConfigureAgent':
-            return this.handleConfigureAgent(args);
-          default:
-            // ARCHITECTURE: Return error response instead of throwing
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify(
-                    {
-                      error: `Unknown tool: ${name}`,
-                      code: 'INVALID_TOOL',
-                    },
-                    null,
-                    2,
-                  ),
-                },
-              ],
-              isError: true,
-            };
-        }
+        return await this.callTool(name, args);
       },
     );
 

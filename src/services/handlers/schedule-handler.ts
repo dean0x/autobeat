@@ -31,6 +31,7 @@ import { BaseEventHandler } from '../../core/events/handlers.js';
 import {
   Logger,
   LoopRepository,
+  LoopService,
   ScheduleRepository,
   SyncScheduleOperations,
   SyncTaskOperations,
@@ -61,6 +62,7 @@ export class ScheduleHandler extends BaseEventHandler {
     private readonly eventBus: EventBus,
     private readonly database: TransactionRunner,
     private readonly loopRepo: LoopRepository,
+    private readonly loopService: LoopService | undefined,
     logger: Logger,
     options?: ScheduleHandlerOptions,
   ) {
@@ -80,11 +82,21 @@ export class ScheduleHandler extends BaseEventHandler {
     loopRepo: LoopRepository,
     logger: Logger,
     options?: ScheduleHandlerOptions,
+    loopService?: LoopService,
   ): Promise<Result<ScheduleHandler, BackbeatError>> {
     const handlerLogger = logger.child ? logger.child({ module: 'ScheduleHandler' }) : logger;
 
     // Create handler
-    const handler = new ScheduleHandler(scheduleRepo, taskRepo, eventBus, database, loopRepo, handlerLogger, options);
+    const handler = new ScheduleHandler(
+      scheduleRepo,
+      taskRepo,
+      eventBus,
+      database,
+      loopRepo,
+      loopService,
+      handlerLogger,
+      options,
+    );
 
     // Subscribe to events
     const subscribeResult = handler.subscribeToEvents();
@@ -519,8 +531,28 @@ export class ScheduleHandler extends BaseEventHandler {
       }
     }
 
-    // Create loop from loopConfig via domain factory
+    // Validate loopConfig via LoopService if available (prevents bypassing validations)
     const workingDirectory = loopConfig.workingDirectory ?? schedule.taskTemplate.workingDirectory ?? process.cwd();
+    if (this.loopService) {
+      // ARCHITECTURE: Omit workingDirectory from validation — it was already validated
+      // at schedule creation time. Re-validating here would fail for paths like /tmp
+      // that resolve outside CWD on some platforms (e.g., macOS /tmp -> /private/tmp).
+      const validationResult = await this.loopService.validateCreateRequest({
+        ...loopConfig,
+        workingDirectory: undefined,
+      });
+      if (!validationResult.ok) {
+        await this.recordFailedExecution(
+          scheduleId,
+          schedule.nextRunAt ?? triggeredAt,
+          triggeredAt,
+          validationResult.error.message,
+        );
+        return err(new BackbeatError(ErrorCode.INVALID_INPUT, validationResult.error.message, { scheduleId }));
+      }
+    }
+
+    // Create loop from loopConfig via domain factory
     const loop = createLoop(loopConfig, workingDirectory, scheduleId);
 
     // Pure computation OUTSIDE transaction

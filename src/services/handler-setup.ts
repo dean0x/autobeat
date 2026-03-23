@@ -14,6 +14,7 @@ import {
   DependencyRepository,
   Logger,
   LoopRepository,
+  LoopService,
   OutputCapture,
   ResourceMonitor,
   ScheduleRepository,
@@ -53,6 +54,7 @@ export interface HandlerDependencies {
   readonly scheduleRepository: ScheduleRepository & SyncScheduleOperations;
   readonly checkpointRepository: CheckpointRepository;
   readonly loopRepository: LoopRepository & SyncLoopOperations;
+  readonly loopService?: LoopService;
 }
 
 /**
@@ -150,6 +152,10 @@ export function extractHandlerDependencies(container: Container): Result<Handler
   const loopRepositoryResult = getDependency<LoopRepository & SyncLoopOperations>(container, 'loopRepository');
   if (!loopRepositoryResult.ok) return loopRepositoryResult;
 
+  // Optional: LoopService for ScheduleHandler validation (graceful if not registered)
+  const loopServiceResult = getDependency<LoopService>(container, 'loopService');
+  const loopService = loopServiceResult.ok ? loopServiceResult.value : undefined;
+
   return ok({
     config: configResult.value,
     logger: loggerResult.value,
@@ -164,6 +170,7 @@ export function extractHandlerDependencies(container: Container): Result<Handler
     scheduleRepository: scheduleRepositoryResult.value,
     checkpointRepository: checkpointRepositoryResult.value,
     loopRepository: loopRepositoryResult.value,
+    loopService,
   });
 }
 
@@ -273,6 +280,8 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     deps.database,
     deps.loopRepository,
     childLogger('ScheduleHandler'),
+    undefined, // options
+    deps.loopService,
   );
   if (!scheduleHandlerResult.ok) {
     // Cleanup previous handlers on failure

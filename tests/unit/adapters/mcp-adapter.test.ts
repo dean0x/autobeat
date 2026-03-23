@@ -286,6 +286,10 @@ class MockLoopService implements LoopService {
     return this.resumeLoopResult;
   }
 
+  async validateCreateRequest(_request: LoopCreateRequest): Promise<Result<void, Error>> {
+    return ok(undefined);
+  }
+
   reset() {
     this.createLoopCalls = [];
     this.getLoopCalls = [];
@@ -1206,6 +1210,25 @@ class MockScheduleService {
     });
   }
 
+  async createScheduledLoop(): Promise<Result<Schedule>> {
+    const now = Date.now();
+    return ok(
+      Object.freeze({
+        id: ScheduleId('schedule-mock-loop'),
+        taskTemplate: { prompt: 'loop prompt', workingDirectory: '/tmp' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+        status: ScheduleStatus.ACTIVE,
+        runCount: 0,
+        nextRunAt: now + 60000,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
   async createScheduledPipeline(request: ScheduledPipelineCreateRequest): Promise<Result<Schedule>> {
     this.createScheduledPipelineCalls.push(request);
 
@@ -2093,13 +2116,22 @@ describe('MCPAdapter - Loop Tools', () => {
     });
   });
 
-  describe('PauseLoop', () => {
-    it('should pause a loop with graceful mode', async () => {
-      const result = await simulatePauseLoop(mockLoopService, {
+  describe('PauseLoop via callTool()', () => {
+    it('should pause a loop with graceful mode through full dispatch pipeline', async () => {
+      const adapter = new MCPAdapter(
+        new MockTaskManager(),
+        new MockLogger(),
+        stubScheduleService,
+        mockLoopService,
+        undefined,
+        testConfig,
+      );
+
+      const result = await adapter.callTool('PauseLoop', {
         loopId: 'loop-pause-1',
       });
 
-      expect(result.isError).toBe(false);
+      expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
       expect(response.success).toBe(true);
       expect(response.message).toContain('paused');
@@ -2108,52 +2140,167 @@ describe('MCPAdapter - Loop Tools', () => {
       expect(mockLoopService.pauseLoopCalls[0].options?.force).toBe(false);
     });
 
-    it('should pause a loop with force mode', async () => {
-      const result = await simulatePauseLoop(mockLoopService, {
+    it('should pause a loop with force mode through full dispatch pipeline', async () => {
+      const adapter = new MCPAdapter(
+        new MockTaskManager(),
+        new MockLogger(),
+        stubScheduleService,
+        mockLoopService,
+        undefined,
+        testConfig,
+      );
+
+      const result = await adapter.callTool('PauseLoop', {
         loopId: 'loop-pause-2',
         force: true,
       });
 
-      expect(result.isError).toBe(false);
+      expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
       expect(response.success).toBe(true);
       expect(response.force).toBe(true);
     });
 
-    it('should propagate service errors', async () => {
+    it('should propagate service errors through callTool()', async () => {
       mockLoopService.setPauseLoopResult(err(new BackbeatError(ErrorCode.INVALID_OPERATION, 'Loop not running', {})));
 
-      const result = await simulatePauseLoop(mockLoopService, { loopId: 'loop-not-running' });
+      const adapter = new MCPAdapter(
+        new MockTaskManager(),
+        new MockLogger(),
+        stubScheduleService,
+        mockLoopService,
+        undefined,
+        testConfig,
+      );
+
+      const result = await adapter.callTool('PauseLoop', { loopId: 'loop-not-running' });
 
       expect(result.isError).toBe(true);
       const response = JSON.parse(result.content[0].text);
       expect(response.success).toBe(false);
       expect(response.error).toContain('not running');
     });
+
+    it('should reject invalid input via Zod validation', async () => {
+      const adapter = new MCPAdapter(
+        new MockTaskManager(),
+        new MockLogger(),
+        stubScheduleService,
+        mockLoopService,
+        undefined,
+        testConfig,
+      );
+
+      const result = await adapter.callTool('PauseLoop', { loopId: '' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+      expect(mockLoopService.pauseLoopCalls).toHaveLength(0);
+    });
   });
 
-  describe('ResumeLoop', () => {
-    it('should resume a paused loop', async () => {
-      const result = await simulateResumeLoop(mockLoopService, {
+  describe('ResumeLoop via callTool()', () => {
+    it('should resume a paused loop through full dispatch pipeline', async () => {
+      const adapter = new MCPAdapter(
+        new MockTaskManager(),
+        new MockLogger(),
+        stubScheduleService,
+        mockLoopService,
+        undefined,
+        testConfig,
+      );
+
+      const result = await adapter.callTool('ResumeLoop', {
         loopId: 'loop-resume-1',
       });
 
-      expect(result.isError).toBe(false);
+      expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
       expect(response.success).toBe(true);
       expect(response.message).toContain('resumed');
       expect(mockLoopService.resumeLoopCalls).toHaveLength(1);
     });
 
-    it('should propagate service errors', async () => {
+    it('should propagate service errors through callTool()', async () => {
       mockLoopService.setResumeLoopResult(err(new BackbeatError(ErrorCode.INVALID_OPERATION, 'Loop not paused', {})));
 
-      const result = await simulateResumeLoop(mockLoopService, { loopId: 'loop-not-paused' });
+      const adapter = new MCPAdapter(
+        new MockTaskManager(),
+        new MockLogger(),
+        stubScheduleService,
+        mockLoopService,
+        undefined,
+        testConfig,
+      );
+
+      const result = await adapter.callTool('ResumeLoop', { loopId: 'loop-not-paused' });
 
       expect(result.isError).toBe(true);
       const response = JSON.parse(result.content[0].text);
       expect(response.success).toBe(false);
       expect(response.error).toContain('not paused');
+    });
+
+    it('should reject invalid input via Zod validation', async () => {
+      const adapter = new MCPAdapter(
+        new MockTaskManager(),
+        new MockLogger(),
+        stubScheduleService,
+        mockLoopService,
+        undefined,
+        testConfig,
+      );
+
+      const result = await adapter.callTool('ResumeLoop', { loopId: '' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
+      expect(mockLoopService.resumeLoopCalls).toHaveLength(0);
+    });
+  });
+
+  describe('ScheduleLoop via callTool()', () => {
+    it('should create a scheduled loop through full dispatch pipeline', async () => {
+      const mockScheduleService = new MockScheduleService();
+      const adapter = new MCPAdapter(
+        new MockTaskManager(),
+        new MockLogger(),
+        mockScheduleService,
+        mockLoopService,
+        undefined,
+        testConfig,
+      );
+
+      const result = await adapter.callTool('ScheduleLoop', {
+        strategy: 'retry',
+        exitCondition: 'npm test',
+        scheduleType: 'cron',
+        cronExpression: '0 9 * * *',
+        prompt: 'Fix the tests',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.scheduleId).toBeDefined();
+      expect(response.loopStrategy).toBe('retry');
+    });
+
+    it('should reject invalid input via Zod validation', async () => {
+      const adapter = new MCPAdapter(
+        new MockTaskManager(),
+        new MockLogger(),
+        stubScheduleService,
+        mockLoopService,
+        undefined,
+        testConfig,
+      );
+
+      // Missing required fields: strategy, exitCondition, scheduleType
+      const result = await adapter.callTool('ScheduleLoop', { prompt: 'test' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Validation error');
     });
   });
 
@@ -2173,58 +2320,5 @@ describe('MCPAdapter - Loop Tools', () => {
   });
 });
 
-// ============================================================================
-// Pause/Resume/ScheduleLoop Simulate Helpers
-// ============================================================================
-
-async function simulatePauseLoop(
-  loopService: MockLoopService,
-  args: { loopId: string; force?: boolean },
-): Promise<MCPToolResponse> {
-  const result = await loopService.pauseLoop(LoopId(args.loopId), { force: args.force ?? false });
-
-  if (!result.ok) {
-    return {
-      isError: true,
-      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
-    };
-  }
-
-  return {
-    isError: false,
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({
-          success: true,
-          message: `Loop ${args.loopId} paused`,
-          force: args.force ?? false,
-        }),
-      },
-    ],
-  };
-}
-
-async function simulateResumeLoop(loopService: MockLoopService, args: { loopId: string }): Promise<MCPToolResponse> {
-  const result = await loopService.resumeLoop(LoopId(args.loopId));
-
-  if (!result.ok) {
-    return {
-      isError: true,
-      content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }) }],
-    };
-  }
-
-  return {
-    isError: false,
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({
-          success: true,
-          message: `Loop ${args.loopId} resumed`,
-        }),
-      },
-    ],
-  };
-}
+// NOTE: simulatePauseLoop and simulateResumeLoop helpers removed in favor of
+// adapter.callTool() which exercises full Zod validation + dispatch pipeline.

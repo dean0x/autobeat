@@ -53,6 +53,122 @@ type ParsedScheduleCreateArgs =
   | (ParsedScheduleBaseArgs & { readonly isLoop: true; readonly loopConfig: ParsedLoopConfig });
 
 /**
+ * Parse loop-specific flags from schedule create arguments (v0.8.0).
+ * ARCHITECTURE: Extracted from parseScheduleCreateArgs() to reduce cyclomatic complexity.
+ * Returns the consumed flag count and parsed loop flags, or an error.
+ */
+function parseScheduleLoopFlags(
+  args: readonly string[],
+  startIndex: number,
+): Result<
+  {
+    consumed: number;
+    untilCmd?: string;
+    evalCmd?: string;
+    explicitStrategy?: LoopStrategy;
+    loopDirection?: 'minimize' | 'maximize';
+    loopMaxIterations?: number;
+    loopMaxFailures?: number;
+    loopCooldown?: number;
+    loopEvalTimeout?: number;
+    loopContinueContext: boolean;
+    loopGitBranch?: string;
+  },
+  string
+> {
+  let untilCmd: string | undefined;
+  let evalCmd: string | undefined;
+  let explicitStrategy: LoopStrategy | undefined;
+  let loopDirection: 'minimize' | 'maximize' | undefined;
+  let loopMaxIterations: number | undefined;
+  let loopMaxFailures: number | undefined;
+  let loopCooldown: number | undefined;
+  let loopEvalTimeout: number | undefined;
+  let loopContinueContext = false;
+  let loopGitBranch: string | undefined;
+  let consumed = 0;
+
+  for (let i = startIndex; i < args.length; i++) {
+    const arg = args[i];
+    const next = args[i + 1];
+
+    if (arg === '--until' && next) {
+      untilCmd = next;
+      i++;
+      consumed += 2;
+    } else if (arg === '--eval' && next) {
+      evalCmd = next;
+      i++;
+      consumed += 2;
+    } else if (arg === '--strategy' && next) {
+      if (next !== 'retry' && next !== 'optimize') {
+        return err('--strategy must be "retry" or "optimize"');
+      }
+      explicitStrategy = next === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE;
+      i++;
+      consumed += 2;
+    } else if (arg === '--direction' && next) {
+      if (next !== 'minimize' && next !== 'maximize') {
+        return err('--direction must be "minimize" or "maximize"');
+      }
+      loopDirection = next;
+      i++;
+      consumed += 2;
+    } else if (arg === '--max-iterations' && next) {
+      loopMaxIterations = parseInt(next, 10);
+      if (isNaN(loopMaxIterations) || loopMaxIterations < 0) {
+        return err('--max-iterations must be >= 0 (0 = unlimited)');
+      }
+      i++;
+      consumed += 2;
+    } else if (arg === '--max-failures' && next) {
+      loopMaxFailures = parseInt(next, 10);
+      if (isNaN(loopMaxFailures) || loopMaxFailures < 0) {
+        return err('--max-failures must be >= 0');
+      }
+      i++;
+      consumed += 2;
+    } else if (arg === '--cooldown' && next) {
+      loopCooldown = parseInt(next, 10);
+      if (isNaN(loopCooldown) || loopCooldown < 0) {
+        return err('--cooldown must be >= 0 (ms)');
+      }
+      i++;
+      consumed += 2;
+    } else if (arg === '--eval-timeout' && next) {
+      loopEvalTimeout = parseInt(next, 10);
+      if (isNaN(loopEvalTimeout) || loopEvalTimeout < 1000) {
+        return err('--eval-timeout must be >= 1000 (ms)');
+      }
+      i++;
+      consumed += 2;
+    } else if (arg === '--continue-context') {
+      loopContinueContext = true;
+      consumed += 1;
+    } else if (arg === '--git-branch' && next) {
+      loopGitBranch = next;
+      i++;
+      consumed += 2;
+    }
+    // Non-loop flags are silently skipped — they are handled by the parent parser
+  }
+
+  return ok({
+    consumed,
+    untilCmd,
+    evalCmd,
+    explicitStrategy,
+    loopDirection,
+    loopMaxIterations,
+    loopMaxFailures,
+    loopCooldown,
+    loopEvalTimeout,
+    loopContinueContext,
+    loopGitBranch,
+  });
+}
+
+/**
  * Parse and validate schedule create arguments.
  * ARCHITECTURE: Pure function — no side effects, returns Result for testability
  */
@@ -72,18 +188,9 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
   let isPipeline = false;
   const pipelineSteps: string[] = [];
 
-  // Loop-specific flags (v0.8.0)
+  // Loop-specific flags (v0.8.0) — parsed via extracted parseScheduleLoopFlags()
   let isLoop = false;
-  let untilCmd: string | undefined;
-  let evalCmd: string | undefined;
-  let explicitStrategy: LoopStrategy | undefined;
-  let loopDirection: 'minimize' | 'maximize' | undefined;
-  let loopMaxIterations: number | undefined;
-  let loopMaxFailures: number | undefined;
-  let loopCooldown: number | undefined;
-  let loopEvalTimeout: number | undefined;
-  let loopContinueContext = false;
-  let loopGitBranch: string | undefined;
+  let loopFlags: ReturnType<typeof parseScheduleLoopFlags> extends Result<infer T, string> ? T : never;
 
   for (let i = 0; i < scheduleArgs.length; i++) {
     const arg = scheduleArgs[i];
@@ -151,59 +258,37 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
       i++;
     } else if (arg === '--loop') {
       isLoop = true;
-    } else if (arg === '--until' && next) {
-      untilCmd = next;
-      i++;
-    } else if (arg === '--eval' && next) {
-      evalCmd = next;
-      i++;
-    } else if (arg === '--strategy' && next) {
-      // Explicit strategy override (alternative to --until/--eval inference)
-      if (next !== 'retry' && next !== 'optimize') {
-        return err('--strategy must be "retry" or "optimize"');
+    } else if (
+      arg === '--until' ||
+      arg === '--eval' ||
+      arg === '--strategy' ||
+      arg === '--direction' ||
+      arg === '--max-iterations' ||
+      arg === '--max-failures' ||
+      arg === '--cooldown' ||
+      arg === '--eval-timeout' ||
+      arg === '--continue-context' ||
+      arg === '--git-branch'
+    ) {
+      // These are loop-specific flags — skip them here, they'll be parsed by parseScheduleLoopFlags()
+      // Advance past the value if the flag takes one
+      if (arg !== '--continue-context' && next && !next.startsWith('-')) {
+        i++;
       }
-      explicitStrategy = next === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE;
-      i++;
-    } else if (arg === '--direction' && next) {
-      if (next !== 'minimize' && next !== 'maximize') {
-        return err('--direction must be "minimize" or "maximize"');
-      }
-      loopDirection = next;
-      i++;
-    } else if (arg === '--max-iterations' && next) {
-      loopMaxIterations = parseInt(next, 10);
-      if (isNaN(loopMaxIterations) || loopMaxIterations < 0) {
-        return err('--max-iterations must be >= 0 (0 = unlimited)');
-      }
-      i++;
-    } else if (arg === '--max-failures' && next) {
-      loopMaxFailures = parseInt(next, 10);
-      if (isNaN(loopMaxFailures) || loopMaxFailures < 0) {
-        return err('--max-failures must be >= 0');
-      }
-      i++;
-    } else if (arg === '--cooldown' && next) {
-      loopCooldown = parseInt(next, 10);
-      if (isNaN(loopCooldown) || loopCooldown < 0) {
-        return err('--cooldown must be >= 0 (ms)');
-      }
-      i++;
-    } else if (arg === '--eval-timeout' && next) {
-      loopEvalTimeout = parseInt(next, 10);
-      if (isNaN(loopEvalTimeout) || loopEvalTimeout < 1000) {
-        return err('--eval-timeout must be >= 1000 (ms)');
-      }
-      i++;
-    } else if (arg === '--continue-context') {
-      loopContinueContext = true;
-    } else if (arg === '--git-branch' && next) {
-      loopGitBranch = next;
-      i++;
     } else if (arg.startsWith('-')) {
       return err(`Unknown flag: ${arg}`);
     } else {
       promptWords.push(arg);
     }
+  }
+
+  // Parse loop-specific flags in one pass via extracted function
+  if (isLoop) {
+    const loopFlagsResult = parseScheduleLoopFlags(scheduleArgs, 0);
+    if (!loopFlagsResult.ok) {
+      return loopFlagsResult;
+    }
+    loopFlags = loopFlagsResult.value;
   }
 
   // Infer type from --cron / --at flags
@@ -226,34 +311,36 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
 
   // Loop mode (v0.8.0)
   if (isLoop) {
+    const lf = loopFlags!;
+
     // Validate loop exit condition
-    if (untilCmd && evalCmd) {
+    if (lf.untilCmd && lf.evalCmd) {
       return err('Cannot specify both --until and --eval. Use --until for retry, --eval for optimize.');
     }
-    if (!untilCmd && !evalCmd) {
+    if (!lf.untilCmd && !lf.evalCmd) {
       return err('--loop requires --until <cmd> or --eval <cmd> --direction minimize|maximize');
     }
 
-    const isOptimize = !!evalCmd;
-    const exitCondition = isOptimize ? evalCmd! : untilCmd!;
+    const isOptimize = !!lf.evalCmd;
+    const exitCondition = isOptimize ? lf.evalCmd! : lf.untilCmd!;
 
-    if (isOptimize && !loopDirection) {
+    if (isOptimize && !lf.loopDirection) {
       return err('--direction minimize|maximize is required with --eval (optimize strategy)');
     }
-    if (!isOptimize && loopDirection) {
+    if (!isOptimize && lf.loopDirection) {
       return err('--direction is only valid with --eval (optimize strategy)');
     }
 
     const loopConfig: ParsedLoopConfig = {
-      strategy: explicitStrategy ?? (isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY),
+      strategy: lf.explicitStrategy ?? (isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY),
       exitCondition,
-      evalDirection: loopDirection,
-      evalTimeout: loopEvalTimeout,
-      maxIterations: loopMaxIterations,
-      maxConsecutiveFailures: loopMaxFailures,
-      cooldownMs: loopCooldown,
-      freshContext: !loopContinueContext,
-      gitBranch: loopGitBranch,
+      evalDirection: lf.loopDirection,
+      evalTimeout: lf.loopEvalTimeout,
+      maxIterations: lf.loopMaxIterations,
+      maxConsecutiveFailures: lf.loopMaxFailures,
+      cooldownMs: lf.loopCooldown,
+      freshContext: !lf.loopContinueContext,
+      gitBranch: lf.loopGitBranch,
       prompt: promptWords.join(' ') || undefined,
       pipelineSteps: isPipeline && pipelineSteps.length >= 2 ? pipelineSteps : undefined,
     };

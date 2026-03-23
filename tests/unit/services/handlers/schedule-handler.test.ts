@@ -28,6 +28,7 @@ import { SQLiteLoopRepository } from '../../../../src/implementations/loop-repos
 import { SQLiteScheduleRepository } from '../../../../src/implementations/schedule-repository';
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository';
 import { ScheduleHandler } from '../../../../src/services/handlers/schedule-handler';
+import { LoopManagerService } from '../../../../src/services/loop-manager';
 import { createTestConfiguration } from '../../../fixtures/factories';
 import { TestLogger } from '../../../fixtures/test-doubles';
 import { flushEventLoop } from '../../../utils/event-helpers';
@@ -40,6 +41,7 @@ describe('ScheduleHandler - Behavioral Tests', () => {
   let loopRepo: SQLiteLoopRepository;
   let database: Database;
   let logger: TestLogger;
+  let loopService: LoopManagerService;
 
   beforeEach(async () => {
     logger = new TestLogger();
@@ -50,8 +52,18 @@ describe('ScheduleHandler - Behavioral Tests', () => {
     scheduleRepo = new SQLiteScheduleRepository(database);
     taskRepo = new SQLiteTaskRepository(database);
     loopRepo = new SQLiteLoopRepository(database);
+    loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
 
-    const handlerResult = await ScheduleHandler.create(scheduleRepo, taskRepo, eventBus, database, loopRepo, logger);
+    const handlerResult = await ScheduleHandler.create(
+      scheduleRepo,
+      taskRepo,
+      eventBus,
+      database,
+      loopRepo,
+      logger,
+      undefined,
+      loopService,
+    );
     if (!handlerResult.ok) {
       throw new Error(`Failed to create ScheduleHandler: ${handlerResult.error.message}`);
     }
@@ -85,13 +97,15 @@ describe('ScheduleHandler - Behavioral Tests', () => {
 
   describe('Factory create()', () => {
     it('should succeed and subscribe to events', async () => {
-      const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
+      const freshConfig = createTestConfiguration();
+      const freshEventBus = new InMemoryEventBus(freshConfig, new TestLogger());
       const freshLogger = new TestLogger();
 
       const freshDb = new Database(':memory:');
       const freshScheduleRepo = new SQLiteScheduleRepository(freshDb);
       const freshTaskRepo = new SQLiteTaskRepository(freshDb);
       const freshLoopRepo = new SQLiteLoopRepository(freshDb);
+      const freshLoopService = new LoopManagerService(freshEventBus, freshLogger, freshLoopRepo, freshConfig);
       const result = await ScheduleHandler.create(
         freshScheduleRepo,
         freshTaskRepo,
@@ -99,6 +113,8 @@ describe('ScheduleHandler - Behavioral Tests', () => {
         freshDb,
         freshLoopRepo,
         freshLogger,
+        undefined,
+        freshLoopService,
       );
 
       expect(result.ok).toBe(true);
@@ -1099,6 +1115,75 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       if (!loops.ok) return;
       expect(loops.value).toHaveLength(1);
       expect(loops.value[0].status).toBe(LoopStatus.PAUSED);
+    });
+
+    it('should reject trigger with missing prompt via LoopService validation', async () => {
+      // ARCHITECTURE: LoopConfigSchema at repo level allows optional prompt,
+      // but LoopManagerService.validateCreateRequest() requires prompt for non-pipeline loops.
+      // This test verifies the schedule handler calls validation before creating the loop.
+      const invalidLoopConfig: LoopCreateRequest = {
+        // prompt intentionally omitted — invalid for non-pipeline loop
+        strategy: LoopStrategy.RETRY,
+        exitCondition: 'npm test',
+        maxIterations: 5,
+      };
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'placeholder for task template', workingDirectory: '/tmp' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+        loopConfig: invalidLoopConfig,
+      });
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+      await scheduleRepo.update(schedule.id, { nextRunAt: Date.now() - 1000 });
+
+      await eventBus.emit('ScheduleTriggered', { scheduleId: schedule.id, triggeredAt: Date.now() });
+      await flushEventLoop();
+
+      // No loop should have been created
+      const loops = await loopRepo.findByScheduleId(schedule.id);
+      expect(loops.ok).toBe(true);
+      if (!loops.ok) return;
+      expect(loops.value).toHaveLength(0);
+
+      // A failed execution should be recorded
+      const history = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+      expect(history.value).toHaveLength(1);
+      expect(history.value[0].status).toBe('failed');
+      expect(history.value[0].errorMessage).toContain('prompt is required');
+    });
+
+    it('should still create loop successfully when loopConfig is valid', async () => {
+      const validLoopConfig: LoopCreateRequest = {
+        prompt: 'Fix the tests',
+        strategy: LoopStrategy.RETRY,
+        exitCondition: 'npm test',
+        maxIterations: 5,
+        maxConsecutiveFailures: 3,
+      };
+      const schedule = createSchedule({
+        taskTemplate: { prompt: validLoopConfig.prompt ?? '', workingDirectory: '/tmp' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+        loopConfig: validLoopConfig,
+      });
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+      await scheduleRepo.update(schedule.id, { nextRunAt: Date.now() - 1000 });
+
+      await eventBus.emit('ScheduleTriggered', { scheduleId: schedule.id, triggeredAt: Date.now() });
+      await flushEventLoop();
+
+      // Execution should be triggered successfully
+      const history = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+      expect(history.value).toHaveLength(1);
+      expect(history.value[0].status).toBe('triggered');
     });
 
     it('should cancel active loops when schedule with loopConfig is cancelled', async () => {

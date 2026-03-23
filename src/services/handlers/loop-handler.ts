@@ -403,49 +403,7 @@ export class LoopHandler extends BaseEventHandler {
 
       // If force pause: cancel current running iteration and its task
       if (force) {
-        const iterationsResult = await this.loopRepo.getIterations(loopId, 1);
-        if (iterationsResult.ok && iterationsResult.value.length > 0) {
-          const latestIteration = iterationsResult.value[0];
-          if (latestIteration.status === 'running') {
-            // Mark iteration as cancelled
-            await this.loopRepo.updateIteration({
-              ...latestIteration,
-              status: 'cancelled',
-              completedAt: Date.now(),
-            });
-
-            // Cancel the in-flight task
-            if (latestIteration.taskId) {
-              const cancelResult = await this.eventBus.emit('TaskCancellationRequested', {
-                taskId: latestIteration.taskId,
-                reason: `Loop ${loopId} force paused`,
-              });
-              if (!cancelResult.ok) {
-                this.logger.warn('Failed to cancel task for force-paused loop', {
-                  taskId: latestIteration.taskId,
-                  loopId,
-                  error: cancelResult.error.message,
-                });
-              }
-            }
-
-            // Also cancel pipeline tasks if it's a pipeline iteration
-            if (latestIteration.pipelineTaskIds) {
-              for (const ptId of latestIteration.pipelineTaskIds) {
-                if (ptId === latestIteration.taskId) continue; // Already cancelled above
-                await this.eventBus.emit('TaskCancellationRequested', {
-                  taskId: ptId,
-                  reason: `Loop ${loopId} force paused`,
-                });
-              }
-            }
-
-            this.logger.info('Force-cancelled running iteration', {
-              loopId,
-              iterationNumber: latestIteration.iterationNumber,
-            });
-          }
-        }
+        await this.forceCancelCurrentIteration(loopId);
       }
 
       this.logger.info('Loop paused', { loopId, force });
@@ -881,6 +839,58 @@ export class LoopHandler extends BaseEventHandler {
   // ============================================================================
   // HELPERS
   // ============================================================================
+
+  /**
+   * Force-cancel the current running iteration and all its tasks.
+   * ARCHITECTURE: Extracted from handleLoopPaused() to reduce nesting from 5 levels to 2.
+   * Handles: iteration lookup, iteration cancellation, single task cancellation,
+   * pipeline task cancellation, and taskToLoop cleanup.
+   */
+  private async forceCancelCurrentIteration(loopId: LoopId): Promise<void> {
+    const iterationsResult = await this.loopRepo.getIterations(loopId, 1);
+    if (!iterationsResult.ok || iterationsResult.value.length === 0) return;
+
+    const latestIteration = iterationsResult.value[0];
+    if (latestIteration.status !== 'running') return;
+
+    // Mark iteration as cancelled
+    await this.loopRepo.updateIteration({
+      ...latestIteration,
+      status: 'cancelled',
+      completedAt: Date.now(),
+    });
+
+    // Cancel the in-flight task
+    if (latestIteration.taskId) {
+      const cancelResult = await this.eventBus.emit('TaskCancellationRequested', {
+        taskId: latestIteration.taskId,
+        reason: `Loop ${loopId} force paused`,
+      });
+      if (!cancelResult.ok) {
+        this.logger.warn('Failed to cancel task for force-paused loop', {
+          taskId: latestIteration.taskId,
+          loopId,
+          error: cancelResult.error.message,
+        });
+      }
+    }
+
+    // Also cancel pipeline tasks if it's a pipeline iteration
+    if (latestIteration.pipelineTaskIds) {
+      for (const ptId of latestIteration.pipelineTaskIds) {
+        if (ptId === latestIteration.taskId) continue; // Already cancelled above
+        await this.eventBus.emit('TaskCancellationRequested', {
+          taskId: ptId,
+          reason: `Loop ${loopId} force paused`,
+        });
+      }
+    }
+
+    this.logger.info('Force-cancelled running iteration', {
+      loopId,
+      iterationNumber: latestIteration.iterationNumber,
+    });
+  }
 
   /**
    * Check termination conditions (maxIterations, maxConsecutiveFailures)

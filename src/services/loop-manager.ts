@@ -35,11 +35,12 @@ export class LoopManagerService implements LoopService {
     this.logger.debug('LoopManagerService initialized');
   }
 
-  async createLoop(request: LoopCreateRequest): Promise<Result<Loop>> {
-    // ========================================================================
-    // Input validation (R13 boundary validation)
-    // ========================================================================
-
+  /**
+   * Validate a loop creation request without creating the loop.
+   * ARCHITECTURE: Extracted from createLoop() so ScheduleHandler can validate
+   * loopConfig before domain factory creation — prevents bypassing validations.
+   */
+  async validateCreateRequest(request: LoopCreateRequest): Promise<Result<void, Error>> {
     // Validate prompt: required 1-4000 chars unless pipeline mode
     const isPipelineMode = request.pipelineSteps && request.pipelineSteps.length > 0;
     if (!isPipelineMode) {
@@ -70,7 +71,6 @@ export class LoopManagerService implements LoopService {
     }
 
     // Validate workingDirectory
-    let validatedWorkingDirectory: string;
     if (request.workingDirectory) {
       const pathValidation = validatePath(request.workingDirectory);
       if (!pathValidation.ok) {
@@ -80,9 +80,6 @@ export class LoopManagerService implements LoopService {
           }),
         );
       }
-      validatedWorkingDirectory = pathValidation.value;
-    } else {
-      validatedWorkingDirectory = process.cwd();
     }
 
     // Validate maxIterations: >= 0 (0 = unlimited)
@@ -177,20 +174,16 @@ export class LoopManagerService implements LoopService {
     const agentResult = resolveDefaultAgent(request.agent, this.config.defaultAgent);
     if (!agentResult.ok) return agentResult;
 
-    // ========================================================================
     // Git branch validation (v0.8.0)
-    // If gitBranch is set, verify working directory is a git repo and capture gitBaseBranch
-    // ========================================================================
-
-    let gitBaseBranch: string | undefined;
     if (request.gitBranch) {
-      const gitStateResult = await captureGitState(validatedWorkingDirectory);
+      const validatedDir = request.workingDirectory ?? process.cwd();
+      const gitStateResult = await captureGitState(validatedDir);
       if (!gitStateResult.ok) {
         return err(
           new BackbeatError(
             ErrorCode.INVALID_INPUT,
             `gitBranch requires a git repository: ${gitStateResult.error.message}`,
-            { workingDirectory: validatedWorkingDirectory, gitBranch: request.gitBranch },
+            { workingDirectory: validatedDir, gitBranch: request.gitBranch },
           ),
         );
       }
@@ -199,11 +192,52 @@ export class LoopManagerService implements LoopService {
           new BackbeatError(
             ErrorCode.INVALID_INPUT,
             'gitBranch requires a git repository, but working directory is not a git repo',
-            { workingDirectory: validatedWorkingDirectory, gitBranch: request.gitBranch },
+            { workingDirectory: validatedDir, gitBranch: request.gitBranch },
           ),
         );
       }
-      gitBaseBranch = gitStateResult.value.branch;
+    }
+
+    return ok(undefined);
+  }
+
+  async createLoop(request: LoopCreateRequest): Promise<Result<Loop>> {
+    // ========================================================================
+    // Input validation via extracted validateCreateRequest()
+    // ========================================================================
+    const validationResult = await this.validateCreateRequest(request);
+    if (!validationResult.ok) {
+      return validationResult;
+    }
+
+    // ========================================================================
+    // Resolve validated working directory and agent (already validated above)
+    // ========================================================================
+    let validatedWorkingDirectory: string;
+    if (request.workingDirectory) {
+      const pathValidation = validatePath(request.workingDirectory);
+      // Already validated — this always succeeds
+      validatedWorkingDirectory = pathValidation.ok ? pathValidation.value : process.cwd();
+    } else {
+      validatedWorkingDirectory = process.cwd();
+    }
+
+    const agentResult = resolveDefaultAgent(request.agent, this.config.defaultAgent);
+    // Already validated — this always succeeds
+    const agent = agentResult.ok ? agentResult.value : request.agent;
+
+    // ========================================================================
+    // Git branch validation (v0.8.0)
+    // If gitBranch is set, verify working directory is a git repo and capture gitBaseBranch
+    // ========================================================================
+
+    let gitBaseBranch: string | undefined;
+    if (request.gitBranch) {
+      const gitStateResult = await captureGitState(validatedWorkingDirectory);
+      if (gitStateResult.ok && gitStateResult.value) {
+        gitBaseBranch = gitStateResult.value.branch;
+      }
+      // Errors already checked in validateCreateRequest
     }
 
     // ========================================================================
@@ -213,7 +247,7 @@ export class LoopManagerService implements LoopService {
     const loop = createLoop(
       {
         ...request,
-        agent: agentResult.value,
+        agent,
       },
       validatedWorkingDirectory,
     );

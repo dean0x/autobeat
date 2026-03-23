@@ -643,6 +643,13 @@ export interface SyncLoopOperations {
  */
 export interface LoopService {
   createLoop(request: LoopCreateRequest): Promise<Result<Loop>>;
+  /**
+   * Validate a loop creation request without creating the loop.
+   * ARCHITECTURE: Extracted from createLoop() so ScheduleHandler can validate
+   * loopConfig before domain factory creation — prevents bypassing validations
+   * like prompt length, exit condition, path, eval timeout bounds, pipeline step count.
+   */
+  validateCreateRequest(request: LoopCreateRequest): Promise<Result<void, Error>>;
   getLoop(
     loopId: LoopId,
     includeHistory?: boolean,
