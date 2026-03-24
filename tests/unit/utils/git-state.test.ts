@@ -14,7 +14,12 @@ vi.mock('child_process', () => ({
 
 // Must import after mock setup
 import { execFile } from 'child_process';
-import { captureGitDiff, captureGitState, createAndCheckoutBranch } from '../../../src/utils/git-state.js';
+import {
+  captureGitDiff,
+  captureGitState,
+  createAndCheckoutBranch,
+  validateGitRefName,
+} from '../../../src/utils/git-state.js';
 
 type ExecFileCallback = (error: Error | null, result: { stdout: string; stderr: string }) => void;
 
@@ -184,5 +189,158 @@ describe('captureGitDiff', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.message).toContain('Failed to capture git diff');
+  });
+});
+
+describe('validateGitRefName — git-check-ref-format rules', () => {
+  it('should reject @{ pattern', () => {
+    const result = validateGitRefName('feature@{0}');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('@{');
+  });
+
+  it('should reject trailing dot', () => {
+    const result = validateGitRefName('branch.');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain("'.'");
+  });
+
+  it('should reject trailing .lock suffix', () => {
+    const result = validateGitRefName('branch.lock');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('.lock');
+  });
+
+  it('should reject glob characters ?, *, [', () => {
+    for (const name of ['feature-*', 'feature-?', 'feature-[0]']) {
+      const result = validateGitRefName(name);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('glob');
+    }
+  });
+
+  it('should reject consecutive slashes //', () => {
+    const result = validateGitRefName('refs//heads');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('consecutive slashes');
+  });
+
+  it('should reject dot-prefixed path component', () => {
+    const result = validateGitRefName('.hidden/branch');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain("'.'");
+
+    const result2 = validateGitRefName('refs/.config');
+    expect(result2.ok).toBe(false);
+    if (result2.ok) return;
+    expect(result2.error.message).toContain("'.'");
+  });
+
+  it('should accept valid names with slashes (regression guard)', () => {
+    const result = validateGitRefName('feature/iteration-1');
+    expect(result.ok).toBe(true);
+  });
+
+  it('should accept valid names with mid-component dots (regression guard)', () => {
+    const result = validateGitRefName('v1.0.0');
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('git exec timeout protection', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should include timeout option in captureGitState exec calls', async () => {
+    const mock = vi.mocked(execFile);
+    mock.mockClear();
+    mockExecFileSequence([{ stdout: 'main\n' }, { stdout: 'abc123\n' }, { stdout: '' }]);
+
+    await captureGitState('/workspace');
+
+    // All 3 calls should include timeout in options
+    expect(mock).toHaveBeenCalledTimes(3);
+    for (let i = 0; i < 3; i++) {
+      const callArgs = mock.mock.calls[i];
+      // Options object is the 3rd argument (index 2)
+      const opts = callArgs[2] as Record<string, unknown>;
+      expect(opts).toHaveProperty('timeout');
+      expect(opts.timeout).toBeGreaterThan(0);
+    }
+  });
+
+  it('should include timeout option in createAndCheckoutBranch exec calls', async () => {
+    const mock = vi.mocked(execFile);
+    mock.mockClear();
+    mockExecFileSequence([{ stdout: '' }]);
+
+    await createAndCheckoutBranch('/workspace', 'feat/branch');
+
+    expect(mock).toHaveBeenCalledTimes(1);
+    const opts = mock.mock.calls[0][2] as Record<string, unknown>;
+    expect(opts).toHaveProperty('timeout');
+    expect(opts.timeout).toBeGreaterThan(0);
+  });
+
+  it('should include timeout option in captureGitDiff exec calls', async () => {
+    const mock = vi.mocked(execFile);
+    mock.mockClear();
+    mockExecFileSequence([{ stdout: 'diff output\n' }]);
+
+    await captureGitDiff('/workspace', 'main', 'feature');
+
+    expect(mock).toHaveBeenCalledTimes(1);
+    const opts = mock.mock.calls[0][2] as Record<string, unknown>;
+    expect(opts).toHaveProperty('timeout');
+    expect(opts.timeout).toBeGreaterThan(0);
+  });
+
+  it('should propagate timeout errors from captureGitState as err(), not ok(null)', async () => {
+    // Simulate a killed process (timeout) on the first git call (branch check)
+    const killedError = Object.assign(new Error('Command timed out'), { killed: true });
+    mockExecFileSequence([{ error: killedError }]);
+
+    const result = await captureGitState('/workspace');
+
+    // Should be err(), NOT ok(null) — timeout is a real error, not "not a git repo"
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('Failed to capture git state');
+  });
+
+  it('should propagate timeout errors from second inner catch (SHA) as err()', async () => {
+    const killedError = Object.assign(new Error('Command timed out'), { killed: true });
+    mockExecFileSequence([
+      { stdout: 'main\n' }, // Branch succeeds
+      { error: killedError }, // SHA times out
+    ]);
+
+    const result = await captureGitState('/workspace');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('Failed to capture git state');
+  });
+
+  it('should propagate timeout errors from third inner catch (status) as err()', async () => {
+    const killedError = Object.assign(new Error('Command timed out'), { killed: true });
+    mockExecFileSequence([
+      { stdout: 'main\n' }, // Branch succeeds
+      { stdout: 'abc123\n' }, // SHA succeeds
+      { error: killedError }, // Status times out
+    ]);
+
+    const result = await captureGitState('/workspace');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('Failed to capture git state');
   });
 });

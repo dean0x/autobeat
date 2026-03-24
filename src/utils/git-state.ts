@@ -11,6 +11,9 @@ import { err, ok, Result } from '../core/result.js';
 
 const execFileAsync = promisify(execFile);
 
+/** Timeout for all git operations — prevents hung git from blocking the event loop */
+const GIT_TIMEOUT_MS = 30_000;
+
 /**
  * Validate a git ref name (branch or tag) to prevent argument injection.
  * Rejects names that could be interpreted as git flags or contain unsafe patterns.
@@ -50,6 +53,48 @@ export function validateGitRefName(name: string, label = 'branch'): Result<void,
     );
   }
 
+  // git-check-ref-format disallows '@{' (reflog syntax)
+  if (name.includes('@{')) {
+    return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not contain '@{': ${name}`));
+  }
+
+  // git-check-ref-format disallows trailing '.'
+  if (name.endsWith('.')) {
+    return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not end with '.': ${name}`));
+  }
+
+  // git-check-ref-format disallows '.lock' suffix
+  if (name.endsWith('.lock')) {
+    return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not end with '.lock': ${name}`));
+  }
+
+  // git-check-ref-format disallows glob characters ?, *, [
+  if (/[?*\[]/.test(name)) {
+    return err(
+      new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name contains glob characters (?, *, or [): ${name}`),
+    );
+  }
+
+  // git-check-ref-format disallows consecutive slashes '//'
+  if (name.includes('//')) {
+    return err(
+      new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not contain consecutive slashes: ${name}`),
+    );
+  }
+
+  // git-check-ref-format disallows path components starting with '.'
+  const components = name.split('/');
+  for (const component of components) {
+    if (component.startsWith('.')) {
+      return err(
+        new BackbeatError(
+          ErrorCode.INVALID_INPUT,
+          `Git ${label} name must not have path components starting with '.': ${name}`,
+        ),
+      );
+    }
+  }
+
   return ok(undefined);
 }
 
@@ -69,14 +114,17 @@ export interface GitState {
  */
 export async function captureGitState(workingDirectory: string): Promise<Result<GitState | null>> {
   try {
-    const execOpts = { cwd: workingDirectory };
+    const execOpts = { cwd: workingDirectory, timeout: GIT_TIMEOUT_MS };
 
     // Check if this is a git directory by getting the branch
     let branch: string;
     try {
       const branchResult = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], execOpts);
       branch = branchResult.stdout.trim();
-    } catch {
+    } catch (catchError) {
+      if (catchError instanceof Error && 'killed' in catchError && (catchError as { killed?: boolean }).killed) {
+        throw catchError; // Re-throw timeout → outer catch → err(...)
+      }
       // Not a git directory or git not available - not an error
       return ok(null);
     }
@@ -86,7 +134,10 @@ export async function captureGitState(workingDirectory: string): Promise<Result<
     try {
       const shaResult = await execFileAsync('git', ['rev-parse', 'HEAD'], execOpts);
       commitSha = shaResult.stdout.trim();
-    } catch {
+    } catch (catchError) {
+      if (catchError instanceof Error && 'killed' in catchError && (catchError as { killed?: boolean }).killed) {
+        throw catchError; // Re-throw timeout → outer catch → err(...)
+      }
       // HEAD might not exist (empty repo) - not an error
       return ok(null);
     }
@@ -101,7 +152,10 @@ export async function captureGitState(workingDirectory: string): Promise<Result<
           .filter((line) => line.length > 0)
           .map((line) => line.substring(3).trim()); // Remove status prefix (e.g., " M ", "?? ")
       }
-    } catch {
+    } catch (catchError) {
+      if (catchError instanceof Error && 'killed' in catchError && (catchError as { killed?: boolean }).killed) {
+        throw catchError; // Re-throw timeout → outer catch → err(...)
+      }
       // Status failed - continue with empty dirty files
       dirtyFiles = [];
     }
@@ -146,7 +200,7 @@ export async function createAndCheckoutBranch(
     // Use '--' separator to prevent branch names from being interpreted as flags
     const args = fromRef ? ['checkout', '-B', branchName, fromRef, '--'] : ['checkout', '-B', branchName, '--'];
 
-    await execFileAsync('git', args, { cwd: workingDirectory });
+    await execFileAsync('git', args, { cwd: workingDirectory, timeout: GIT_TIMEOUT_MS });
     return ok(undefined);
   } catch (error) {
     return err(
@@ -184,6 +238,7 @@ export async function captureGitDiff(
     // '--' separator prevents ref names from being interpreted as flags
     const diffResult = await execFileAsync('git', ['diff', '--stat', `${fromBranch}..${toBranch}`, '--'], {
       cwd: workingDirectory,
+      timeout: GIT_TIMEOUT_MS,
     });
 
     const summary = diffResult.stdout.trim();

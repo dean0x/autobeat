@@ -1108,6 +1108,35 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(iteration!.status).toBe('cancelled');
       expect(iteration!.completedAt).toBeDefined();
     });
+
+    it('should not overwrite cancelled iteration status on late TaskCompleted (race condition)', async () => {
+      // Mock: exit condition passes (would normally mark 'pass')
+      mockEvaluator.evaluate.mockResolvedValue({ passed: true, exitCode: 0 });
+
+      const loop = await createAndEmitLoop();
+      const taskId = await getLatestTaskId(loop.id);
+      expect(taskId).toBeDefined();
+
+      // Force-pause cancels the running iteration
+      await eventBus.emit('LoopPaused', { loopId: loop.id, force: true });
+      await flushEventLoop();
+
+      // Verify iteration is cancelled
+      const iterBefore = await getLatestIteration(loop.id);
+      expect(iterBefore!.status).toBe('cancelled');
+
+      // Late TaskCompleted arrives after force-pause (race condition)
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Iteration status should remain 'cancelled' — not overwritten to 'pass'
+      const iterAfter = await getLatestIteration(loop.id);
+      expect(iterAfter!.status).toBe('cancelled');
+
+      // Loop should still be PAUSED (not completed)
+      const loopAfter = await getLoop(loop.id);
+      expect(loopAfter!.status).toBe(LoopStatus.PAUSED);
+    });
   });
 
   describe('Resume', () => {

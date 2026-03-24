@@ -15,6 +15,7 @@ import {
   ScheduleType,
   TaskId,
   TaskStatus,
+  updateLoop,
   updateSchedule,
 } from '../../core/domain.js';
 import { BackbeatError, ErrorCode } from '../../core/errors.js';
@@ -40,6 +41,7 @@ import {
 } from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
 import { getNextRunTime, isValidTimezone, validateCronExpression } from '../../utils/cron.js';
+import { captureGitState } from '../../utils/git-state.js';
 
 /**
  * Options for ScheduleHandler configuration
@@ -555,6 +557,17 @@ export class ScheduleHandler extends BaseEventHandler {
     // Create loop from loopConfig via domain factory
     const loop = createLoop(loopConfig, workingDirectory, scheduleId);
 
+    // Capture gitBaseBranch if loopConfig has gitBranch (mirrors LoopManagerService.createLoop pattern)
+    // ARCHITECTURE: createLoop() sets gitBaseBranch to undefined; override here because
+    // captureGitState is async (not available in pure domain factory)
+    let loopWithGit = loop;
+    if (loopConfig.gitBranch) {
+      const gitStateResult = await captureGitState(workingDirectory);
+      if (gitStateResult.ok && gitStateResult.value) {
+        loopWithGit = updateLoop(loop, { gitBaseBranch: gitStateResult.value.branch });
+      }
+    }
+
     // Pure computation OUTSIDE transaction
     const scheduleUpdates = this.computeScheduleUpdates(schedule, triggeredAt);
 
@@ -562,7 +575,7 @@ export class ScheduleHandler extends BaseEventHandler {
     const txResult = this.database.runInTransaction(() => {
       this.scheduleRepo.recordExecutionSync({
         scheduleId,
-        loopId: loop.id,
+        loopId: loopWithGit.id,
         scheduledFor: schedule.nextRunAt ?? triggeredAt,
         executedAt: triggeredAt,
         status: 'triggered',
@@ -587,11 +600,11 @@ export class ScheduleHandler extends BaseEventHandler {
     this.logScheduleTransition(schedule, scheduleUpdates);
 
     // Emit LoopCreated — LoopHandler persists the loop and starts first iteration
-    const emitResult = await this.eventBus.emit('LoopCreated', { loop });
+    const emitResult = await this.eventBus.emit('LoopCreated', { loop: loopWithGit });
     if (!emitResult.ok) {
       this.logger.error('Failed to emit LoopCreated for scheduled loop trigger', emitResult.error, {
         scheduleId,
-        loopId: loop.id,
+        loopId: loopWithGit.id,
       });
       return emitResult;
     }
@@ -599,13 +612,13 @@ export class ScheduleHandler extends BaseEventHandler {
     // Emit ScheduleExecuted with loopId for ScheduleExecutor concurrency tracking
     await this.eventBus.emit('ScheduleExecuted', {
       scheduleId,
-      loopId: loop.id,
+      loopId: loopWithGit.id,
       executedAt: triggeredAt,
     });
 
     this.logger.info('Scheduled loop triggered successfully', {
       scheduleId,
-      loopId: loop.id,
+      loopId: loopWithGit.id,
       runCount: schedule.runCount + 1,
     });
 

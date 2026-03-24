@@ -220,6 +220,20 @@ export class LoopHandler extends BaseEventHandler {
 
       const iteration = iterationResult.value;
 
+      // Guard: skip processing if iteration is no longer running (e.g., force-paused → cancelled)
+      // Prevents late TaskCompleted/TaskFailed from overwriting cancelled/terminal iteration status
+      if (iteration.status !== 'running') {
+        this.logger.debug('Iteration not running, skipping terminal processing', {
+          loopId,
+          taskId,
+          iterationStatus: iteration.status,
+        });
+        this.cleanupPipelineTaskTracking(iteration);
+        this.taskToLoop.delete(taskId);
+        this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
+        return ok(undefined);
+      }
+
       // Determine outcome based on event type
       const isTaskFailed = event.type === 'TaskFailed';
 
