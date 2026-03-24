@@ -1,8 +1,8 @@
 import { AGENT_PROVIDERS, type AgentProvider, isAgentProvider } from '../../core/agents.js';
-import { Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../core/domain.js';
+import { LoopStrategy, Priority, ScheduleId, ScheduleStatus, ScheduleType } from '../../core/domain.js';
 import type { ScheduleExecution, ScheduleRepository, ScheduleService } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
-import { toMissedRunPolicy, truncatePrompt } from '../../utils/format.js';
+import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../../utils/format.js';
 import { validatePath } from '../../utils/validation.js';
 import { exitOnError, exitOnNull, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
@@ -26,9 +26,129 @@ interface ParsedScheduleBaseArgs {
   readonly agent?: AgentProvider;
 }
 
+/**
+ * Parsed loop config for scheduled loop creation (v0.8.0)
+ */
+interface ParsedLoopConfig {
+  readonly strategy: LoopStrategy;
+  readonly exitCondition: string;
+  readonly evalDirection?: 'minimize' | 'maximize';
+  readonly evalTimeout?: number;
+  readonly maxIterations?: number;
+  readonly maxConsecutiveFailures?: number;
+  readonly cooldownMs?: number;
+  readonly freshContext: boolean;
+  readonly gitBranch?: string;
+  readonly prompt?: string;
+  readonly pipelineSteps?: readonly string[];
+}
+
 type ParsedScheduleCreateArgs =
-  | (ParsedScheduleBaseArgs & { readonly isPipeline: true; readonly pipelineSteps: readonly string[] })
-  | (ParsedScheduleBaseArgs & { readonly isPipeline: false; readonly prompt: string });
+  | (ParsedScheduleBaseArgs & {
+      readonly isPipeline: true;
+      readonly isLoop?: false;
+      readonly pipelineSteps: readonly string[];
+    })
+  | (ParsedScheduleBaseArgs & { readonly isPipeline: false; readonly isLoop?: false; readonly prompt: string })
+  | (ParsedScheduleBaseArgs & { readonly isLoop: true; readonly loopConfig: ParsedLoopConfig });
+
+interface ParsedLoopFlags {
+  readonly untilCmd?: string;
+  readonly evalCmd?: string;
+  readonly explicitStrategy?: LoopStrategy;
+  readonly loopDirection?: 'minimize' | 'maximize';
+  readonly loopMaxIterations?: number;
+  readonly loopMaxFailures?: number;
+  readonly loopCooldown?: number;
+  readonly loopEvalTimeout?: number;
+  readonly loopContinueContext: boolean;
+  readonly loopGitBranch?: string;
+}
+
+/**
+ * Parse loop-specific flags from schedule create arguments (v0.8.0).
+ * ARCHITECTURE: Extracted from parseScheduleCreateArgs() to reduce cyclomatic complexity.
+ */
+function parseScheduleLoopFlags(args: readonly string[]): Result<ParsedLoopFlags, string> {
+  let untilCmd: string | undefined;
+  let evalCmd: string | undefined;
+  let explicitStrategy: LoopStrategy | undefined;
+  let loopDirection: 'minimize' | 'maximize' | undefined;
+  let loopMaxIterations: number | undefined;
+  let loopMaxFailures: number | undefined;
+  let loopCooldown: number | undefined;
+  let loopEvalTimeout: number | undefined;
+  let loopContinueContext = false;
+  let loopGitBranch: string | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const next = args[i + 1];
+
+    if (arg === '--until' && next) {
+      untilCmd = next;
+      i++;
+    } else if (arg === '--eval' && next) {
+      evalCmd = next;
+      i++;
+    } else if (arg === '--strategy' && next) {
+      if (next !== 'retry' && next !== 'optimize') {
+        return err('--strategy must be "retry" or "optimize"');
+      }
+      explicitStrategy = next === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE;
+      i++;
+    } else if (arg === '--direction' && next) {
+      if (next !== 'minimize' && next !== 'maximize') {
+        return err('--direction must be "minimize" or "maximize"');
+      }
+      loopDirection = next;
+      i++;
+    } else if (arg === '--max-iterations' && next) {
+      loopMaxIterations = parseInt(next, 10);
+      if (isNaN(loopMaxIterations) || loopMaxIterations < 0) {
+        return err('--max-iterations must be >= 0 (0 = unlimited)');
+      }
+      i++;
+    } else if (arg === '--max-failures' && next) {
+      loopMaxFailures = parseInt(next, 10);
+      if (isNaN(loopMaxFailures) || loopMaxFailures < 0) {
+        return err('--max-failures must be >= 0');
+      }
+      i++;
+    } else if (arg === '--cooldown' && next) {
+      loopCooldown = parseInt(next, 10);
+      if (isNaN(loopCooldown) || loopCooldown < 0) {
+        return err('--cooldown must be >= 0 (ms)');
+      }
+      i++;
+    } else if (arg === '--eval-timeout' && next) {
+      loopEvalTimeout = parseInt(next, 10);
+      if (isNaN(loopEvalTimeout) || loopEvalTimeout < 1000) {
+        return err('--eval-timeout must be >= 1000 (ms)');
+      }
+      i++;
+    } else if (arg === '--continue-context') {
+      loopContinueContext = true;
+    } else if (arg === '--git-branch' && next) {
+      loopGitBranch = next;
+      i++;
+    }
+    // Non-loop flags are silently skipped — they are handled by the parent parser
+  }
+
+  return ok({
+    untilCmd,
+    evalCmd,
+    explicitStrategy,
+    loopDirection,
+    loopMaxIterations,
+    loopMaxFailures,
+    loopCooldown,
+    loopEvalTimeout,
+    loopContinueContext,
+    loopGitBranch,
+  });
+}
 
 /**
  * Parse and validate schedule create arguments.
@@ -49,6 +169,10 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
   let agent: AgentProvider | undefined;
   let isPipeline = false;
   const pipelineSteps: string[] = [];
+
+  // Loop-specific flags (v0.8.0) — parsed via extracted parseScheduleLoopFlags()
+  let isLoop = false;
+  let loopFlags: ParsedLoopFlags;
 
   for (let i = 0; i < scheduleArgs.length; i++) {
     const arg = scheduleArgs[i];
@@ -114,11 +238,39 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
     } else if (arg === '--step' && next) {
       pipelineSteps.push(next);
       i++;
+    } else if (arg === '--loop') {
+      isLoop = true;
+    } else if (
+      arg === '--until' ||
+      arg === '--eval' ||
+      arg === '--strategy' ||
+      arg === '--direction' ||
+      arg === '--max-iterations' ||
+      arg === '--max-failures' ||
+      arg === '--cooldown' ||
+      arg === '--eval-timeout' ||
+      arg === '--continue-context' ||
+      arg === '--git-branch'
+    ) {
+      // These are loop-specific flags — skip them here, they'll be parsed by parseScheduleLoopFlags()
+      // Advance past the value if the flag takes one
+      if (arg !== '--continue-context' && next && !next.startsWith('-')) {
+        i++;
+      }
     } else if (arg.startsWith('-')) {
       return err(`Unknown flag: ${arg}`);
     } else {
       promptWords.push(arg);
     }
+  }
+
+  // Parse loop-specific flags in one pass via extracted function
+  if (isLoop) {
+    const loopFlagsResult = parseScheduleLoopFlags(scheduleArgs);
+    if (!loopFlagsResult.ok) {
+      return loopFlagsResult;
+    }
+    loopFlags = loopFlagsResult.value;
   }
 
   // Infer type from --cron / --at flags
@@ -137,6 +289,64 @@ export function parseScheduleCreateArgs(scheduleArgs: string[]): Result<ParsedSc
   scheduleType = scheduleType ?? inferredType;
   if (!scheduleType) {
     return err('Provide --cron, --at, or --type');
+  }
+
+  // Loop mode (v0.8.0)
+  if (isLoop) {
+    const lf = loopFlags!;
+
+    // Validate loop exit condition
+    if (lf.untilCmd && lf.evalCmd) {
+      return err('Cannot specify both --until and --eval. Use --until for retry, --eval for optimize.');
+    }
+    if (!lf.untilCmd && !lf.evalCmd) {
+      return err('--loop requires --until <cmd> or --eval <cmd> --direction minimize|maximize');
+    }
+
+    const isOptimize = !!lf.evalCmd;
+    const exitCondition = isOptimize ? lf.evalCmd! : lf.untilCmd!;
+
+    if (isOptimize && !lf.loopDirection) {
+      return err('--direction minimize|maximize is required with --eval (optimize strategy)');
+    }
+    if (!isOptimize && lf.loopDirection) {
+      return err('--direction is only valid with --eval (optimize strategy)');
+    }
+
+    const loopConfig: ParsedLoopConfig = {
+      strategy: lf.explicitStrategy ?? (isOptimize ? LoopStrategy.OPTIMIZE : LoopStrategy.RETRY),
+      exitCondition,
+      evalDirection: lf.loopDirection,
+      evalTimeout: lf.loopEvalTimeout,
+      maxIterations: lf.loopMaxIterations,
+      maxConsecutiveFailures: lf.loopMaxFailures,
+      cooldownMs: lf.loopCooldown,
+      freshContext: !lf.loopContinueContext,
+      gitBranch: lf.loopGitBranch,
+      prompt: promptWords.join(' ') || undefined,
+      pipelineSteps: isPipeline && pipelineSteps.length >= 2 ? pipelineSteps : undefined,
+    };
+
+    // Pipeline validation for loop mode
+    if (isPipeline && pipelineSteps.length < 2) {
+      return err('Pipeline requires at least 2 --step flags');
+    }
+
+    const shared = {
+      scheduleType,
+      cronExpression,
+      scheduledAt,
+      timezone,
+      missedRunPolicy,
+      priority,
+      workingDirectory,
+      maxRuns,
+      expiresAt,
+      afterScheduleId,
+      agent,
+    };
+
+    return ok({ ...shared, isLoop: true as const, loopConfig });
   }
 
   // Pipeline mode
@@ -251,6 +461,38 @@ async function scheduleCreate(service: ScheduleService, scheduleArgs: string[]):
     afterScheduleId: args.afterScheduleId ? ScheduleId(args.afterScheduleId) : undefined,
     agent: args.agent,
   };
+
+  // Scheduled loop (v0.8.0)
+  if (args.isLoop) {
+    const lc = args.loopConfig;
+    const result = await service.createScheduledLoop({
+      loopConfig: {
+        prompt: lc.prompt,
+        strategy: lc.strategy,
+        exitCondition: lc.exitCondition,
+        evalDirection: toOptimizeDirection(lc.evalDirection),
+        evalTimeout: lc.evalTimeout,
+        workingDirectory: args.workingDirectory,
+        maxIterations: lc.maxIterations,
+        maxConsecutiveFailures: lc.maxConsecutiveFailures,
+        cooldownMs: lc.cooldownMs,
+        freshContext: lc.freshContext,
+        pipelineSteps: lc.pipelineSteps,
+        gitBranch: lc.gitBranch,
+        priority: args.priority ? Priority[args.priority] : undefined,
+        agent: args.agent,
+      },
+      ...baseOptions,
+    });
+
+    const created = exitOnError(result, undefined, 'Failed to create scheduled loop');
+    ui.success(`Scheduled loop created: ${created.id}`);
+    const details = [`Type: ${created.scheduleType}`, `Status: ${created.status}`, `Strategy: ${lc.strategy}`];
+    if (created.nextRunAt) details.push(`Next run: ${new Date(created.nextRunAt).toISOString()}`);
+    if (created.cronExpression) details.push(`Cron: ${created.cronExpression}`);
+    ui.info(details.join(' | '));
+    return;
+  }
 
   if (args.isPipeline) {
     const result = await service.createScheduledPipeline({

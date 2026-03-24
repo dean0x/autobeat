@@ -25,6 +25,7 @@ import {
   Priority,
   ResumeTaskRequest,
   ScheduleCreateRequest,
+  ScheduledLoopCreateRequest,
   ScheduledPipelineCreateRequest,
   ScheduleId,
   ScheduleStatus,
@@ -206,7 +207,7 @@ const ConfigureAgentSchema = z.object({
 const CreateLoopSchema = z.object({
   prompt: z.string().min(1).max(4000).optional().describe('Task prompt for each iteration'),
   strategy: z.enum(['retry', 'optimize']).describe('Loop strategy'),
-  exitCondition: z.string().min(1).describe('Shell command to evaluate after each iteration'),
+  exitCondition: z.string().min(1).max(4000).describe('Shell command to evaluate after each iteration'),
   evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
   evalTimeout: z.number().min(1000).optional().default(60000).describe('Eval script timeout in ms'),
   workingDirectory: z.string().optional().describe('Working directory for task and eval'),
@@ -226,6 +227,7 @@ const CreateLoopSchema = z.object({
     .describe('Pipeline step prompts (creates pipeline loop)'),
   priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Task priority'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent provider'),
+  gitBranch: z.string().optional().describe('Git branch name for loop iteration work'),
 });
 
 const LoopStatusSchema = z.object({
@@ -235,8 +237,49 @@ const LoopStatusSchema = z.object({
 });
 
 const ListLoopsSchema = z.object({
-  status: z.enum(['running', 'completed', 'failed', 'cancelled']).optional().describe('Filter by status'),
+  status: z.enum(['running', 'paused', 'completed', 'failed', 'cancelled']).optional().describe('Filter by status'),
   limit: z.number().min(1).max(100).optional().default(20).describe('Results limit'),
+});
+
+// Loop pause/resume schemas (v0.8.0)
+const PauseLoopSchema = z.object({
+  loopId: z.string().min(1).describe('Loop ID to pause'),
+  force: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Force pause — cancel current iteration immediately (default: false, waits for iteration to finish)'),
+});
+
+const ResumeLoopSchema = z.object({
+  loopId: z.string().min(1).describe('Loop ID to resume'),
+});
+
+// Scheduled loop schema (v0.8.0)
+const ScheduleLoopSchema = z.object({
+  // Loop config fields
+  prompt: z.string().min(1).max(4000).optional().describe('Task prompt for each iteration'),
+  strategy: z.enum(['retry', 'optimize']).describe('Loop strategy'),
+  exitCondition: z.string().min(1).max(4000).describe('Shell command to evaluate after each iteration'),
+  evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
+  evalTimeout: z.number().min(1000).optional().describe('Eval script timeout in ms'),
+  workingDirectory: z.string().optional().describe('Working directory for task and eval'),
+  maxIterations: z.number().min(0).optional().describe('Max iterations (0 = unlimited)'),
+  maxConsecutiveFailures: z.number().min(0).optional().describe('Max consecutive failures'),
+  cooldownMs: z.number().min(0).optional().describe('Cooldown between iterations in ms'),
+  freshContext: z.boolean().optional().describe('Start each iteration fresh (default: true)'),
+  pipelineSteps: z.array(z.string().min(1)).min(2).max(20).optional().describe('Pipeline step prompts'),
+  gitBranch: z.string().optional().describe('Git branch name for loop iteration work'),
+  priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Task priority'),
+  agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent provider'),
+  // Schedule fields
+  scheduleType: z.enum(['cron', 'one_time']).describe('Schedule type'),
+  cronExpression: z.string().optional().describe('Cron expression (5-field) for recurring loops'),
+  scheduledAt: z.string().optional().describe('ISO 8601 datetime for one-time loops'),
+  timezone: z.string().optional().default('UTC').describe('IANA timezone'),
+  missedRunPolicy: z.enum(['skip', 'catchup', 'fail']).optional().default('skip'),
+  maxRuns: z.number().min(1).optional().describe('Maximum number of loop runs for cron schedules'),
+  expiresAt: z.string().optional().describe('ISO 8601 datetime when schedule expires'),
 });
 
 const CancelLoopSchema = z.object({
@@ -285,6 +328,74 @@ export class MCPAdapter {
     return this.server;
   }
 
+  /**
+   * Dispatch a tool call by name through the Zod validation + handler pipeline.
+   * ARCHITECTURE: Extracted from the MCP tools/call request handler so both
+   * the transport layer and tests share the same dispatch path.
+   */
+  async callTool(name: string, args: unknown): Promise<MCPToolResponse> {
+    this.logger.debug('MCP tool call received', { tool: name });
+
+    switch (name) {
+      case 'DelegateTask':
+        return await this.handleDelegateTask(args);
+      case 'TaskStatus':
+        return await this.handleTaskStatus(args);
+      case 'TaskLogs':
+        return await this.handleTaskLogs(args);
+      case 'CancelTask':
+        return await this.handleCancelTask(args);
+      case 'RetryTask':
+        return await this.handleRetryTask(args);
+      case 'ResumeTask':
+        return await this.handleResumeTask(args);
+      case 'ScheduleTask':
+        return await this.handleScheduleTask(args);
+      case 'ListSchedules':
+        return await this.handleListSchedules(args);
+      case 'GetSchedule':
+        return await this.handleGetSchedule(args);
+      case 'CancelSchedule':
+        return await this.handleCancelSchedule(args);
+      case 'PauseSchedule':
+        return await this.handlePauseSchedule(args);
+      case 'ResumeSchedule':
+        return await this.handleResumeSchedule(args);
+      case 'CreatePipeline':
+        return await this.handleCreatePipeline(args);
+      case 'SchedulePipeline':
+        return await this.handleSchedulePipeline(args);
+      case 'CreateLoop':
+        return await this.handleCreateLoop(args);
+      case 'LoopStatus':
+        return await this.handleLoopStatus(args);
+      case 'ListLoops':
+        return await this.handleListLoops(args);
+      case 'CancelLoop':
+        return await this.handleCancelLoop(args);
+      case 'PauseLoop':
+        return await this.handlePauseLoop(args);
+      case 'ResumeLoop':
+        return await this.handleResumeLoop(args);
+      case 'ScheduleLoop':
+        return await this.handleScheduleLoop(args);
+      case 'ListAgents':
+        return this.handleListAgents();
+      case 'ConfigureAgent':
+        return this.handleConfigureAgent(args);
+      default:
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({ error: `Unknown tool: ${name}`, code: 'INVALID_TOOL' }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+    }
+  }
+
   private setupHandlers(): void {
     // Handle tool calls
     this.server.setRequestHandler(
@@ -302,70 +413,7 @@ export class MCPAdapter {
         // - Queue size limit (RESOURCE_EXHAUSTED error when queue full)
         // - Resource monitoring (workers only spawn when system has capacity)
         // - Spawn throttling (prevents fork bombs)
-        this.logger.debug('MCP tool call received', { tool: name });
-
-        switch (name) {
-          case 'DelegateTask':
-            return await this.handleDelegateTask(args);
-          case 'TaskStatus':
-            return await this.handleTaskStatus(args);
-          case 'TaskLogs':
-            return await this.handleTaskLogs(args);
-          case 'CancelTask':
-            return await this.handleCancelTask(args);
-          case 'RetryTask':
-            return await this.handleRetryTask(args);
-          case 'ResumeTask':
-            return await this.handleResumeTask(args);
-          // Schedule tools (v0.4.0 Task Scheduling)
-          case 'ScheduleTask':
-            return await this.handleScheduleTask(args);
-          case 'ListSchedules':
-            return await this.handleListSchedules(args);
-          case 'GetSchedule':
-            return await this.handleGetSchedule(args);
-          case 'CancelSchedule':
-            return await this.handleCancelSchedule(args);
-          case 'PauseSchedule':
-            return await this.handlePauseSchedule(args);
-          case 'ResumeSchedule':
-            return await this.handleResumeSchedule(args);
-          case 'CreatePipeline':
-            return await this.handleCreatePipeline(args);
-          case 'SchedulePipeline':
-            return await this.handleSchedulePipeline(args);
-          // Loop tools (v0.7.0 Task/Pipeline Loops)
-          case 'CreateLoop':
-            return await this.handleCreateLoop(args);
-          case 'LoopStatus':
-            return await this.handleLoopStatus(args);
-          case 'ListLoops':
-            return await this.handleListLoops(args);
-          case 'CancelLoop':
-            return await this.handleCancelLoop(args);
-          case 'ListAgents':
-            return this.handleListAgents();
-          case 'ConfigureAgent':
-            return this.handleConfigureAgent(args);
-          default:
-            // ARCHITECTURE: Return error response instead of throwing
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify(
-                    {
-                      error: `Unknown tool: ${name}`,
-                      code: 'INVALID_TOOL',
-                    },
-                    null,
-                    2,
-                  ),
-                },
-              ],
-              isError: true,
-            };
-        }
+        return await this.callTool(name, args);
       },
     );
 
@@ -901,6 +949,10 @@ export class MCPAdapter {
                     enum: [...AGENT_PROVIDERS],
                     description: `AI agent to execute iterations (${this.config.defaultAgent ? `default: ${this.config.defaultAgent}` : 'required if no default configured'})`,
                   },
+                  gitBranch: {
+                    type: 'string',
+                    description: 'Git branch name for loop iteration work (v0.8.0)',
+                  },
                 },
                 required: ['strategy', 'exitCondition'],
               },
@@ -936,7 +988,7 @@ export class MCPAdapter {
                 properties: {
                   status: {
                     type: 'string',
-                    enum: ['running', 'completed', 'failed', 'cancelled'],
+                    enum: ['running', 'paused', 'completed', 'failed', 'cancelled'],
                     description: 'Filter by status',
                   },
                   limit: {
@@ -969,6 +1021,77 @@ export class MCPAdapter {
                   },
                 },
                 required: ['loopId'],
+              },
+            },
+            // Loop pause/resume/schedule tools (v0.8.0)
+            {
+              name: 'PauseLoop',
+              description: 'Pause an active loop. Graceful pause waits for current iteration; force pause cancels it.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  loopId: {
+                    type: 'string',
+                    description: 'Loop ID to pause',
+                  },
+                  force: {
+                    type: 'boolean',
+                    description: 'Force pause — cancel current iteration immediately (default: false)',
+                    default: false,
+                  },
+                },
+                required: ['loopId'],
+              },
+            },
+            {
+              name: 'ResumeLoop',
+              description: 'Resume a paused loop',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  loopId: {
+                    type: 'string',
+                    description: 'Loop ID to resume',
+                  },
+                },
+                required: ['loopId'],
+              },
+            },
+            {
+              name: 'ScheduleLoop',
+              description:
+                'Schedule a recurring or one-time loop. Each trigger creates a fresh loop from the provided configuration.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  prompt: { type: 'string', description: 'Task prompt for each iteration' },
+                  strategy: { type: 'string', enum: ['retry', 'optimize'], description: 'Loop strategy' },
+                  exitCondition: { type: 'string', description: 'Shell command to evaluate after each iteration' },
+                  evalDirection: { type: 'string', enum: ['minimize', 'maximize'] },
+                  evalTimeout: { type: 'number', description: 'Eval script timeout in ms', minimum: 1000 },
+                  workingDirectory: { type: 'string' },
+                  maxIterations: { type: 'number', description: 'Max iterations (0 = unlimited)', minimum: 0 },
+                  maxConsecutiveFailures: { type: 'number', minimum: 0 },
+                  cooldownMs: { type: 'number', minimum: 0 },
+                  freshContext: { type: 'boolean' },
+                  pipelineSteps: {
+                    type: 'array',
+                    items: { type: 'string', minLength: 1 },
+                    minItems: 2,
+                    maxItems: 20,
+                  },
+                  gitBranch: { type: 'string', description: 'Git branch name for loop iteration work' },
+                  priority: { type: 'string', enum: ['P0', 'P1', 'P2'] },
+                  agent: { type: 'string', enum: [...AGENT_PROVIDERS] },
+                  scheduleType: { type: 'string', enum: ['cron', 'one_time'] },
+                  cronExpression: { type: 'string', description: 'Cron expression (5-field)' },
+                  scheduledAt: { type: 'string', description: 'ISO 8601 datetime for one-time loops' },
+                  timezone: { type: 'string', description: 'IANA timezone (default: UTC)' },
+                  missedRunPolicy: { type: 'string', enum: ['skip', 'catchup', 'fail'] },
+                  maxRuns: { type: 'number', description: 'Maximum number of loop runs for cron schedules' },
+                  expiresAt: { type: 'string', description: 'ISO 8601 expiration datetime' },
+                },
+                required: ['strategy', 'exitCondition', 'scheduleType'],
               },
             },
             // Agent tools (v0.5.0 Multi-Agent Support)
@@ -1878,6 +2001,7 @@ export class MCPAdapter {
       pipelineSteps: data.pipelineSteps,
       priority: data.priority as Priority | undefined,
       agent: data.agent as AgentProvider | undefined,
+      gitBranch: data.gitBranch,
     };
 
     const result = await this.loopService.createLoop(request);
@@ -1945,6 +2069,9 @@ export class MCPAdapter {
             freshContext: loop.freshContext,
             promptPreview: truncatePrompt(loop.taskTemplate.prompt, 50),
             workingDirectory: loop.workingDirectory,
+            gitBranch: loop.gitBranch ?? null,
+            gitBaseBranch: loop.gitBaseBranch ?? null,
+            scheduleId: loop.scheduleId ?? null,
             createdAt: new Date(loop.createdAt).toISOString(),
             updatedAt: new Date(loop.updatedAt).toISOString(),
             completedAt: loop.completedAt ? new Date(loop.completedAt).toISOString() : null,
@@ -1968,6 +2095,8 @@ export class MCPAdapter {
             score: iter.score ?? null,
             exitCode: iter.exitCode ?? null,
             errorMessage: iter.errorMessage ?? null,
+            gitBranch: iter.gitBranch ?? null,
+            gitDiffSummary: iter.gitDiffSummary ?? null,
             startedAt: new Date(iter.startedAt).toISOString(),
             completedAt: iter.completedAt ? new Date(iter.completedAt).toISOString() : null,
           }));
@@ -2071,6 +2200,160 @@ export class MCPAdapter {
                 message: `Loop ${loopId} cancelled`,
                 reason,
                 cancelTasksRequested: cancelTasks,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle PauseLoop tool call
+   * Pauses an active loop (graceful or force)
+   */
+  private async handlePauseLoop(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = PauseLoopSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const { loopId, force } = parseResult.data;
+
+    const result = await this.loopService.pauseLoop(LoopId(loopId), { force });
+
+    return match(result, {
+      ok: () => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                message: `Loop ${loopId} paused`,
+                force,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle ResumeLoop tool call
+   * Resumes a paused loop
+   */
+  private async handleResumeLoop(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = ResumeLoopSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const { loopId } = parseResult.data;
+
+    const result = await this.loopService.resumeLoop(LoopId(loopId));
+
+    return match(result, {
+      ok: () => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                message: `Loop ${loopId} resumed`,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }),
+      err: (error) => ({
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+        isError: true,
+      }),
+    });
+  }
+
+  /**
+   * Handle ScheduleLoop tool call
+   * Creates a scheduled loop that triggers loop creation on each run
+   */
+  private async handleScheduleLoop(args: unknown): Promise<MCPToolResponse> {
+    const parseResult = ScheduleLoopSchema.safeParse(args);
+    if (!parseResult.success) {
+      return {
+        content: [{ type: 'text', text: `Validation error: ${parseResult.error.message}` }],
+        isError: true,
+      };
+    }
+
+    const data = parseResult.data;
+
+    const loopConfig: LoopCreateRequest = {
+      prompt: data.prompt,
+      strategy: data.strategy === 'retry' ? LoopStrategy.RETRY : LoopStrategy.OPTIMIZE,
+      exitCondition: data.exitCondition,
+      evalDirection: toOptimizeDirection(data.evalDirection),
+      evalTimeout: data.evalTimeout,
+      workingDirectory: data.workingDirectory,
+      maxIterations: data.maxIterations,
+      maxConsecutiveFailures: data.maxConsecutiveFailures,
+      cooldownMs: data.cooldownMs,
+      freshContext: data.freshContext,
+      pipelineSteps: data.pipelineSteps,
+      gitBranch: data.gitBranch,
+      priority: data.priority as Priority | undefined,
+      agent: data.agent as AgentProvider | undefined,
+    };
+
+    const request: ScheduledLoopCreateRequest = {
+      loopConfig,
+      scheduleType: data.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
+      cronExpression: data.cronExpression,
+      scheduledAt: data.scheduledAt,
+      timezone: data.timezone,
+      missedRunPolicy: toMissedRunPolicy(data.missedRunPolicy),
+      maxRuns: data.maxRuns,
+      expiresAt: data.expiresAt,
+    };
+
+    const result = await this.scheduleService.createScheduledLoop(request);
+
+    return match(result, {
+      ok: (schedule) => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                success: true,
+                scheduleId: schedule.id,
+                scheduleType: schedule.scheduleType,
+                nextRunAt: schedule.nextRunAt ? new Date(schedule.nextRunAt).toISOString() : null,
+                status: schedule.status,
+                timezone: schedule.timezone,
+                loopStrategy: data.strategy,
               },
               null,
               2,

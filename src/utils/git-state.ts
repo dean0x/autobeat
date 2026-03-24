@@ -1,7 +1,6 @@
 /**
- * Git state capture utility for task checkpoints
- * ARCHITECTURE: Captures git repository state at task terminal events
- * Pattern: Pure function returning Result, uses execFile for security (no shell injection)
+ * Git state capture and branch management utilities
+ * ARCHITECTURE: Pure functions returning Result, uses execFile for security (no shell injection)
  */
 
 import { execFile } from 'child_process';
@@ -10,6 +9,98 @@ import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { err, ok, Result } from '../core/result.js';
 
 const execFileAsync = promisify(execFile);
+
+/** Timeout for all git operations — prevents hung git from blocking the event loop */
+const GIT_TIMEOUT_MS = 30_000;
+
+/** Detect execFile timeout: Node sets `killed = true` when a child process is terminated by timeout */
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && 'killed' in error && (error as { killed?: boolean }).killed === true;
+}
+
+/**
+ * Validate a git ref name (branch or tag) to prevent argument injection.
+ * Rejects names that could be interpreted as git flags or contain unsafe patterns.
+ * Based on git-check-ref-format rules plus argument injection prevention.
+ *
+ * @returns Result<void> - ok if valid, err with descriptive message if invalid
+ */
+export function validateGitRefName(name: string, label = 'branch'): Result<void, BackbeatError> {
+  if (!name || name.trim().length === 0) {
+    return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not be empty`));
+  }
+
+  // Prevent argument injection: names starting with '-' are interpreted as git flags
+  if (name.startsWith('-')) {
+    return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not start with '-': ${name}`));
+  }
+
+  // git-check-ref-format disallows '..' (directory traversal)
+  if (name.includes('..')) {
+    return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not contain '..': ${name}`));
+  }
+
+  // Reject control characters (ASCII 0x00-0x1F and 0x7F)
+  if (/[\x00-\x1f\x7f]/.test(name)) {
+    return err(
+      new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not contain control characters: ${name}`),
+    );
+  }
+
+  // git-check-ref-format disallows space, tilde, caret, colon, backslash
+  if (/[\s~^:\\]/.test(name)) {
+    return err(
+      new BackbeatError(
+        ErrorCode.INVALID_INPUT,
+        `Git ${label} name contains invalid characters (space, ~, ^, :, or \\): ${name}`,
+      ),
+    );
+  }
+
+  // git-check-ref-format disallows '@{' (reflog syntax)
+  if (name.includes('@{')) {
+    return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not contain '@{': ${name}`));
+  }
+
+  // git-check-ref-format disallows trailing '.'
+  if (name.endsWith('.')) {
+    return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not end with '.': ${name}`));
+  }
+
+  // git-check-ref-format disallows '.lock' suffix
+  if (name.endsWith('.lock')) {
+    return err(new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not end with '.lock': ${name}`));
+  }
+
+  // git-check-ref-format disallows glob characters ?, *, [
+  if (/[?*\[]/.test(name)) {
+    return err(
+      new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name contains glob characters (?, *, or [): ${name}`),
+    );
+  }
+
+  // git-check-ref-format disallows consecutive slashes '//'
+  if (name.includes('//')) {
+    return err(
+      new BackbeatError(ErrorCode.INVALID_INPUT, `Git ${label} name must not contain consecutive slashes: ${name}`),
+    );
+  }
+
+  // git-check-ref-format disallows path components starting with '.'
+  const components = name.split('/');
+  for (const component of components) {
+    if (component.startsWith('.')) {
+      return err(
+        new BackbeatError(
+          ErrorCode.INVALID_INPUT,
+          `Git ${label} name must not have path components starting with '.': ${name}`,
+        ),
+      );
+    }
+  }
+
+  return ok(undefined);
+}
 
 export interface GitState {
   readonly branch: string;
@@ -27,14 +118,15 @@ export interface GitState {
  */
 export async function captureGitState(workingDirectory: string): Promise<Result<GitState | null>> {
   try {
-    const execOpts = { cwd: workingDirectory };
+    const execOpts = { cwd: workingDirectory, timeout: GIT_TIMEOUT_MS };
 
     // Check if this is a git directory by getting the branch
     let branch: string;
     try {
       const branchResult = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], execOpts);
       branch = branchResult.stdout.trim();
-    } catch {
+    } catch (catchError) {
+      if (isTimeoutError(catchError)) throw catchError;
       // Not a git directory or git not available - not an error
       return ok(null);
     }
@@ -44,7 +136,8 @@ export async function captureGitState(workingDirectory: string): Promise<Result<
     try {
       const shaResult = await execFileAsync('git', ['rev-parse', 'HEAD'], execOpts);
       commitSha = shaResult.stdout.trim();
-    } catch {
+    } catch (catchError) {
+      if (isTimeoutError(catchError)) throw catchError;
       // HEAD might not exist (empty repo) - not an error
       return ok(null);
     }
@@ -59,7 +152,8 @@ export async function captureGitState(workingDirectory: string): Promise<Result<
           .filter((line) => line.length > 0)
           .map((line) => line.substring(3).trim()); // Remove status prefix (e.g., " M ", "?? ")
       }
-    } catch {
+    } catch (catchError) {
+      if (isTimeoutError(catchError)) throw catchError;
       // Status failed - continue with empty dirty files
       dirtyFiles = [];
     }
@@ -71,6 +165,92 @@ export async function captureGitState(workingDirectory: string): Promise<Result<
         ErrorCode.SYSTEM_ERROR,
         `Failed to capture git state: ${error instanceof Error ? error.message : String(error)}`,
         { workingDirectory },
+      ),
+    );
+  }
+}
+
+/**
+ * Create and checkout a git branch
+ * Uses `git checkout -B` (force create/reset) for crash recovery safety —
+ * if the branch already exists from a prior crashed iteration, it is reset
+ * rather than failing.
+ *
+ * @param workingDirectory - Absolute path to the working directory
+ * @param branchName - Name of the branch to create/checkout
+ * @param fromRef - Optional ref to branch from (e.g., 'main'). If omitted, branches from current HEAD.
+ * @returns Result<void> on success, error on failure
+ */
+export async function createAndCheckoutBranch(
+  workingDirectory: string,
+  branchName: string,
+  fromRef?: string,
+): Promise<Result<void, BackbeatError>> {
+  const nameValidation = validateGitRefName(branchName, 'branch');
+  if (!nameValidation.ok) return nameValidation;
+
+  if (fromRef) {
+    const refValidation = validateGitRefName(fromRef, 'ref');
+    if (!refValidation.ok) return refValidation;
+  }
+
+  try {
+    // Use '--' separator to prevent branch names from being interpreted as flags
+    const args = fromRef ? ['checkout', '-B', branchName, fromRef, '--'] : ['checkout', '-B', branchName, '--'];
+
+    await execFileAsync('git', args, { cwd: workingDirectory, timeout: GIT_TIMEOUT_MS });
+    return ok(undefined);
+  } catch (error) {
+    return err(
+      new BackbeatError(
+        ErrorCode.SYSTEM_ERROR,
+        `Failed to create/checkout branch '${branchName}': ${error instanceof Error ? error.message : String(error)}`,
+        { workingDirectory, branchName, fromRef },
+      ),
+    );
+  }
+}
+
+/**
+ * Capture git diff summary between two branches
+ * Returns the `git diff --stat` output as a summary string, or null if there are no changes.
+ * Uses execFile (not exec) to prevent shell injection.
+ *
+ * @param workingDirectory - Absolute path to the working directory
+ * @param fromBranch - Base branch for comparison
+ * @param toBranch - Target branch for comparison
+ * @returns Result containing diff summary string or null if no changes
+ */
+export async function captureGitDiff(
+  workingDirectory: string,
+  fromBranch: string,
+  toBranch: string,
+): Promise<Result<string | null, BackbeatError>> {
+  const fromValidation = validateGitRefName(fromBranch, 'branch');
+  if (!fromValidation.ok) return fromValidation;
+
+  const toValidation = validateGitRefName(toBranch, 'branch');
+  if (!toValidation.ok) return toValidation;
+
+  try {
+    // '--' separator prevents ref names from being interpreted as flags
+    const diffResult = await execFileAsync('git', ['diff', '--stat', `${fromBranch}..${toBranch}`, '--'], {
+      cwd: workingDirectory,
+      timeout: GIT_TIMEOUT_MS,
+    });
+
+    const summary = diffResult.stdout.trim();
+    if (!summary) {
+      return ok(null);
+    }
+
+    return ok(summary);
+  } catch (error) {
+    return err(
+      new BackbeatError(
+        ErrorCode.SYSTEM_ERROR,
+        `Failed to capture git diff (${fromBranch}..${toBranch}): ${error instanceof Error ? error.message : String(error)}`,
+        { workingDirectory, fromBranch, toBranch },
       ),
     );
   }

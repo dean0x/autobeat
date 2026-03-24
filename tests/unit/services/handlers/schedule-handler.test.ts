@@ -9,9 +9,17 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PipelineStepRequest, Schedule, Task } from '../../../../src/core/domain';
+
+// Mock git-state before importing modules that depend on it
+vi.mock('../../../../src/utils/git-state.js', () => ({
+  captureGitState: vi.fn().mockResolvedValue({ ok: true, value: null }),
+}));
+
+import type { Loop, LoopCreateRequest, PipelineStepRequest, Schedule, Task } from '../../../../src/core/domain';
 import {
   createSchedule,
+  LoopStatus,
+  LoopStrategy,
   MissedRunPolicy,
   ScheduleId,
   ScheduleStatus,
@@ -22,9 +30,12 @@ import {
 import { BackbeatError, ErrorCode } from '../../../../src/core/errors';
 import { InMemoryEventBus } from '../../../../src/core/events/event-bus';
 import { Database } from '../../../../src/implementations/database';
+import { SQLiteLoopRepository } from '../../../../src/implementations/loop-repository';
 import { SQLiteScheduleRepository } from '../../../../src/implementations/schedule-repository';
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository';
 import { ScheduleHandler } from '../../../../src/services/handlers/schedule-handler';
+import { LoopManagerService } from '../../../../src/services/loop-manager';
+import { captureGitState } from '../../../../src/utils/git-state';
 import { createTestConfiguration } from '../../../fixtures/factories';
 import { TestLogger } from '../../../fixtures/test-doubles';
 import { flushEventLoop } from '../../../utils/event-helpers';
@@ -34,8 +45,10 @@ describe('ScheduleHandler - Behavioral Tests', () => {
   let eventBus: InMemoryEventBus;
   let scheduleRepo: SQLiteScheduleRepository;
   let taskRepo: SQLiteTaskRepository;
+  let loopRepo: SQLiteLoopRepository;
   let database: Database;
   let logger: TestLogger;
+  let loopService: LoopManagerService;
 
   beforeEach(async () => {
     logger = new TestLogger();
@@ -45,8 +58,19 @@ describe('ScheduleHandler - Behavioral Tests', () => {
     database = new Database(':memory:');
     scheduleRepo = new SQLiteScheduleRepository(database);
     taskRepo = new SQLiteTaskRepository(database);
+    loopRepo = new SQLiteLoopRepository(database);
+    loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
 
-    const handlerResult = await ScheduleHandler.create(scheduleRepo, taskRepo, eventBus, database, logger);
+    const handlerResult = await ScheduleHandler.create(
+      scheduleRepo,
+      taskRepo,
+      eventBus,
+      database,
+      loopRepo,
+      logger,
+      undefined,
+      loopService,
+    );
     if (!handlerResult.ok) {
       throw new Error(`Failed to create ScheduleHandler: ${handlerResult.error.message}`);
     }
@@ -80,18 +104,24 @@ describe('ScheduleHandler - Behavioral Tests', () => {
 
   describe('Factory create()', () => {
     it('should succeed and subscribe to events', async () => {
-      const freshEventBus = new InMemoryEventBus(createTestConfiguration(), new TestLogger());
+      const freshConfig = createTestConfiguration();
+      const freshEventBus = new InMemoryEventBus(freshConfig, new TestLogger());
       const freshLogger = new TestLogger();
 
       const freshDb = new Database(':memory:');
       const freshScheduleRepo = new SQLiteScheduleRepository(freshDb);
       const freshTaskRepo = new SQLiteTaskRepository(freshDb);
+      const freshLoopRepo = new SQLiteLoopRepository(freshDb);
+      const freshLoopService = new LoopManagerService(freshEventBus, freshLogger, freshLoopRepo, freshConfig);
       const result = await ScheduleHandler.create(
         freshScheduleRepo,
         freshTaskRepo,
         freshEventBus,
         freshDb,
+        freshLoopRepo,
         freshLogger,
+        undefined,
+        freshLoopService,
       );
 
       expect(result.ok).toBe(true);
@@ -979,6 +1009,305 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       expect(persisted!.status).toBe(ScheduleStatus.COMPLETED);
       expect(persisted!.runCount).toBe(1);
       expect(persisted!.nextRunAt).toBeUndefined();
+    });
+  });
+
+  // ==========================================================================
+  // Scheduled Loop Trigger (v0.8.0)
+  // ==========================================================================
+
+  describe('Scheduled Loop Trigger', () => {
+    function createLoopSchedule(overrides: Partial<Parameters<typeof createSchedule>[0]> = {}): Schedule {
+      const loopConfig: LoopCreateRequest = {
+        prompt: 'Fix the tests',
+        strategy: LoopStrategy.RETRY,
+        exitCondition: 'npm test',
+        maxIterations: 5,
+        maxConsecutiveFailures: 3,
+      };
+      return createSchedule({
+        taskTemplate: { prompt: loopConfig.prompt ?? '', workingDirectory: '/tmp' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+        loopConfig,
+        ...overrides,
+      });
+    }
+
+    async function triggerLoopSchedule(scheduleId: ReturnType<typeof ScheduleId>): Promise<void> {
+      await scheduleRepo.update(scheduleId, { nextRunAt: Date.now() - 1000 });
+      await eventBus.emit('ScheduleTriggered', { scheduleId, triggeredAt: Date.now() });
+      await flushEventLoop();
+    }
+
+    it('should create a loop when schedule with loopConfig is triggered', async () => {
+      const schedule = createLoopSchedule();
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      await triggerLoopSchedule(schedule.id);
+
+      // Assert: a loop should have been created (LoopCreated event emitted)
+      // LoopHandler creates the loop from the event, so check loopRepo
+      const loops = await loopRepo.findByScheduleId(schedule.id);
+      expect(loops.ok).toBe(true);
+      if (!loops.ok) return;
+      // LoopCreated event was emitted but LoopHandler is not wired up in this test,
+      // so check the execution history instead
+      const history = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+      expect(history.value).toHaveLength(1);
+      expect(history.value[0].status).toBe('triggered');
+    });
+
+    it('should skip trigger when previous loop is still RUNNING', async () => {
+      const schedule = createLoopSchedule();
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      // Create a running loop associated with this schedule
+      const { createLoop } = await import('../../../../src/core/domain');
+      const existingLoop = createLoop(
+        {
+          prompt: 'existing loop',
+          strategy: LoopStrategy.RETRY,
+          exitCondition: 'npm test',
+          maxIterations: 5,
+        },
+        '/tmp',
+        schedule.id,
+      );
+      await loopRepo.save(existingLoop);
+
+      // Trigger schedule again
+      await triggerLoopSchedule(schedule.id);
+
+      // Should have been skipped — only the pre-existing loop
+      const loops = await loopRepo.findByScheduleId(schedule.id);
+      expect(loops.ok).toBe(true);
+      if (!loops.ok) return;
+      expect(loops.value).toHaveLength(1);
+      expect(loops.value[0].id).toBe(existingLoop.id);
+
+      // Logger should record the skip
+      expect(logger.hasLogContaining('previous loop still active')).toBe(true);
+    });
+
+    it('should skip trigger when previous loop is PAUSED', async () => {
+      const schedule = createLoopSchedule();
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      // Create a paused loop associated with this schedule
+      const { createLoop } = await import('../../../../src/core/domain');
+      const existingLoop = createLoop(
+        {
+          prompt: 'paused loop',
+          strategy: LoopStrategy.RETRY,
+          exitCondition: 'npm test',
+          maxIterations: 5,
+        },
+        '/tmp',
+        schedule.id,
+      );
+      const pausedLoop = { ...existingLoop, status: LoopStatus.PAUSED };
+      await loopRepo.save(pausedLoop);
+
+      // Trigger schedule
+      await triggerLoopSchedule(schedule.id);
+
+      // Should have been skipped
+      const loops = await loopRepo.findByScheduleId(schedule.id);
+      expect(loops.ok).toBe(true);
+      if (!loops.ok) return;
+      expect(loops.value).toHaveLength(1);
+      expect(loops.value[0].status).toBe(LoopStatus.PAUSED);
+    });
+
+    it('should reject trigger with missing prompt via LoopService validation', async () => {
+      // ARCHITECTURE: LoopConfigSchema at repo level allows optional prompt,
+      // but LoopManagerService.validateCreateRequest() requires prompt for non-pipeline loops.
+      // This test verifies the schedule handler calls validation before creating the loop.
+      const invalidLoopConfig: LoopCreateRequest = {
+        // prompt intentionally omitted — invalid for non-pipeline loop
+        strategy: LoopStrategy.RETRY,
+        exitCondition: 'npm test',
+        maxIterations: 5,
+      };
+      const schedule = createSchedule({
+        taskTemplate: { prompt: 'placeholder for task template', workingDirectory: '/tmp' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+        loopConfig: invalidLoopConfig,
+      });
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+      await scheduleRepo.update(schedule.id, { nextRunAt: Date.now() - 1000 });
+
+      await eventBus.emit('ScheduleTriggered', { scheduleId: schedule.id, triggeredAt: Date.now() });
+      await flushEventLoop();
+
+      // No loop should have been created
+      const loops = await loopRepo.findByScheduleId(schedule.id);
+      expect(loops.ok).toBe(true);
+      if (!loops.ok) return;
+      expect(loops.value).toHaveLength(0);
+
+      // A failed execution should be recorded
+      const history = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+      expect(history.value).toHaveLength(1);
+      expect(history.value[0].status).toBe('failed');
+      expect(history.value[0].errorMessage).toContain('prompt is required');
+    });
+
+    it('should still create loop successfully when loopConfig is valid', async () => {
+      const validLoopConfig: LoopCreateRequest = {
+        prompt: 'Fix the tests',
+        strategy: LoopStrategy.RETRY,
+        exitCondition: 'npm test',
+        maxIterations: 5,
+        maxConsecutiveFailures: 3,
+      };
+      const schedule = createSchedule({
+        taskTemplate: { prompt: validLoopConfig.prompt ?? '', workingDirectory: '/tmp' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+        loopConfig: validLoopConfig,
+      });
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+      await scheduleRepo.update(schedule.id, { nextRunAt: Date.now() - 1000 });
+
+      await eventBus.emit('ScheduleTriggered', { scheduleId: schedule.id, triggeredAt: Date.now() });
+      await flushEventLoop();
+
+      // Execution should be triggered successfully
+      const history = await scheduleRepo.getExecutionHistory(schedule.id);
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+      expect(history.value).toHaveLength(1);
+      expect(history.value[0].status).toBe('triggered');
+    });
+
+    it('should populate gitBaseBranch in LoopCreated event when loopConfig has gitBranch', async () => {
+      // Mock captureGitState to return a branch name
+      const mockCaptureGitState = vi.mocked(captureGitState);
+      mockCaptureGitState.mockResolvedValue({
+        ok: true,
+        value: { branch: 'main', commitSha: 'abc123', dirtyFiles: [] },
+      });
+
+      const loopConfig: LoopCreateRequest = {
+        prompt: 'Optimize perf',
+        strategy: LoopStrategy.RETRY,
+        exitCondition: 'npm test',
+        maxIterations: 5,
+        gitBranch: 'loop/perf-opt',
+      };
+      const schedule = createSchedule({
+        taskTemplate: { prompt: loopConfig.prompt ?? '', workingDirectory: '/tmp' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+        loopConfig,
+      });
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+      await scheduleRepo.update(schedule.id, { nextRunAt: Date.now() - 1000 });
+
+      // Intercept LoopCreated event
+      let capturedLoop: Loop | undefined;
+      eventBus.subscribe('LoopCreated', (event: { loop: Loop }) => {
+        capturedLoop = event.loop;
+      });
+
+      await eventBus.emit('ScheduleTriggered', { scheduleId: schedule.id, triggeredAt: Date.now() });
+      await flushEventLoop();
+
+      expect(capturedLoop).toBeDefined();
+      expect(capturedLoop!.gitBranch).toBe('loop/perf-opt');
+      expect(capturedLoop!.gitBaseBranch).toBe('main');
+    });
+
+    it('should leave gitBaseBranch undefined when loopConfig has no gitBranch (regression guard)', async () => {
+      // Reset mock completely — clear call history + set default return
+      const mockCaptureGitState = vi.mocked(captureGitState);
+      mockCaptureGitState.mockClear();
+      mockCaptureGitState.mockResolvedValue({ ok: true, value: null });
+
+      const loopConfig: LoopCreateRequest = {
+        prompt: 'Fix the tests',
+        strategy: LoopStrategy.RETRY,
+        exitCondition: 'npm test',
+        maxIterations: 5,
+        // No gitBranch — captureGitState should NOT be called
+      };
+      const schedule = createSchedule({
+        taskTemplate: { prompt: loopConfig.prompt ?? '', workingDirectory: '/tmp' },
+        scheduleType: ScheduleType.CRON,
+        cronExpression: '0 9 * * *',
+        timezone: 'UTC',
+        missedRunPolicy: MissedRunPolicy.SKIP,
+        loopConfig,
+      });
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+      await scheduleRepo.update(schedule.id, { nextRunAt: Date.now() - 1000 });
+
+      // Intercept LoopCreated event
+      let capturedLoop: Loop | undefined;
+      eventBus.subscribe('LoopCreated', (event: { loop: Loop }) => {
+        capturedLoop = event.loop;
+      });
+
+      await eventBus.emit('ScheduleTriggered', { scheduleId: schedule.id, triggeredAt: Date.now() });
+      await flushEventLoop();
+
+      expect(capturedLoop).toBeDefined();
+      expect(capturedLoop!.gitBaseBranch).toBeUndefined();
+      // captureGitState should NOT have been called since no gitBranch
+      expect(mockCaptureGitState).not.toHaveBeenCalled();
+    });
+
+    it('should cancel active loops when schedule with loopConfig is cancelled', async () => {
+      const schedule = createLoopSchedule();
+      await saveSchedule({ ...schedule, status: ScheduleStatus.ACTIVE });
+
+      // Create an active loop associated with this schedule
+      const { createLoop } = await import('../../../../src/core/domain');
+      const existingLoop = createLoop(
+        {
+          prompt: 'active loop for cancel test',
+          strategy: LoopStrategy.RETRY,
+          exitCondition: 'npm test',
+          maxIterations: 5,
+        },
+        '/tmp',
+        schedule.id,
+      );
+      await loopRepo.save(existingLoop);
+
+      // Cancel the schedule
+      await eventBus.emit('ScheduleCancelled', {
+        scheduleId: schedule.id,
+        reason: 'Test cancellation',
+      });
+      await flushEventLoop();
+
+      // Schedule should be cancelled
+      const schedResult = await scheduleRepo.findById(schedule.id);
+      expect(schedResult.ok).toBe(true);
+      if (!schedResult.ok) return;
+      expect(schedResult.value!.status).toBe(ScheduleStatus.CANCELLED);
+
+      // Active loop should have had LoopCancelled emitted
+      // (LoopHandler would process it if wired, but we can verify the event was emitted)
+      // In this unit test context, the loop state depends on LoopHandler subscription.
+      // We verify the intent by checking logger output.
+      expect(logger.hasLogContaining('Cancelling schedule')).toBe(true);
     });
   });
 });

@@ -15,12 +15,14 @@ import {
   LoopIteration,
   LoopStatus,
   LoopStrategy,
+  updateLoop,
 } from '../core/domain.js';
 import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
 import { Logger, LoopRepository, LoopService } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { truncatePrompt } from '../utils/format.js';
+import { captureGitState } from '../utils/git-state.js';
 import { validatePath } from '../utils/validation.js';
 
 export class LoopManagerService implements LoopService {
@@ -33,11 +35,12 @@ export class LoopManagerService implements LoopService {
     this.logger.debug('LoopManagerService initialized');
   }
 
-  async createLoop(request: LoopCreateRequest): Promise<Result<Loop>> {
-    // ========================================================================
-    // Input validation (R13 boundary validation)
-    // ========================================================================
-
+  /**
+   * Validate a loop creation request without creating the loop.
+   * ARCHITECTURE: Extracted from createLoop() so ScheduleHandler can validate
+   * loopConfig before domain factory creation — prevents bypassing validations.
+   */
+  async validateCreateRequest(request: LoopCreateRequest): Promise<Result<void, Error>> {
     // Validate prompt: required 1-4000 chars unless pipeline mode
     const isPipelineMode = request.pipelineSteps && request.pipelineSteps.length > 0;
     if (!isPipelineMode) {
@@ -68,7 +71,6 @@ export class LoopManagerService implements LoopService {
     }
 
     // Validate workingDirectory
-    let validatedWorkingDirectory: string;
     if (request.workingDirectory) {
       const pathValidation = validatePath(request.workingDirectory);
       if (!pathValidation.ok) {
@@ -78,9 +80,6 @@ export class LoopManagerService implements LoopService {
           }),
         );
       }
-      validatedWorkingDirectory = pathValidation.value;
-    } else {
-      validatedWorkingDirectory = process.cwd();
     }
 
     // Validate maxIterations: >= 0 (0 = unlimited)
@@ -175,6 +174,65 @@ export class LoopManagerService implements LoopService {
     const agentResult = resolveDefaultAgent(request.agent, this.config.defaultAgent);
     if (!agentResult.ok) return agentResult;
 
+    // Git branch validation (v0.8.0)
+    if (request.gitBranch) {
+      const validatedDir = request.workingDirectory ?? process.cwd();
+      const gitStateResult = await captureGitState(validatedDir);
+      if (!gitStateResult.ok) {
+        return err(
+          new BackbeatError(
+            ErrorCode.INVALID_INPUT,
+            `gitBranch requires a git repository: ${gitStateResult.error.message}`,
+            { workingDirectory: validatedDir, gitBranch: request.gitBranch },
+          ),
+        );
+      }
+      if (!gitStateResult.value) {
+        return err(
+          new BackbeatError(
+            ErrorCode.INVALID_INPUT,
+            'gitBranch requires a git repository, but working directory is not a git repo',
+            { workingDirectory: validatedDir, gitBranch: request.gitBranch },
+          ),
+        );
+      }
+    }
+
+    return ok(undefined);
+  }
+
+  async createLoop(request: LoopCreateRequest): Promise<Result<Loop>> {
+    // ========================================================================
+    // Input validation via extracted validateCreateRequest()
+    // ========================================================================
+    const validationResult = await this.validateCreateRequest(request);
+    if (!validationResult.ok) {
+      return validationResult;
+    }
+
+    // ========================================================================
+    // Resolve validated working directory and agent (validation passed above)
+    // ========================================================================
+    const pathResult = request.workingDirectory ? validatePath(request.workingDirectory) : undefined;
+    const validatedWorkingDirectory = pathResult?.ok ? pathResult.value : process.cwd();
+
+    const agentResult = resolveDefaultAgent(request.agent, this.config.defaultAgent);
+    const agent = agentResult.ok ? agentResult.value : request.agent;
+
+    // ========================================================================
+    // Git branch validation (v0.8.0)
+    // If gitBranch is set, verify working directory is a git repo and capture gitBaseBranch
+    // ========================================================================
+
+    let gitBaseBranch: string | undefined;
+    if (request.gitBranch) {
+      const gitStateResult = await captureGitState(validatedWorkingDirectory);
+      if (gitStateResult.ok && gitStateResult.value) {
+        gitBaseBranch = gitStateResult.value.branch;
+      }
+      // Errors already checked in validateCreateRequest
+    }
+
     // ========================================================================
     // Create loop via domain factory
     // ========================================================================
@@ -182,32 +240,39 @@ export class LoopManagerService implements LoopService {
     const loop = createLoop(
       {
         ...request,
-        agent: agentResult.value,
+        agent,
       },
       validatedWorkingDirectory,
     );
+
+    // If gitBranch was provided, inject gitBaseBranch into the loop
+    // ARCHITECTURE: createLoop sets gitBaseBranch to undefined; we override here
+    // because captureGitState is async (not available in pure domain factory)
+    const loopWithGit = gitBaseBranch ? updateLoop(loop, { gitBaseBranch }) : loop;
 
     const promptSummary = request.prompt
       ? truncatePrompt(request.prompt, 50)
       : `Pipeline (${request.pipelineSteps?.length ?? 0} steps)`;
 
     this.logger.info('Creating loop', {
-      loopId: loop.id,
-      strategy: loop.strategy,
-      maxIterations: loop.maxIterations,
+      loopId: loopWithGit.id,
+      strategy: loopWithGit.strategy,
+      maxIterations: loopWithGit.maxIterations,
       prompt: promptSummary,
+      gitBranch: loopWithGit.gitBranch,
+      gitBaseBranch: loopWithGit.gitBaseBranch,
     });
 
     // Emit event — handler persists the loop
-    const emitResult = await this.eventBus.emit('LoopCreated', { loop });
+    const emitResult = await this.eventBus.emit('LoopCreated', { loop: loopWithGit });
     if (!emitResult.ok) {
       this.logger.error('Failed to emit LoopCreated event', emitResult.error, {
-        loopId: loop.id,
+        loopId: loopWithGit.id,
       });
       return err(emitResult.error);
     }
 
-    return ok(loop);
+    return ok(loopWithGit);
   }
 
   async getLoop(
@@ -249,12 +314,16 @@ export class LoopManagerService implements LoopService {
     if (!lookupResult.ok) return lookupResult;
 
     const loop = lookupResult.value;
-    if (loop.status !== LoopStatus.RUNNING) {
+    if (loop.status !== LoopStatus.RUNNING && loop.status !== LoopStatus.PAUSED) {
       return err(
-        new BackbeatError(ErrorCode.INVALID_OPERATION, `Loop ${loopId} is not running (status: ${loop.status})`, {
-          loopId,
-          status: loop.status,
-        }),
+        new BackbeatError(
+          ErrorCode.INVALID_OPERATION,
+          `Loop ${loopId} is not running or paused (status: ${loop.status})`,
+          {
+            loopId,
+            status: loop.status,
+          },
+        ),
       );
     }
 
@@ -305,6 +374,62 @@ export class LoopManagerService implements LoopService {
       this.logger.error('Failed to emit LoopCancelled event', emitResult.error, {
         loopId,
       });
+      return err(emitResult.error);
+    }
+
+    return ok(undefined);
+  }
+
+  async pauseLoop(loopId: LoopId, options?: { force?: boolean }): Promise<Result<void>> {
+    const lookupResult = await this.fetchLoopOrError(loopId);
+    if (!lookupResult.ok) return lookupResult;
+
+    const loop = lookupResult.value;
+    if (loop.status !== LoopStatus.RUNNING) {
+      return err(
+        new BackbeatError(ErrorCode.INVALID_OPERATION, `Loop ${loopId} is not running (status: ${loop.status})`, {
+          loopId,
+          status: loop.status,
+        }),
+      );
+    }
+
+    const force = options?.force ?? false;
+    this.logger.info('Pausing loop', { loopId, force });
+
+    const emitResult = await this.eventBus.emit('LoopPaused', {
+      loopId,
+      force,
+    });
+
+    if (!emitResult.ok) {
+      this.logger.error('Failed to emit LoopPaused event', emitResult.error, { loopId });
+      return err(emitResult.error);
+    }
+
+    return ok(undefined);
+  }
+
+  async resumeLoop(loopId: LoopId): Promise<Result<void>> {
+    const lookupResult = await this.fetchLoopOrError(loopId);
+    if (!lookupResult.ok) return lookupResult;
+
+    const loop = lookupResult.value;
+    if (loop.status !== LoopStatus.PAUSED) {
+      return err(
+        new BackbeatError(ErrorCode.INVALID_OPERATION, `Loop ${loopId} is not paused (status: ${loop.status})`, {
+          loopId,
+          status: loop.status,
+        }),
+      );
+    }
+
+    this.logger.info('Resuming loop', { loopId });
+
+    const emitResult = await this.eventBus.emit('LoopResumed', { loopId });
+
+    if (!emitResult.ok) {
+      this.logger.error('Failed to emit LoopResumed event', emitResult.error, { loopId });
       return err(emitResult.error);
     }
 

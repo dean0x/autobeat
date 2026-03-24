@@ -23,6 +23,8 @@ import { EventBus } from '../../core/events/event-bus.js';
 import type {
   LoopCancelledEvent,
   LoopCreatedEvent,
+  LoopPausedEvent,
+  LoopResumedEvent,
   TaskCancelledEvent,
   TaskCompletedEvent,
   TaskFailedEvent,
@@ -40,6 +42,7 @@ import type {
   TransactionRunner,
 } from '../../core/interfaces.js';
 import { err, ok, type Result } from '../../core/result.js';
+import { captureGitDiff, createAndCheckoutBranch } from '../../utils/git-state.js';
 
 export class LoopHandler extends BaseEventHandler {
   // In-memory state (rebuilt from DB on restart)
@@ -118,6 +121,8 @@ export class LoopHandler extends BaseEventHandler {
       this.eventBus.subscribe('TaskFailed', this.handleTaskTerminal.bind(this)),
       this.eventBus.subscribe('TaskCancelled', this.handleTaskCancelled.bind(this)),
       this.eventBus.subscribe('LoopCancelled', this.handleLoopCancelled.bind(this)),
+      this.eventBus.subscribe('LoopPaused', this.handleLoopPaused.bind(this)),
+      this.eventBus.subscribe('LoopResumed', this.handleLoopResumed.bind(this)),
     ];
 
     for (const result of subscriptions) {
@@ -194,8 +199,9 @@ export class LoopHandler extends BaseEventHandler {
       }
 
       // Prevents action after cancel (R5 race condition)
-      if (loop.status !== LoopStatus.RUNNING) {
-        this.logger.debug('Loop not running, ignoring terminal event', {
+      // Allow PAUSED through so iteration results are recorded (graceful pause)
+      if (loop.status !== LoopStatus.RUNNING && loop.status !== LoopStatus.PAUSED) {
+        this.logger.debug('Loop not running or paused, ignoring terminal event', {
           loopId,
           status: loop.status,
           taskId,
@@ -213,6 +219,20 @@ export class LoopHandler extends BaseEventHandler {
       }
 
       const iteration = iterationResult.value;
+
+      // Guard: skip processing if iteration is no longer running (e.g., force-paused → cancelled)
+      // Prevents late TaskCompleted/TaskFailed from overwriting cancelled/terminal iteration status
+      if (iteration.status !== 'running') {
+        this.logger.debug('Iteration not running, skipping terminal processing', {
+          loopId,
+          taskId,
+          iterationStatus: iteration.status,
+        });
+        this.cleanupPipelineTaskTracking(iteration);
+        this.taskToLoop.delete(taskId);
+        this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
+        return ok(undefined);
+      }
 
       // Determine outcome based on event type
       const isTaskFailed = event.type === 'TaskFailed';
@@ -238,27 +258,16 @@ export class LoopHandler extends BaseEventHandler {
         if (!txResult.ok) {
           this.logger.error('Failed to persist task failure', txResult.error, { loopId });
           await this.completeLoop(loop, LoopStatus.FAILED, 'Failed to persist task failure');
-          return ok(undefined);
-        }
-
-        // Post-commit: check limits or schedule next
-        if (loop.maxConsecutiveFailures > 0 && newConsecutiveFailures >= loop.maxConsecutiveFailures) {
+        } else if (loop.maxConsecutiveFailures > 0 && newConsecutiveFailures >= loop.maxConsecutiveFailures) {
           await this.completeLoop(updatedLoop, LoopStatus.FAILED, 'Max consecutive failures reached');
         } else {
           await this.scheduleNextIteration(updatedLoop);
         }
-
-        // Clean up all pipeline task tracking for this iteration
-        this.cleanupPipelineTaskTracking(iteration);
-        this.taskToLoop.delete(taskId);
-        this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
-        return ok(undefined);
+      } else {
+        // Task COMPLETED — run exit condition evaluation
+        const evalResult = await this.exitConditionEvaluator.evaluate(loop, taskId);
+        await this.handleIterationResult(loop, iteration, evalResult);
       }
-
-      // Task COMPLETED — run exit condition evaluation
-      const evalResult = await this.exitConditionEvaluator.evaluate(loop, taskId);
-
-      await this.handleIterationResult(loop, iteration, evalResult);
 
       // Clean up all pipeline task tracking for this iteration
       this.cleanupPipelineTaskTracking(iteration);
@@ -364,6 +373,94 @@ export class LoopHandler extends BaseEventHandler {
     });
   }
 
+  /**
+   * Handle loop pause — update status, clear cooldown, optionally force-cancel current iteration
+   * ARCHITECTURE: Graceful pause waits for current iteration to complete;
+   * force pause cancels it immediately via TaskCancellationRequested
+   */
+  private async handleLoopPaused(event: LoopPausedEvent): Promise<void> {
+    await this.handleEvent(event, async (e) => {
+      const { loopId, force } = e;
+
+      this.logger.info('Processing loop pause', { loopId, force });
+
+      // Fetch current loop state
+      const loopResult = await this.loopRepo.findById(loopId);
+      if (!loopResult.ok || !loopResult.value) {
+        this.logger.warn('Loop not found for pause', { loopId });
+        return ok(undefined);
+      }
+
+      const loop = loopResult.value;
+
+      // Defense-in-depth: only RUNNING loops can be paused
+      // LoopManagerService validates this, but handler is reachable via direct EventBus emission
+      if (loop.status !== LoopStatus.RUNNING) {
+        this.logger.warn('Cannot pause loop that is not running', {
+          loopId,
+          currentStatus: loop.status,
+        });
+        return ok(undefined);
+      }
+
+      // Update loop status to PAUSED
+      const updatedLoop = updateLoop(loop, { status: LoopStatus.PAUSED });
+      await this.loopRepo.update(updatedLoop);
+
+      // Clear cooldown timer if exists
+      const timer = this.cooldownTimers.get(loopId);
+      if (timer) {
+        clearTimeout(timer);
+        this.cooldownTimers.delete(loopId);
+        this.logger.debug('Cleared cooldown timer for paused loop', { loopId });
+      }
+
+      // If force pause: cancel current running iteration and its task
+      if (force) {
+        await this.forceCancelCurrentIteration(loopId);
+      }
+
+      this.logger.info('Loop paused', { loopId, force });
+
+      return ok(undefined);
+    });
+  }
+
+  /**
+   * Handle loop resume — update status to RUNNING and re-derive correct action via recovery
+   * ARCHITECTURE: Reuses recoverSingleLoop() to handle all resume cases:
+   * - Task completed while paused → recovery evaluates result, continues or completes
+   * - Task still running (graceful pause) → re-registers in taskToLoop map, waits
+   * - Iteration was cancelled by force pause → starts next iteration
+   */
+  private async handleLoopResumed(event: LoopResumedEvent): Promise<void> {
+    await this.handleEvent(event, async (e) => {
+      const { loopId } = e;
+
+      this.logger.info('Processing loop resume', { loopId });
+
+      // Fetch current loop state
+      const loopResult = await this.loopRepo.findById(loopId);
+      if (!loopResult.ok || !loopResult.value) {
+        this.logger.warn('Loop not found for resume', { loopId });
+        return ok(undefined);
+      }
+
+      const loop = loopResult.value;
+
+      // Update loop status to RUNNING
+      const updatedLoop = updateLoop(loop, { status: LoopStatus.RUNNING });
+      await this.loopRepo.update(updatedLoop);
+
+      // Reuse recovery logic to derive the correct next action
+      await this.recoverSingleLoop(updatedLoop);
+
+      this.logger.info('Loop resumed', { loopId });
+
+      return ok(undefined);
+    });
+  }
+
   // ============================================================================
   // CORE ITERATION ENGINE
   // ============================================================================
@@ -404,10 +501,37 @@ export class LoopHandler extends BaseEventHandler {
       strategy: updatedLoop.strategy,
     });
 
+    // Git branch per iteration (v0.8.0)
+    let iterationGitBranch: string | undefined;
+    if (updatedLoop.gitBranch) {
+      const previousBranch =
+        iterationNumber === 1 ? updatedLoop.gitBaseBranch : `${updatedLoop.gitBranch}/iteration-${iterationNumber - 1}`;
+      const branchName = `${updatedLoop.gitBranch}/iteration-${iterationNumber}`;
+
+      const branchResult = await createAndCheckoutBranch(updatedLoop.workingDirectory, branchName, previousBranch);
+      if (branchResult.ok) {
+        iterationGitBranch = branchName;
+        this.logger.info('Created git branch for iteration', {
+          loopId,
+          iterationNumber,
+          branchName,
+          previousBranch,
+        });
+      } else {
+        // Graceful degradation: log warning and continue without git for this iteration
+        this.logger.warn('Failed to create git branch for iteration, continuing without git', {
+          loopId,
+          iterationNumber,
+          branchName,
+          error: branchResult.error.message,
+        });
+      }
+    }
+
     if (updatedLoop.pipelineSteps && updatedLoop.pipelineSteps.length > 0) {
-      await this.startPipelineIteration(updatedLoop, iterationNumber);
+      await this.startPipelineIteration(updatedLoop, iterationNumber, iterationGitBranch);
     } else {
-      await this.startSingleTaskIteration(updatedLoop, iterationNumber);
+      await this.startSingleTaskIteration(updatedLoop, iterationNumber, iterationGitBranch);
     }
   }
 
@@ -415,7 +539,11 @@ export class LoopHandler extends BaseEventHandler {
    * Start a single-task iteration
    * ARCHITECTURE: Creates task from template, emits TaskDelegated, tracks in taskToLoop
    */
-  private async startSingleTaskIteration(loop: Loop, iterationNumber: number): Promise<void> {
+  private async startSingleTaskIteration(
+    loop: Loop,
+    iterationNumber: number,
+    iterationGitBranch?: string,
+  ): Promise<void> {
     const loopId = loop.id;
     let prompt = loop.taskTemplate.prompt;
 
@@ -437,6 +565,7 @@ export class LoopHandler extends BaseEventHandler {
       loopId,
       iterationNumber,
       taskId: task.id,
+      gitBranch: iterationGitBranch,
       status: 'running',
       startedAt: Date.now(),
     };
@@ -482,7 +611,11 @@ export class LoopHandler extends BaseEventHandler {
    * Pre-creates N task objects with linear dependsOn chain, saves atomically,
    * emits TaskDelegated for each, tracks ALL tasks in taskToLoop for intermediate failure handling
    */
-  private async startPipelineIteration(loop: Loop, iterationNumber: number): Promise<void> {
+  private async startPipelineIteration(
+    loop: Loop,
+    iterationNumber: number,
+    iterationGitBranch?: string,
+  ): Promise<void> {
     const loopId = loop.id;
     const steps = loop.pipelineSteps!;
     const defaults = loop.taskTemplate;
@@ -529,6 +662,7 @@ export class LoopHandler extends BaseEventHandler {
         iterationNumber,
         taskId: lastTaskId,
         pipelineTaskIds: allTaskIds,
+        gitBranch: iterationGitBranch,
         status: 'running',
         startedAt: Date.now(),
       });
@@ -721,6 +855,56 @@ export class LoopHandler extends BaseEventHandler {
   // ============================================================================
 
   /**
+   * Force-cancel the current running iteration and all its tasks.
+   * ARCHITECTURE: Extracted from handleLoopPaused() to reduce nesting.
+   */
+  private async forceCancelCurrentIteration(loopId: LoopId): Promise<void> {
+    const iterationsResult = await this.loopRepo.getIterations(loopId, 1);
+    if (!iterationsResult.ok || iterationsResult.value.length === 0) return;
+
+    const latestIteration = iterationsResult.value[0];
+    if (latestIteration.status !== 'running') return;
+
+    // Mark iteration as cancelled
+    await this.loopRepo.updateIteration({
+      ...latestIteration,
+      status: 'cancelled',
+      completedAt: Date.now(),
+    });
+
+    // Cancel the in-flight task
+    if (latestIteration.taskId) {
+      const cancelResult = await this.eventBus.emit('TaskCancellationRequested', {
+        taskId: latestIteration.taskId,
+        reason: `Loop ${loopId} force paused`,
+      });
+      if (!cancelResult.ok) {
+        this.logger.warn('Failed to cancel task for force-paused loop', {
+          taskId: latestIteration.taskId,
+          loopId,
+          error: cancelResult.error.message,
+        });
+      }
+    }
+
+    // Also cancel pipeline tasks if it's a pipeline iteration
+    if (latestIteration.pipelineTaskIds) {
+      for (const ptId of latestIteration.pipelineTaskIds) {
+        if (ptId === latestIteration.taskId) continue; // Already cancelled above
+        await this.eventBus.emit('TaskCancellationRequested', {
+          taskId: ptId,
+          reason: `Loop ${loopId} force paused`,
+        });
+      }
+    }
+
+    this.logger.info('Force-cancelled running iteration', {
+      loopId,
+      iterationNumber: latestIteration.iterationNumber,
+    });
+  }
+
+  /**
    * Check termination conditions (maxIterations, maxConsecutiveFailures)
    * @returns true if loop was terminated, false if it should continue
    */
@@ -797,8 +981,18 @@ export class LoopHandler extends BaseEventHandler {
   /**
    * Schedule the next iteration, respecting cooldown (R14)
    * ARCHITECTURE: Uses setTimeout with .unref() to avoid blocking process exit
+   * Skips scheduling if loop is PAUSED — result was recorded, resume will re-derive action
    */
   private async scheduleNextIteration(loop: Loop): Promise<void> {
+    // If loop is paused, skip scheduling — iteration result is already recorded.
+    // Resume handler will re-derive the correct next action via recoverSingleLoop().
+    if (loop.status === LoopStatus.PAUSED) {
+      this.logger.debug('Loop is paused, skipping next iteration scheduling', {
+        loopId: loop.id,
+      });
+      return;
+    }
+
     if (loop.cooldownMs > 0) {
       this.logger.debug('Scheduling next iteration with cooldown', {
         loopId: loop.id,
@@ -840,6 +1034,28 @@ export class LoopHandler extends BaseEventHandler {
   ): Promise<void> {
     const updatedLoop = updateLoop(loop, loopUpdate);
 
+    // Git diff capture (v0.8.0): capture diff summary before persisting
+    let gitDiffSummary: string | undefined;
+    if (loop.gitBranch && iteration.gitBranch) {
+      const previousBranch =
+        iteration.iterationNumber === 1
+          ? loop.gitBaseBranch
+          : `${loop.gitBranch}/iteration-${iteration.iterationNumber - 1}`;
+
+      if (previousBranch) {
+        const diffResult = await captureGitDiff(loop.workingDirectory, previousBranch, iteration.gitBranch);
+        if (diffResult.ok && diffResult.value) {
+          gitDiffSummary = diffResult.value;
+        } else if (!diffResult.ok) {
+          this.logger.warn('Failed to capture git diff for iteration', {
+            loopId: loop.id,
+            iterationNumber: iteration.iterationNumber,
+            error: diffResult.error.message,
+          });
+        }
+      }
+    }
+
     // Atomic: both DB writes in single transaction
     const txResult = this.database.runInTransaction(() => {
       this.loopRepo.updateIterationSync({
@@ -848,6 +1064,7 @@ export class LoopHandler extends BaseEventHandler {
         score: evalResult?.score ?? iteration.score,
         exitCode: evalResult?.exitCode ?? iteration.exitCode,
         errorMessage: evalResult?.errorMessage ?? iteration.errorMessage,
+        gitDiffSummary: gitDiffSummary ?? iteration.gitDiffSummary,
         completedAt: Date.now(),
       });
       this.loopRepo.updateSync(updatedLoop);
@@ -1041,7 +1258,7 @@ export class LoopHandler extends BaseEventHandler {
   private async cancelRemainingPipelineTasks(
     pipelineTaskIds: readonly TaskId[],
     failedTaskId: TaskId,
-    loopId: string,
+    loopId: LoopId,
   ): Promise<void> {
     for (const ptId of pipelineTaskIds) {
       if (ptId === failedTaskId) continue;
@@ -1081,7 +1298,7 @@ export class LoopHandler extends BaseEventHandler {
   /**
    * Clean up pipeline task entries for a completed iteration
    */
-  private cleanupPipelineTasks(loopId: string, iterationNumber: number): void {
+  private cleanupPipelineTasks(loopId: LoopId, iterationNumber: number): void {
     const key = `${loopId}:${iterationNumber}`;
     this.pipelineTasks.delete(key);
   }

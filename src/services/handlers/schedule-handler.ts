@@ -5,14 +5,17 @@
  * Rationale: Manages schedule creation, triggering, pausing, and execution tracking
  */
 
-import type { Schedule, ScheduleId, Task } from '../../core/domain.js';
+import type { LoopCreateRequest, Schedule, ScheduleId, Task } from '../../core/domain.js';
 import {
+  createLoop,
   createTask,
   isTerminalState,
+  LoopStatus,
   ScheduleStatus,
   ScheduleType,
   TaskId,
   TaskStatus,
+  updateLoop,
   updateSchedule,
 } from '../../core/domain.js';
 import { BackbeatError, ErrorCode } from '../../core/errors.js';
@@ -28,6 +31,8 @@ import {
 import { BaseEventHandler } from '../../core/events/handlers.js';
 import {
   Logger,
+  LoopRepository,
+  LoopService,
   ScheduleRepository,
   SyncScheduleOperations,
   SyncTaskOperations,
@@ -36,6 +41,7 @@ import {
 } from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
 import { getNextRunTime, isValidTimezone, validateCronExpression } from '../../utils/cron.js';
+import { captureGitState } from '../../utils/git-state.js';
 
 /**
  * Options for ScheduleHandler configuration
@@ -57,6 +63,8 @@ export class ScheduleHandler extends BaseEventHandler {
     private readonly taskRepo: TaskRepository & SyncTaskOperations,
     private readonly eventBus: EventBus,
     private readonly database: TransactionRunner,
+    private readonly loopRepo: LoopRepository,
+    private readonly loopService: LoopService | undefined,
     logger: Logger,
     options?: ScheduleHandlerOptions,
   ) {
@@ -73,13 +81,24 @@ export class ScheduleHandler extends BaseEventHandler {
     taskRepo: TaskRepository & SyncTaskOperations,
     eventBus: EventBus,
     database: TransactionRunner,
+    loopRepo: LoopRepository,
     logger: Logger,
     options?: ScheduleHandlerOptions,
+    loopService?: LoopService,
   ): Promise<Result<ScheduleHandler, BackbeatError>> {
     const handlerLogger = logger.child ? logger.child({ module: 'ScheduleHandler' }) : logger;
 
     // Create handler
-    const handler = new ScheduleHandler(scheduleRepo, taskRepo, eventBus, database, handlerLogger, options);
+    const handler = new ScheduleHandler(
+      scheduleRepo,
+      taskRepo,
+      eventBus,
+      database,
+      loopRepo,
+      loopService,
+      handlerLogger,
+      options,
+    );
 
     // Subscribe to events
     const subscribeResult = handler.subscribeToEvents();
@@ -255,6 +274,9 @@ export class ScheduleHandler extends BaseEventHandler {
       }
 
       // Dispatch to appropriate trigger path
+      if (schedule.loopConfig) {
+        return this.handleLoopTrigger(schedule, schedule.loopConfig, triggeredAt);
+      }
       if (schedule.pipelineSteps && schedule.pipelineSteps.length > 0) {
         return this.handlePipelineTrigger(schedule, schedule.pipelineSteps, triggeredAt);
       }
@@ -476,6 +498,139 @@ export class ScheduleHandler extends BaseEventHandler {
     return ok(undefined);
   }
 
+  /**
+   * Handle loop trigger — create a new loop from schedule's loopConfig
+   * ARCHITECTURE: Collision detection prevents concurrent loops from same schedule.
+   * Uses LoopCreated event to hand off to LoopHandler for persistence and iteration start.
+   */
+  private async handleLoopTrigger(
+    schedule: Schedule,
+    loopConfig: LoopCreateRequest,
+    triggeredAt: number,
+  ): Promise<Result<void>> {
+    const scheduleId = schedule.id;
+
+    this.logger.info('Processing loop trigger', { scheduleId });
+
+    // Collision detection: check for active (RUNNING or PAUSED) loops from this schedule
+    const existingLoopsResult = await this.loopRepo.findByScheduleId(scheduleId);
+    if (existingLoopsResult.ok) {
+      const activeLoops = existingLoopsResult.value.filter(
+        (l) => l.status === LoopStatus.RUNNING || l.status === LoopStatus.PAUSED,
+      );
+      if (activeLoops.length > 0) {
+        this.logger.info('Skipping scheduled loop trigger — previous loop still active', {
+          scheduleId,
+          activeLoopId: activeLoops[0].id,
+          activeLoopStatus: activeLoops[0].status,
+        });
+
+        // Still update schedule timing so it advances to the next run
+        const scheduleUpdates = this.computeScheduleUpdates(schedule, triggeredAt);
+        await this.scheduleRepo.update(scheduleId, scheduleUpdates);
+
+        return ok(undefined);
+      }
+    }
+
+    // Validate loopConfig via LoopService if available (prevents bypassing validations)
+    const workingDirectory = loopConfig.workingDirectory ?? schedule.taskTemplate.workingDirectory ?? process.cwd();
+    if (this.loopService) {
+      // ARCHITECTURE: Omit workingDirectory from validation — it was already validated
+      // at schedule creation time. Re-validating here would fail for paths like /tmp
+      // that resolve outside CWD on some platforms (e.g., macOS /tmp -> /private/tmp).
+      const validationResult = await this.loopService.validateCreateRequest({
+        ...loopConfig,
+        workingDirectory: undefined,
+      });
+      if (!validationResult.ok) {
+        await this.recordFailedExecution(
+          scheduleId,
+          schedule.nextRunAt ?? triggeredAt,
+          triggeredAt,
+          validationResult.error.message,
+        );
+        return err(new BackbeatError(ErrorCode.INVALID_INPUT, validationResult.error.message, { scheduleId }));
+      }
+    }
+
+    // Create loop from loopConfig via domain factory
+    const loop = createLoop(loopConfig, workingDirectory, scheduleId);
+
+    // Capture gitBaseBranch if loopConfig has gitBranch (mirrors LoopManagerService.createLoop pattern)
+    // ARCHITECTURE: createLoop() sets gitBaseBranch to undefined; override here because
+    // captureGitState is async (not available in pure domain factory)
+    let loopWithGit = loop;
+    if (loopConfig.gitBranch) {
+      const gitStateResult = await captureGitState(workingDirectory);
+      if (gitStateResult.ok && gitStateResult.value) {
+        loopWithGit = updateLoop(loop, { gitBaseBranch: gitStateResult.value.branch });
+      } else if (!gitStateResult.ok) {
+        this.logger.warn('Failed to capture git state for scheduled loop — proceeding without gitBaseBranch', {
+          scheduleId,
+          loopId: loop.id,
+          error: gitStateResult.error.message,
+        });
+      }
+    }
+
+    // Pure computation OUTSIDE transaction
+    const scheduleUpdates = this.computeScheduleUpdates(schedule, triggeredAt);
+
+    // Atomic: record execution + update schedule (matches handleSingleTaskTrigger pattern)
+    const txResult = this.database.runInTransaction(() => {
+      this.scheduleRepo.recordExecutionSync({
+        scheduleId,
+        loopId: loopWithGit.id,
+        scheduledFor: schedule.nextRunAt ?? triggeredAt,
+        executedAt: triggeredAt,
+        status: 'triggered',
+        createdAt: Date.now(),
+      });
+
+      this.scheduleRepo.updateSync(schedule.id, scheduleUpdates, schedule);
+    });
+
+    if (!txResult.ok) {
+      // Transaction rolled back — best-effort audit trail
+      await this.recordFailedExecution(
+        scheduleId,
+        schedule.nextRunAt ?? triggeredAt,
+        triggeredAt,
+        txResult.error.message,
+      );
+      return txResult;
+    }
+
+    // Post-commit logging
+    this.logScheduleTransition(schedule, scheduleUpdates);
+
+    // Emit LoopCreated — LoopHandler persists the loop and starts first iteration
+    const emitResult = await this.eventBus.emit('LoopCreated', { loop: loopWithGit });
+    if (!emitResult.ok) {
+      this.logger.error('Failed to emit LoopCreated for scheduled loop trigger', emitResult.error, {
+        scheduleId,
+        loopId: loopWithGit.id,
+      });
+      return emitResult;
+    }
+
+    // Emit ScheduleExecuted with loopId for ScheduleExecutor concurrency tracking
+    await this.eventBus.emit('ScheduleExecuted', {
+      scheduleId,
+      loopId: loopWithGit.id,
+      executedAt: triggeredAt,
+    });
+
+    this.logger.info('Scheduled loop triggered successfully', {
+      scheduleId,
+      loopId: loopWithGit.id,
+      runCount: schedule.runCount + 1,
+    });
+
+    return ok(undefined);
+  }
+
   // ============================================================================
   // SHARED HELPERS (extracted from handleScheduleTriggered decomposition)
   // ============================================================================
@@ -574,7 +729,7 @@ export class ScheduleHandler extends BaseEventHandler {
       runCount: newRunCount,
       lastRunAt: triggeredAt,
       nextRunAt: newNextRunAt,
-      ...(newStatus !== undefined ? { status: newStatus } : {}),
+      ...(newStatus !== undefined && { status: newStatus }),
     };
   }
 
@@ -605,13 +760,16 @@ export class ScheduleHandler extends BaseEventHandler {
   }
 
   /**
-   * Handle schedule cancellation - update status to CANCELLED
+   * Handle schedule cancellation - update status to CANCELLED, cascade to active loops
    */
   private async handleScheduleCancelled(event: ScheduleCancelledEvent): Promise<void> {
     await this.handleEvent(event, async (e) => {
       const { scheduleId, reason } = e;
 
       this.logger.info('Cancelling schedule', { scheduleId, reason });
+
+      // Fetch schedule to check for loopConfig before updating status
+      const scheduleResult = await this.scheduleRepo.findById(scheduleId);
 
       const updateResult = await this.scheduleRepo.update(scheduleId, {
         status: ScheduleStatus.CANCELLED,
@@ -621,6 +779,35 @@ export class ScheduleHandler extends BaseEventHandler {
       if (!updateResult.ok) {
         this.logger.error('Failed to cancel schedule', updateResult.error, { scheduleId });
         return updateResult;
+      }
+
+      // Cascade cancel to active loops if this schedule has loopConfig
+      if (scheduleResult.ok && scheduleResult.value?.loopConfig) {
+        const loopsResult = await this.loopRepo.findByScheduleId(scheduleId);
+        if (loopsResult.ok) {
+          const activeLoops = loopsResult.value.filter(
+            (l) => l.status === LoopStatus.RUNNING || l.status === LoopStatus.PAUSED,
+          );
+          for (const loop of activeLoops) {
+            const cancelResult = await this.eventBus.emit('LoopCancelled', {
+              loopId: loop.id,
+              reason: `Parent schedule ${scheduleId} cancelled`,
+            });
+            if (!cancelResult.ok) {
+              this.logger.warn('Failed to cancel loop for cancelled schedule', {
+                loopId: loop.id,
+                scheduleId,
+                error: cancelResult.error.message,
+              });
+            }
+          }
+          if (activeLoops.length > 0) {
+            this.logger.info('Cascade-cancelled active loops for schedule', {
+              scheduleId,
+              loopCount: activeLoops.length,
+            });
+          }
+        }
       }
 
       this.logger.info('Schedule cancelled', { scheduleId, reason });

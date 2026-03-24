@@ -10,6 +10,8 @@ import { MissedRunPolicy, ScheduleStatus, ScheduleType } from '../core/domain.js
 import { BackbeatError, ErrorCode } from '../core/errors.js';
 import { EventBus } from '../core/events/event-bus.js';
 import type {
+  LoopCancelledEvent,
+  LoopCompletedEvent,
   ScheduleExecutedEvent,
   TaskCancelledEvent,
   TaskCompletedEvent,
@@ -110,30 +112,43 @@ export class ScheduleExecutor {
    */
   private subscribeToTaskEvents(): Result<void, BackbeatError> {
     const subscriptions = [
-      // When a schedule execution creates a task, track it
+      // When a schedule execution creates a task or loop, track it
       this.eventBus.subscribe<ScheduleExecutedEvent>('ScheduleExecuted', async (event) => {
-        this.markScheduleRunning(event.scheduleId, event.taskId);
-        this.logger.debug('Marked schedule as running', {
-          scheduleId: event.scheduleId,
-          taskId: event.taskId,
-        });
+        const trackingId = event.taskId ?? event.loopId;
+        if (trackingId) {
+          this.markScheduleRunning(event.scheduleId, trackingId);
+          this.logger.debug('Marked schedule as running', {
+            scheduleId: event.scheduleId,
+            taskId: event.taskId,
+            loopId: event.loopId,
+          });
+        }
       }),
 
       // When a task completes, check if it was from a schedule and clear running state
       this.eventBus.subscribe<TaskCompletedEvent>('TaskCompleted', async (event) => {
-        this.clearRunningScheduleByTask(event.taskId);
+        this.clearRunningScheduleByTrackingId(event.taskId);
       }),
 
       this.eventBus.subscribe<TaskFailedEvent>('TaskFailed', async (event) => {
-        this.clearRunningScheduleByTask(event.taskId);
+        this.clearRunningScheduleByTrackingId(event.taskId);
       }),
 
       this.eventBus.subscribe<TaskCancelledEvent>('TaskCancelled', async (event) => {
-        this.clearRunningScheduleByTask(event.taskId);
+        this.clearRunningScheduleByTrackingId(event.taskId);
       }),
 
       this.eventBus.subscribe<TaskTimeoutEvent>('TaskTimeout', async (event) => {
-        this.clearRunningScheduleByTask(event.taskId);
+        this.clearRunningScheduleByTrackingId(event.taskId);
+      }),
+
+      // Loop lifecycle events — clear running state for parent schedule
+      this.eventBus.subscribe<LoopCompletedEvent>('LoopCompleted', async (event) => {
+        this.clearRunningScheduleByTrackingId(event.loopId);
+      }),
+
+      this.eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) => {
+        this.clearRunningScheduleByTrackingId(event.loopId);
       }),
     ];
 
@@ -153,13 +168,13 @@ export class ScheduleExecutor {
   }
 
   /**
-   * Clear running schedule state when a task completes
+   * Clear running schedule state when a tracked entity (task or loop) completes
    */
-  private clearRunningScheduleByTask(taskId: string): void {
-    for (const [scheduleId, runningTaskId] of this.runningSchedules.entries()) {
-      if (runningTaskId === taskId) {
+  private clearRunningScheduleByTrackingId(trackingId: string): void {
+    for (const [scheduleId, runningId] of this.runningSchedules.entries()) {
+      if (runningId === trackingId) {
         this.runningSchedules.delete(scheduleId);
-        this.logger.debug('Cleared running state for schedule', { scheduleId, taskId });
+        this.logger.debug('Cleared running state for schedule', { scheduleId, trackingId });
         break;
       }
     }
