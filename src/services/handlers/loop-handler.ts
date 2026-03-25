@@ -534,16 +534,18 @@ export class LoopHandler extends BaseEventHandler {
 
     // Create branch ONCE on first iteration only
     if (iterationNumber === 1 && loop.gitBranch) {
-      const branchResult = await createAndCheckoutBranch(
-        loop.workingDirectory, loop.gitBranch, loop.gitBaseBranch,
-      );
+      const branchResult = await createAndCheckoutBranch(loop.workingDirectory, loop.gitBranch, loop.gitBaseBranch);
       if (branchResult.ok) {
         this.logger.info('Created git branch for loop', {
-          loopId: loop.id, branchName: loop.gitBranch, baseBranch: loop.gitBaseBranch,
+          loopId: loop.id,
+          branchName: loop.gitBranch,
+          baseBranch: loop.gitBaseBranch,
         });
       } else {
         this.logger.warn('Failed to create git branch for loop, continuing without git', {
-          loopId: loop.id, branchName: loop.gitBranch, error: branchResult.error.message,
+          loopId: loop.id,
+          branchName: loop.gitBranch,
+          error: branchResult.error.message,
         });
       }
     } else if (iterationNumber > 1 && loop.gitBranch) {
@@ -551,7 +553,9 @@ export class LoopHandler extends BaseEventHandler {
       const checkoutResult = await createAndCheckoutBranch(loop.workingDirectory, loop.gitBranch);
       if (!checkoutResult.ok) {
         this.logger.warn('Failed to re-checkout loop branch, continuing without git', {
-          loopId: loop.id, branchName: loop.gitBranch, error: checkoutResult.error.message,
+          loopId: loop.id,
+          branchName: loop.gitBranch,
+          error: checkoutResult.error.message,
         });
       }
     }
@@ -560,13 +564,17 @@ export class LoopHandler extends BaseEventHandler {
     const shaResult = await getCurrentCommitSha(loop.workingDirectory);
     if (shaResult.ok) {
       this.logger.debug('Captured pre-iteration commit SHA', {
-        loopId: loop.id, iterationNumber, preIterationCommitSha: shaResult.value,
+        loopId: loop.id,
+        iterationNumber,
+        preIterationCommitSha: shaResult.value,
       });
       return shaResult.value;
     }
 
     this.logger.warn('Failed to capture pre-iteration commit SHA', {
-      loopId: loop.id, iterationNumber, error: shaResult.error.message,
+      loopId: loop.id,
+      iterationNumber,
+      error: shaResult.error.message,
     });
     return undefined;
   }
@@ -1074,9 +1082,7 @@ export class LoopHandler extends BaseEventHandler {
   ): Promise<void> {
     const updatedLoop = updateLoop(loop, loopUpdate);
 
-    const { gitCommitSha, gitDiffSummary } = await this.handleIterationGitOutcome(
-      loop, iteration, iterationStatus,
-    );
+    const { gitCommitSha, gitDiffSummary } = await this.handleIterationGitOutcome(loop, iteration, iterationStatus);
 
     // Atomic: both DB writes in single transaction
     const txResult = this.database.runInTransaction(() => {
