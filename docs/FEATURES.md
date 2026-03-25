@@ -2,7 +2,7 @@
 
 This document lists all features that are **currently implemented and working** in Backbeat.
 
-Last Updated: March 2026 (v0.7.0)
+Last Updated: March 2026 (v0.8.1)
 
 ## ✅ Core Task Delegation
 
@@ -155,7 +155,7 @@ Last Updated: March 2026 (v0.7.0)
 ### Design Patterns (v0.6.0 Hybrid Event Model)
 - **Hybrid Event-Driven Architecture**: Commands (state changes) flow through EventBus; queries use direct repository access
 - **Event Handlers**: Specialized handlers (Persistence, Queue, Worker, Dependency, Schedule, Checkpoint, Loop)
-- **Singleton EventBus**: Shared event bus across all system components (29 events)
+- **Singleton EventBus**: Shared event bus across all system components (31 events)
 - **Dependency Injection**: Container-based DI with Result types
 - **Result Pattern**: No exceptions in business logic
 - **Immutable Domain**: Readonly data structures
@@ -295,6 +295,9 @@ Last Updated: March 2026 (v0.7.0)
 - **LoopStatus**: Get loop details including optional iteration history
 - **ListLoops**: List loops with optional status filter and pagination
 - **CancelLoop**: Cancel an active loop, optionally cancelling in-flight iteration tasks
+- **PauseLoop** (v0.8.0): Pause an active loop mid-iteration
+- **ResumeLoop** (v0.8.0): Resume a paused loop from last checkpoint
+- **ScheduleLoop** (v0.8.0): Compose loops with cron/one-time schedules
 
 ### Loop Strategies
 - **Retry**: Run a task until an exit condition passes — shell command returning exit code 0 ends the loop
@@ -316,13 +319,15 @@ Last Updated: March 2026 (v0.7.0)
 - **Eval Timeout**: Timeout for exit condition evaluation (default: 60s, minimum: 1s)
 - **Fresh Context**: Each iteration gets a fresh agent context (default: true) or continues from previous checkpoint
 
-### CLI Commands (v0.7.0)
+### CLI Commands (v0.7.0+)
 - `beat loop <prompt> --until <cmd>`: Create a retry loop (run until shell command exits 0)
 - `beat loop <prompt> --eval <cmd> --minimize|--maximize`: Create an optimize loop (score-based)
 - `beat loop --pipeline --step "..." --step "..." --until <cmd>`: Create a pipeline loop
 - `beat loop list [--status <status>]`: List loops with optional status filter
 - `beat loop status <loop-id> [--history]`: Get loop details and iteration history
 - `beat loop cancel <loop-id> [--cancel-tasks] [reason]`: Cancel a loop with optional task cancellation
+- `beat loop pause <loop-id>` (v0.8.0): Pause an active loop
+- `beat loop resume <loop-id>` (v0.8.0): Resume a paused loop
 
 ### Event-Driven Integration
 - **LoopCreated**: Emitted when a new loop is created
@@ -341,6 +346,41 @@ Last Updated: March 2026 (v0.7.0)
 - **REST API**: MCP protocol only
 
 ---
+
+---
+
+## 🆕 What's New in v0.8.0 / v0.8.1
+
+### Loop Pause/Resume (v0.8.0)
+- **PauseLoop / ResumeLoop MCP Tools**: Pause active loops mid-iteration, resume from last checkpoint
+- **CLI Commands**: `beat loop pause <id>`, `beat loop resume <id>`
+- **Persistence**: Paused state survives server restarts
+
+### Scheduled Loops (v0.8.0)
+- **ScheduleLoop MCP Tool**: Compose loops with cron/one-time schedules — each trigger creates a new loop instance
+- **CLI**: `beat schedule create --loop` for creating scheduled loops
+
+### Git Integration (v0.8.0, corrected in v0.8.1)
+- **`--git-branch` flag**: Optional git-aware loop iteration tracking
+- **Commit-per-iteration**: One branch for the entire loop, one commit per successful iteration (v0.8.1 fix)
+- **Revert on failure**: Failed/discarded iterations fully reverted to appropriate target commit
+- **Diff summaries**: Git diffs tracked between iterations
+
+### Performance (v0.8.1)
+- **O(1) reset target lookup**: `getResetTargetSha()` reads cached `bestIterationCommitSha` directly from the Loop domain instead of scanning iterations from the database
+
+### Events
+- **2 new events** (31 total): `LoopPaused`, `LoopResumed`
+
+### Database
+- **Migration 11**: `loop_pause_state` column, `schedule_id` FK on loops table, git config storage
+- **Migration 12**: `git_start_commit_sha` on loops, `git_commit_sha` and `pre_iteration_commit_sha` on loop_iterations
+- **Migration 13**: `best_iteration_commit_sha` on loops for O(1) reset target lookup
+
+### CLI
+- `beat loop pause <id>`: Pause an active loop
+- `beat loop resume <id>`: Resume a paused loop
+- Backward-compat fallbacks for v0.8.0 data
 
 ---
 

@@ -39,9 +39,19 @@ The loop handler git integration logic was rewritten to use the commit-per-itera
 
 ---
 
+## Performance
+
+- **O(1) reset target lookup**: `getResetTargetSha()` reads `bestIterationCommitSha` directly
+  from the Loop domain instead of scanning up to 100 iterations from the database. Eliminates
+  a DB query on every fail/discard/crash for optimize-strategy loops.
+
+---
+
 ## Database
 
-- **Migration 12**: Adds `git_start_commit_sha` column to `loops` table, `git_commit_sha` and `pre_iteration_commit_sha` columns to `loop_iterations` table
+- **Migration 12**: Adds `git_start_commit_sha` to loops, `git_commit_sha` and
+  `pre_iteration_commit_sha` to loop_iterations
+- **Migration 13**: Adds `best_iteration_commit_sha` to loops for O(1) reset target lookup
 
 ---
 

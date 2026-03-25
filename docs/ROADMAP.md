@@ -1,10 +1,10 @@
 # Backbeat Development Roadmap
 
-## Current Status: v0.8.0 ✅
+## Current Status: v0.8.1 ✅
 
-**Status**: Released (2026-03-25)
+**Status**: Released (2026-03-26)
 
-Backbeat v0.8.0 adds loop lifecycle control (pause/resume), scheduled loops, and git integration for loops. See [FEATURES.md](./FEATURES.md) for complete list of current capabilities.
+Backbeat v0.8.1 fixes the git integration design (branch-per-iteration → commit-per-iteration) and adds a performance optimization (O(1) reset target lookup). See [FEATURES.md](./FEATURES.md) for complete list of current capabilities.
 
 ---
 
@@ -124,15 +124,19 @@ See [RELEASE_NOTES_v0.8.0.md](./releases/RELEASE_NOTES_v0.8.0.md) for full detai
 
 ---
 
-### v0.8.1 - Git Integration Fix
-**Goal**: Fix git integration design — replace branch-per-iteration with commit-per-iteration
-**Priority**: High — corrects v0.8.0 git behavior
+### v0.8.1 - Git Integration Fix ✅
+**Status**: **RELEASED** (2026-03-26)
+
+Corrects the v0.8.0 git integration design and adds performance optimization.
 
 #### Changes
 - **Commit-per-iteration**: One branch for the entire loop, one commit per successful iteration
 - **Revert on failure**: Failed/discarded iterations fully reverted to last good commit
 - **Domain model**: `gitBaseBranch` → `gitStartCommitSha`, `gitBranch` on iteration → `gitCommitSha`
-- **Database**: Migration 12 adds new columns; old columns kept (dead, harmless)
+- **O(1) reset target**: `getResetTargetSha()` reads cached `bestIterationCommitSha` instead of scanning iterations
+- **Database**: Migrations 12 and 13 add new columns; old columns kept (dead, harmless)
+
+See [RELEASE_NOTES_v0.8.1.md](./releases/RELEASE_NOTES_v0.8.1.md) for full details.
 
 ---
 
@@ -268,7 +272,7 @@ beat recipe create my-workflow  # interactive recipe builder
 | v0.6.0 | ✅ Released | Architectural Simplification + Bug Fixes |
 | v0.7.0 | ✅ Released | Task/Pipeline Loops |
 | v0.8.0 | ✅ Released | Loop Enhancements |
-| v0.8.1 | 🔧 In Progress | Git Integration Fix |
+| v0.8.1 | ✅ Released | Git Integration Fix |
 | v0.9.0 | 📋 Planned | Agent Failover + Smart Routing |
 | v0.10.0 | 📋 Planned | Workflow Recipes & Templates |
 | v0.11.0 | 💭 Research | Monitoring + REST API + Dashboard |

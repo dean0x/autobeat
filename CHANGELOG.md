@@ -10,7 +10,7 @@ Nothing yet.
 
 ---
 
-## [0.8.1] - 2026-03-25
+## [0.8.1] - 2026-03-26
 
 ### 🐛 Bug Fixes
 - **Git Integration**: Replaced broken branch-per-iteration strategy with correct commit-per-iteration design. One branch for the entire loop, one commit per successful iteration. Failed/discarded iterations fully reverted to the appropriate target commit.
@@ -19,8 +19,16 @@ Nothing yet.
 - **Domain model**: Added `gitStartCommitSha` (loop), `gitCommitSha` and `preIterationCommitSha` (iteration). Old fields kept for migration safety.
 - **Git utilities**: Added `getCurrentCommitSha()`, `commitAllChanges()`, `resetToCommit()` with SHA validation.
 
+### ⚡ Performance
+- **O(1) reset target**: `getResetTargetSha()` replaced O(n) iteration scan with cached
+  `bestIterationCommitSha` lookup on the Loop domain.
+
 ### 🗄️ Database
 - **Migration 12**: Adds `git_start_commit_sha` to loops, `git_commit_sha` and `pre_iteration_commit_sha` to loop_iterations.
+- **Migration 13**: Adds `best_iteration_commit_sha` to loops for O(1) reset target lookup.
+
+### 📦 Dependencies
+- Security updates: hono, @hono/node-server, express-rate-limit, flatted, picomatch
 
 ---
 
