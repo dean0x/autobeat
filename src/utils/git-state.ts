@@ -281,6 +281,43 @@ export async function getCurrentCommitSha(workingDirectory: string): Promise<Res
   }
 }
 
+export interface LoopGitContext {
+  readonly gitBaseBranch?: string;
+  readonly gitStartCommitSha?: string;
+}
+
+/**
+ * Capture git context for loop creation (shared by LoopManager and ScheduleHandler)
+ *
+ * Calls captureGitState once and reuses its commitSha as gitStartCommitSha,
+ * avoiding a redundant `git rev-parse HEAD` call.
+ *
+ * gitBaseBranch is populated only when a gitBranch is provided in the request.
+ *
+ * @param workingDirectory - Absolute path to the working directory
+ * @param gitBranch - Optional git branch from the loop/schedule request
+ * @returns LoopGitContext with resolved fields (both undefined when not in a git repo)
+ */
+export async function captureLoopGitContext(
+  workingDirectory: string,
+  gitBranch?: string,
+): Promise<Result<LoopGitContext>> {
+  const gitStateResult = await captureGitState(workingDirectory);
+  if (!gitStateResult.ok) {
+    return gitStateResult;
+  }
+
+  if (!gitStateResult.value) {
+    // Not a git repo — both fields remain undefined
+    return ok({});
+  }
+
+  return ok({
+    gitBaseBranch: gitBranch ? gitStateResult.value.branch : undefined,
+    gitStartCommitSha: gitStateResult.value.commitSha,
+  });
+}
+
 /**
  * Stage all changes and create a commit
  * Runs `git add -A`, checks if anything is staged, and commits if so.

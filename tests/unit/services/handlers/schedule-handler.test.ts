@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../../../src/utils/git-state.js', () => ({
   captureGitState: vi.fn().mockResolvedValue({ ok: true, value: null }),
   getCurrentCommitSha: vi.fn().mockResolvedValue({ ok: true, value: 'abc1234567890abcdef1234567890abcdef123456' }),
+  captureLoopGitContext: vi.fn().mockResolvedValue({ ok: true, value: {} }),
 }));
 
 import type { Loop, LoopCreateRequest, PipelineStepRequest, Schedule, Task } from '../../../../src/core/domain';
@@ -36,7 +37,7 @@ import { SQLiteScheduleRepository } from '../../../../src/implementations/schedu
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository';
 import { ScheduleHandler } from '../../../../src/services/handlers/schedule-handler';
 import { LoopManagerService } from '../../../../src/services/loop-manager';
-import { captureGitState, getCurrentCommitSha } from '../../../../src/utils/git-state';
+import { captureGitState, captureLoopGitContext } from '../../../../src/utils/git-state';
 import { createTestConfiguration } from '../../../fixtures/factories';
 import { TestLogger } from '../../../fixtures/test-doubles';
 import { flushEventLoop } from '../../../utils/event-helpers';
@@ -1195,14 +1196,19 @@ describe('ScheduleHandler - Behavioral Tests', () => {
     });
 
     it('should populate gitBaseBranch and gitStartCommitSha in LoopCreated event when loopConfig has gitBranch', async () => {
-      // Mock captureGitState to return a branch name
-      const mockCaptureGitState = vi.mocked(captureGitState);
-      mockCaptureGitState.mockResolvedValue({
+      // Mock captureGitState for gitBranch validation in LoopManagerService.validateCreateRequest
+      vi.mocked(captureGitState).mockResolvedValue({
         ok: true,
         value: { branch: 'main', commitSha: 'abc123', dirtyFiles: [] },
       });
-      const mockGetCurrentCommitSha = vi.mocked(getCurrentCommitSha);
-      mockGetCurrentCommitSha.mockResolvedValue({ ok: true, value: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' });
+      // Mock captureLoopGitContext to return branch and SHA
+      vi.mocked(captureLoopGitContext).mockResolvedValue({
+        ok: true,
+        value: {
+          gitBaseBranch: 'main',
+          gitStartCommitSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+        },
+      });
 
       const loopConfig: LoopCreateRequest = {
         prompt: 'Optimize perf',
@@ -1238,10 +1244,9 @@ describe('ScheduleHandler - Behavioral Tests', () => {
     });
 
     it('should leave gitBaseBranch undefined when loopConfig has no gitBranch (regression guard)', async () => {
-      // Reset mock completely — clear call history + set default return
-      const mockCaptureGitState = vi.mocked(captureGitState);
-      mockCaptureGitState.mockClear();
-      mockCaptureGitState.mockResolvedValue({ ok: true, value: null });
+      // Reset mock — no gitBranch means captureLoopGitContext returns empty context
+      vi.mocked(captureLoopGitContext).mockClear();
+      vi.mocked(captureLoopGitContext).mockResolvedValue({ ok: true, value: {} });
 
       const loopConfig: LoopCreateRequest = {
         prompt: 'Fix the tests',
@@ -1272,7 +1277,7 @@ describe('ScheduleHandler - Behavioral Tests', () => {
 
       expect(capturedLoop).toBeDefined();
       expect(capturedLoop!.gitBaseBranch).toBeUndefined();
-      // captureGitState returns null (not a git repo) → no git context set
+      // captureLoopGitContext returns empty context (not a git repo) → no git context set
       expect(capturedLoop!.gitStartCommitSha).toBeUndefined();
     });
 

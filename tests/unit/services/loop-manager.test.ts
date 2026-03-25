@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../../src/utils/git-state.js', () => ({
   captureGitState: vi.fn().mockResolvedValue({ ok: true, value: null }),
   getCurrentCommitSha: vi.fn().mockResolvedValue({ ok: true, value: 'abc1234567890abcdef1234567890abcdef123456' }),
+  captureLoopGitContext: vi.fn().mockResolvedValue({ ok: true, value: {} }),
   validateGitRefName: vi.fn().mockReturnValue({ ok: true, value: undefined }),
 }));
 
@@ -20,7 +21,7 @@ import { Database } from '../../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../../src/implementations/loop-repository.js';
 import { LoopManagerService } from '../../../src/services/loop-manager.js';
 import { toOptimizeDirection } from '../../../src/utils/format.js';
-import { captureGitState, getCurrentCommitSha } from '../../../src/utils/git-state.js';
+import { captureGitState, captureLoopGitContext } from '../../../src/utils/git-state.js';
 import { createTestConfiguration } from '../../fixtures/factories.js';
 import { TestEventBus, TestLogger } from '../../fixtures/test-doubles.js';
 
@@ -495,14 +496,10 @@ describe('LoopManagerService - Unit Tests', () => {
 
   describe('createLoop() - git auto-capture (v0.8.1)', () => {
     it('should auto-capture gitStartCommitSha in a git repo even without --git-branch', async () => {
-      // Mock: in a git repo (captureGitState returns branch info)
-      vi.mocked(captureGitState).mockResolvedValue({
+      // Mock: in a git repo, no gitBranch requested
+      vi.mocked(captureLoopGitContext).mockResolvedValue({
         ok: true,
-        value: { branch: 'main', commitSha: 'abc123', dirtyFiles: [] },
-      });
-      vi.mocked(getCurrentCommitSha).mockResolvedValue({
-        ok: true,
-        value: 'start_sha_1234567890abcdef1234567890abcdef1234',
+        value: { gitStartCommitSha: 'start_sha_1234567890abcdef1234567890abcdef1234' },
       });
 
       const result = await service.createLoop(retryRequest());
@@ -517,14 +514,18 @@ describe('LoopManagerService - Unit Tests', () => {
     });
 
     it('should capture gitStartCommitSha and gitBaseBranch with --git-branch', async () => {
-      // Mock: in a git repo on 'main' branch
+      // Mock: captureGitState needed for gitBranch validation (line 178 of loop-manager.ts)
       vi.mocked(captureGitState).mockResolvedValue({
         ok: true,
         value: { branch: 'main', commitSha: 'abc123', dirtyFiles: [] },
       });
-      vi.mocked(getCurrentCommitSha).mockResolvedValue({
+      // Mock: captureLoopGitContext for the actual git context capture
+      vi.mocked(captureLoopGitContext).mockResolvedValue({
         ok: true,
-        value: 'start_sha_abcdef1234567890abcdef1234567890abcd',
+        value: {
+          gitBaseBranch: 'main',
+          gitStartCommitSha: 'start_sha_abcdef1234567890abcdef1234567890abcd',
+        },
       });
 
       const result = await service.createLoop(retryRequest({ gitBranch: 'feat/my-loop' }));
@@ -538,8 +539,8 @@ describe('LoopManagerService - Unit Tests', () => {
     });
 
     it('should have no git fields in a non-git repo', async () => {
-      // Mock: not in a git repo (captureGitState returns null)
-      vi.mocked(captureGitState).mockResolvedValue({ ok: true, value: null });
+      // Mock: not in a git repo (captureLoopGitContext returns empty context)
+      vi.mocked(captureLoopGitContext).mockResolvedValue({ ok: true, value: {} });
 
       const result = await service.createLoop(retryRequest());
 
@@ -551,16 +552,12 @@ describe('LoopManagerService - Unit Tests', () => {
       expect(result.value.gitBranch).toBeUndefined();
     });
 
-    it('should have no gitStartCommitSha when getCurrentCommitSha fails', async () => {
-      // Mock: in a git repo but getCurrentCommitSha fails
-      vi.mocked(captureGitState).mockResolvedValue({
-        ok: true,
-        value: { branch: 'main', commitSha: 'abc123', dirtyFiles: [] },
-      });
-      vi.mocked(getCurrentCommitSha).mockResolvedValue({
+    it('should have no git fields when captureLoopGitContext fails', async () => {
+      // Mock: captureLoopGitContext returns error
+      vi.mocked(captureLoopGitContext).mockResolvedValue({
         ok: false,
         error: new Error('git not available'),
-      } as Result<string>);
+      } as Result<{ gitBaseBranch?: string; gitStartCommitSha?: string }>);
 
       const result = await service.createLoop(retryRequest());
 
@@ -568,6 +565,7 @@ describe('LoopManagerService - Unit Tests', () => {
       if (!result.ok) return;
 
       expect(result.value.gitStartCommitSha).toBeUndefined();
+      expect(result.value.gitBaseBranch).toBeUndefined();
     });
   });
 });

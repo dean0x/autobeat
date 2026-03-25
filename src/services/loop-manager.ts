@@ -22,7 +22,7 @@ import { EventBus } from '../core/events/event-bus.js';
 import { Logger, LoopRepository, LoopService } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { truncatePrompt } from '../utils/format.js';
-import { captureGitState, getCurrentCommitSha } from '../utils/git-state.js';
+import { captureGitState, captureLoopGitContext } from '../utils/git-state.js';
 import { validatePath } from '../utils/validation.js';
 
 export class LoopManagerService implements LoopService {
@@ -226,17 +226,9 @@ export class LoopManagerService implements LoopService {
     // for backward compatibility with existing DB rows
     // ========================================================================
 
-    let gitBaseBranch: string | undefined;
-    let gitStartCommitSha: string | undefined;
-    const gitStateResult = await captureGitState(validatedWorkingDirectory);
-    if (gitStateResult.ok && gitStateResult.value) {
-      gitBaseBranch = request.gitBranch ? gitStateResult.value.branch : undefined;
-      // Always capture start commit SHA in git repos
-      const shaResult = await getCurrentCommitSha(validatedWorkingDirectory);
-      if (shaResult.ok) {
-        gitStartCommitSha = shaResult.value;
-      }
-    }
+    const gitContextResult = await captureLoopGitContext(validatedWorkingDirectory, request.gitBranch);
+    const gitBaseBranch = gitContextResult.ok ? gitContextResult.value.gitBaseBranch : undefined;
+    const gitStartCommitSha = gitContextResult.ok ? gitContextResult.value.gitStartCommitSha : undefined;
 
     // ========================================================================
     // Create loop via domain factory

@@ -41,7 +41,7 @@ import {
 } from '../../core/interfaces.js';
 import { err, ok, Result } from '../../core/result.js';
 import { getNextRunTime, isValidTimezone, validateCronExpression } from '../../utils/cron.js';
-import { captureGitState, getCurrentCommitSha } from '../../utils/git-state.js';
+import { captureLoopGitContext } from '../../utils/git-state.js';
 
 /**
  * Options for ScheduleHandler configuration
@@ -562,23 +562,20 @@ export class ScheduleHandler extends BaseEventHandler {
     // git operations are async (not available in pure domain factory)
     // gitBaseBranch is a legacy field still populated for DB backward compatibility
     let loopWithGit = loop;
-    const gitStateResult = await captureGitState(workingDirectory);
-    if (gitStateResult.ok && gitStateResult.value) {
-      const gitBaseBranch = loopConfig.gitBranch ? gitStateResult.value.branch : undefined;
-      const shaResult = await getCurrentCommitSha(workingDirectory);
-      const gitStartCommitSha = shaResult.ok ? shaResult.value : undefined;
-
+    const gitContextResult = await captureLoopGitContext(workingDirectory, loopConfig.gitBranch);
+    if (gitContextResult.ok) {
+      const { gitBaseBranch, gitStartCommitSha } = gitContextResult.value;
       if (gitBaseBranch || gitStartCommitSha) {
         loopWithGit = updateLoop(loop, {
           ...(gitBaseBranch ? { gitBaseBranch } : {}),
           ...(gitStartCommitSha ? { gitStartCommitSha } : {}),
         });
       }
-    } else if (!gitStateResult.ok) {
+    } else {
       this.logger.warn('Failed to capture git state for scheduled loop — proceeding without git context', {
         scheduleId,
         loopId: loop.id,
-        error: gitStateResult.error.message,
+        error: gitContextResult.error.message,
       });
     }
 
