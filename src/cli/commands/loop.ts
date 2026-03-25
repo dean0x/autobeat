@@ -222,6 +222,11 @@ export async function handleLoopCommand(subCmd: string | undefined, loopArgs: st
     return;
   }
 
+  if (subCmd === 'get') {
+    ui.error("'beat loop get' has been renamed to 'beat loop status'. Run: beat loop status <loop-id>");
+    process.exit(1);
+  }
+
   // Default: create a loop (subCmd is the first word of the prompt or a flag)
   // Re-insert subCmd back into args for prompt parsing
   const createArgs = subCmd ? [subCmd, ...loopArgs] : loopArgs;

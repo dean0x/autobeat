@@ -3292,6 +3292,33 @@ describe('CLI - Loop Commands', () => {
       expect(result.ok).toBe(false);
     });
   });
+
+  describe('loop deprecated subcommand hints', () => {
+    let handleLoopCommand: typeof import('../../src/cli/commands/loop').handleLoopCommand;
+
+    beforeAll(async () => {
+      const mod = await import('../../src/cli/commands/loop');
+      handleLoopCommand = mod.handleLoopCommand;
+    });
+
+    it("should print rename hint for deprecated 'get' subcommand", async () => {
+      const ui = await import('../../src/cli/ui');
+      const errorSpy = vi.spyOn(ui, 'error').mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('process.exit');
+      });
+
+      await expect(handleLoopCommand('get', ['loop-123'])).rejects.toThrow('process.exit');
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('beat loop status'),
+      );
+      expect(exitSpy).toHaveBeenCalledWith(1);
+
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    });
+  });
 });
 
 describe('CLI - Schedule --loop flag', () => {
