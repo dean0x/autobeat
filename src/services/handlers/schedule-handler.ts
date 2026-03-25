@@ -563,17 +563,15 @@ export class ScheduleHandler extends BaseEventHandler {
     let loopWithGit = loop;
     const gitStateResult = await captureGitState(workingDirectory);
     if (gitStateResult.ok && gitStateResult.value) {
-      const gitUpdate: Partial<typeof loop> = {};
-      if (loopConfig.gitBranch) {
-        gitUpdate.gitBaseBranch = gitStateResult.value.branch;
-      }
-      // Always capture start commit SHA in git repos
+      const gitBaseBranch = loopConfig.gitBranch ? gitStateResult.value.branch : undefined;
       const shaResult = await getCurrentCommitSha(workingDirectory);
-      if (shaResult.ok) {
-        gitUpdate.gitStartCommitSha = shaResult.value;
-      }
-      if (Object.keys(gitUpdate).length > 0) {
-        loopWithGit = updateLoop(loop, gitUpdate);
+      const gitStartCommitSha = shaResult.ok ? shaResult.value : undefined;
+
+      if (gitBaseBranch || gitStartCommitSha) {
+        loopWithGit = updateLoop(loop, {
+          ...(gitBaseBranch ? { gitBaseBranch } : {}),
+          ...(gitStartCommitSha ? { gitStartCommitSha } : {}),
+        });
       }
     } else if (!gitStateResult.ok) {
       this.logger.warn('Failed to capture git state for scheduled loop — proceeding without git context', {

@@ -263,9 +263,7 @@ export async function captureGitDiff(
  * @param workingDirectory - Absolute path to the working directory
  * @returns Result containing the 40-char hex SHA, or error on failure
  */
-export async function getCurrentCommitSha(
-  workingDirectory: string,
-): Promise<Result<string, BackbeatError>> {
+export async function getCurrentCommitSha(workingDirectory: string): Promise<Result<string, BackbeatError>> {
   try {
     const result = await execFileAsync('git', ['rev-parse', 'HEAD'], {
       cwd: workingDirectory,
@@ -354,10 +352,7 @@ function isValidCommitSha(sha: string): boolean {
  * @param commitSha - Hex SHA (7-40 chars) to reset to
  * @returns Result<void> on success, error on failure or invalid SHA
  */
-export async function resetToCommit(
-  workingDirectory: string,
-  commitSha: string,
-): Promise<Result<void, BackbeatError>> {
+export async function resetToCommit(workingDirectory: string, commitSha: string): Promise<Result<void, BackbeatError>> {
   if (!isValidCommitSha(commitSha)) {
     return err(
       new BackbeatError(

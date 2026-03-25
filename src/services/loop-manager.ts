@@ -252,10 +252,13 @@ export class LoopManagerService implements LoopService {
     // Inject git state into the loop
     // ARCHITECTURE: createLoop sets gitBaseBranch/gitStartCommitSha to undefined;
     // we override here because git operations are async (not available in pure domain factory)
-    const gitUpdate: Partial<Loop> = {};
-    if (gitBaseBranch) gitUpdate.gitBaseBranch = gitBaseBranch;
-    if (gitStartCommitSha) gitUpdate.gitStartCommitSha = gitStartCommitSha;
-    const loopWithGit = Object.keys(gitUpdate).length > 0 ? updateLoop(loop, gitUpdate) : loop;
+    const loopWithGit =
+      gitBaseBranch || gitStartCommitSha
+        ? updateLoop(loop, {
+            ...(gitBaseBranch ? { gitBaseBranch } : {}),
+            ...(gitStartCommitSha ? { gitStartCommitSha } : {}),
+          })
+        : loop;
 
     const promptSummary = request.prompt
       ? truncatePrompt(request.prompt, 50)

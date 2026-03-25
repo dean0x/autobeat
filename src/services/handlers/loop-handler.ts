@@ -533,10 +533,7 @@ export class LoopHandler extends BaseEventHandler {
         }
       } else if (iterationNumber > 1 && updatedLoop.gitBranch) {
         // Re-checkout the loop's branch (user/agent may have switched)
-        const checkoutResult = await createAndCheckoutBranch(
-          updatedLoop.workingDirectory,
-          updatedLoop.gitBranch,
-        );
+        const checkoutResult = await createAndCheckoutBranch(updatedLoop.workingDirectory, updatedLoop.gitBranch);
         if (!checkoutResult.ok) {
           this.logger.warn('Failed to re-checkout loop branch, continuing without git', {
             loopId,
