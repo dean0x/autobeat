@@ -22,7 +22,7 @@ import { EventBus } from '../core/events/event-bus.js';
 import { Logger, LoopRepository, LoopService } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { truncatePrompt } from '../utils/format.js';
-import { captureGitState } from '../utils/git-state.js';
+import { captureGitState, getCurrentCommitSha } from '../utils/git-state.js';
 import { validatePath } from '../utils/validation.js';
 
 export class LoopManagerService implements LoopService {
@@ -220,17 +220,22 @@ export class LoopManagerService implements LoopService {
     const agent = agentResult.ok ? agentResult.value : request.agent;
 
     // ========================================================================
-    // Git branch validation (v0.8.0)
-    // If gitBranch is set, verify working directory is a git repo and capture gitBaseBranch
+    // Git state capture (v0.8.1)
+    // Always capture gitStartCommitSha when in a git repo (not just when --git-branch)
+    // gitBaseBranch is a legacy field (dead after v0.8.1) but still populated
+    // for backward compatibility with existing DB rows
     // ========================================================================
 
     let gitBaseBranch: string | undefined;
-    if (request.gitBranch) {
-      const gitStateResult = await captureGitState(validatedWorkingDirectory);
-      if (gitStateResult.ok && gitStateResult.value) {
-        gitBaseBranch = gitStateResult.value.branch;
+    let gitStartCommitSha: string | undefined;
+    const gitStateResult = await captureGitState(validatedWorkingDirectory);
+    if (gitStateResult.ok && gitStateResult.value) {
+      gitBaseBranch = request.gitBranch ? gitStateResult.value.branch : undefined;
+      // Always capture start commit SHA in git repos
+      const shaResult = await getCurrentCommitSha(validatedWorkingDirectory);
+      if (shaResult.ok) {
+        gitStartCommitSha = shaResult.value;
       }
-      // Errors already checked in validateCreateRequest
     }
 
     // ========================================================================
@@ -245,10 +250,17 @@ export class LoopManagerService implements LoopService {
       validatedWorkingDirectory,
     );
 
-    // If gitBranch was provided, inject gitBaseBranch into the loop
-    // ARCHITECTURE: createLoop sets gitBaseBranch to undefined; we override here
-    // because captureGitState is async (not available in pure domain factory)
-    const loopWithGit = gitBaseBranch ? updateLoop(loop, { gitBaseBranch }) : loop;
+    // Inject git state into the loop
+    // ARCHITECTURE: createLoop sets gitStartCommitSha to undefined;
+    // we override here because git operations are async (not available in pure domain factory)
+    // gitBaseBranch is a legacy field still populated for DB backward compatibility
+    const loopWithGit =
+      gitBaseBranch || gitStartCommitSha
+        ? updateLoop(loop, {
+            ...(gitBaseBranch ? { gitBaseBranch } : {}),
+            ...(gitStartCommitSha ? { gitStartCommitSha } : {}),
+          })
+        : loop;
 
     const promptSummary = request.prompt
       ? truncatePrompt(request.prompt, 50)
@@ -261,6 +273,7 @@ export class LoopManagerService implements LoopService {
       prompt: promptSummary,
       gitBranch: loopWithGit.gitBranch,
       gitBaseBranch: loopWithGit.gitBaseBranch,
+      gitStartCommitSha: loopWithGit.gitStartCommitSha,
     });
 
     // Emit event — handler persists the loop

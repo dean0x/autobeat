@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Mock git-state before importing modules that depend on it
 vi.mock('../../../../src/utils/git-state.js', () => ({
   captureGitState: vi.fn().mockResolvedValue({ ok: true, value: null }),
+  getCurrentCommitSha: vi.fn().mockResolvedValue({ ok: true, value: 'abc1234567890abcdef1234567890abcdef123456' }),
 }));
 
 import type { Loop, LoopCreateRequest, PipelineStepRequest, Schedule, Task } from '../../../../src/core/domain';
@@ -35,7 +36,7 @@ import { SQLiteScheduleRepository } from '../../../../src/implementations/schedu
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository';
 import { ScheduleHandler } from '../../../../src/services/handlers/schedule-handler';
 import { LoopManagerService } from '../../../../src/services/loop-manager';
-import { captureGitState } from '../../../../src/utils/git-state';
+import { captureGitState, getCurrentCommitSha } from '../../../../src/utils/git-state';
 import { createTestConfiguration } from '../../../fixtures/factories';
 import { TestLogger } from '../../../fixtures/test-doubles';
 import { flushEventLoop } from '../../../utils/event-helpers';
@@ -1193,13 +1194,15 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       expect(history.value[0].status).toBe('triggered');
     });
 
-    it('should populate gitBaseBranch in LoopCreated event when loopConfig has gitBranch', async () => {
+    it('should populate gitBaseBranch and gitStartCommitSha in LoopCreated event when loopConfig has gitBranch', async () => {
       // Mock captureGitState to return a branch name
       const mockCaptureGitState = vi.mocked(captureGitState);
       mockCaptureGitState.mockResolvedValue({
         ok: true,
         value: { branch: 'main', commitSha: 'abc123', dirtyFiles: [] },
       });
+      const mockGetCurrentCommitSha = vi.mocked(getCurrentCommitSha);
+      mockGetCurrentCommitSha.mockResolvedValue({ ok: true, value: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' });
 
       const loopConfig: LoopCreateRequest = {
         prompt: 'Optimize perf',
@@ -1231,6 +1234,7 @@ describe('ScheduleHandler - Behavioral Tests', () => {
       expect(capturedLoop).toBeDefined();
       expect(capturedLoop!.gitBranch).toBe('loop/perf-opt');
       expect(capturedLoop!.gitBaseBranch).toBe('main');
+      expect(capturedLoop!.gitStartCommitSha).toBe('deadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
     });
 
     it('should leave gitBaseBranch undefined when loopConfig has no gitBranch (regression guard)', async () => {
@@ -1244,7 +1248,7 @@ describe('ScheduleHandler - Behavioral Tests', () => {
         strategy: LoopStrategy.RETRY,
         exitCondition: 'npm test',
         maxIterations: 5,
-        // No gitBranch — captureGitState should NOT be called
+        // No gitBranch
       };
       const schedule = createSchedule({
         taskTemplate: { prompt: loopConfig.prompt ?? '', workingDirectory: '/tmp' },
@@ -1268,8 +1272,8 @@ describe('ScheduleHandler - Behavioral Tests', () => {
 
       expect(capturedLoop).toBeDefined();
       expect(capturedLoop!.gitBaseBranch).toBeUndefined();
-      // captureGitState should NOT have been called since no gitBranch
-      expect(mockCaptureGitState).not.toHaveBeenCalled();
+      // captureGitState returns null (not a git repo) → no git context set
+      expect(capturedLoop!.gitStartCommitSha).toBeUndefined();
     });
 
     it('should cancel active loops when schedule with loopConfig is cancelled', async () => {
