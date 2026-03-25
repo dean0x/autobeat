@@ -12,7 +12,7 @@ The v0.8.0 branch-per-iteration strategy was replaced with a correct commit-per-
 
 - **One branch per loop**: A single branch is created for the entire loop lifecycle
 - **One commit per iteration**: Each successful iteration (keep/pass) produces a commit on the loop branch
-- **Full revert on failure**: Failed or discarded iterations are reset to the appropriate target commit (`preIterationCommitSha`)
+- **Full revert on failure**: Failed or discarded iterations are reset — retry loops revert to `gitStartCommitSha` (clean slate), optimize loops revert to the best iteration's commit (or `gitStartCommitSha` if no best iteration exists)
 - **SHA tracking**: `gitStartCommitSha` on the loop, `gitCommitSha` and `preIterationCommitSha` on each iteration
 
 ---
