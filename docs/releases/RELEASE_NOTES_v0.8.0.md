@@ -1,6 +1,6 @@
 # Backbeat v0.8.0 — Loop Pause/Resume, Scheduled Loops & Git Integration
 
-Enhanced loop lifecycle with pause/resume controls, cron-scheduled loop execution, per-iteration git branch isolation, and CLI naming standardization.
+Enhanced loop lifecycle with pause/resume controls, cron-scheduled loop execution, git-aware loop iteration tracking, and CLI naming standardization.
 
 ---
 

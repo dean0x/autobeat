@@ -398,7 +398,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
           iteration.errorMessage ?? null,
           iteration.startedAt,
           iteration.completedAt ?? null,
-          iteration.gitBranch ?? null,
+          iteration.gitBranch ?? null, // Legacy (v0.8.0), always null for v0.8.1+
           iteration.gitCommitSha ?? null,
           iteration.preIterationCommitSha ?? null,
           iteration.gitDiffSummary ?? null,
@@ -451,7 +451,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
           exitCode: iteration.exitCode ?? null,
           errorMessage: iteration.errorMessage ?? null,
           completedAt: iteration.completedAt ?? null,
-          gitBranch: iteration.gitBranch ?? null,
+          gitBranch: iteration.gitBranch ?? null, // Legacy (v0.8.0), always null for v0.8.1+
           gitCommitSha: iteration.gitCommitSha ?? null,
           preIterationCommitSha: iteration.preIterationCommitSha ?? null,
           gitDiffSummary: iteration.gitDiffSummary ?? null,
@@ -485,7 +485,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       iteration.errorMessage ?? null,
       iteration.startedAt,
       iteration.completedAt ?? null,
-      iteration.gitBranch ?? null,
+      iteration.gitBranch ?? null, // Legacy (v0.8.0), always null for v0.8.1+
       iteration.gitCommitSha ?? null,
       iteration.preIterationCommitSha ?? null,
       iteration.gitDiffSummary ?? null,
@@ -506,7 +506,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       exitCode: iteration.exitCode ?? null,
       errorMessage: iteration.errorMessage ?? null,
       completedAt: iteration.completedAt ?? null,
-      gitBranch: iteration.gitBranch ?? null,
+      gitBranch: iteration.gitBranch ?? null, // Legacy (v0.8.0), always null for v0.8.1+
       gitCommitSha: iteration.gitCommitSha ?? null,
       preIterationCommitSha: iteration.preIterationCommitSha ?? null,
       gitDiffSummary: iteration.gitDiffSummary ?? null,
