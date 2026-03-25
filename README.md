@@ -1,4 +1,4 @@
-# Backbeat - Task Delegation And Management Framework
+# Backbeat: AI Coding Agent Orchestration at Scale
 
 [![npm version](https://img.shields.io/npm/v/backbeat.svg)](https://www.npmjs.com/package/backbeat)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
@@ -6,24 +6,35 @@
 [![CI](https://github.com/dean0x/backbeat/actions/workflows/ci.yml/badge.svg)](https://github.com/dean0x/backbeat/actions/workflows/ci.yml)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-purple)](https://modelcontextprotocol.io/)
 
-## Why Backbeat Exists
+## Why Backbeat
 
-**The Problem**: AI coding agents are incredibly powerful, but you can only work on one thing at a time with a single instance. This kills true multitasking and orchestration.
+Every AI coding agent is a single-threaded workhorse. One task, one agent, one repo at a time. That is a massive waste of computing power.
 
-**Our Belief**: AI should scale with your ambition, not limit it. Why use only one AI coding agent?
+Backbeat turns your machine into an AI development powerhouse. Run dozens of agents in parallel. Chain them into pipelines. Score their output and iterate until optimal. Three models, unlimited parallelism, one orchestrator.
 
-**The Vision**: Transform your machine or dedicated server into an AI powerhouse where you orchestrate multiple AI coding agents through one main session. Work on authentication in repo A while simultaneously building APIs in repo B, all coordinated through your primary MCP client - no context pollution, no workflow interruption.
+**Karpathy Optimization Loops.** The only production-grade framework that implements optimization loops with eval scoring for AI coding agents. Run a task, score the output with an eval script, iterate until optimal. Retry strategy (run until exit condition passes) or optimize strategy (minimize/maximize any metric). This is the Karpathy loop for coding agents, and nothing else out there does it.
+
+**Multi-Agent Pipelines.** Chain sequential steps with dependencies. Schedule them on cron. Each step can use a different agent: Claude for architecture, Codex for implementation, Gemini for review.
+
+**DAG Task Dependencies.** Full directed acyclic graph with cycle detection, failure cascading, and session continuation. Downstream tasks receive checkpoint context from completed dependencies.
+
+**Autoscaling Workers.** Dynamic worker pool monitors CPU and memory in real-time. Spawns agents when resources are available. No artificial limits.
+
+**Crash-Proof Persistence.** SQLite with WAL mode. Automatic state recovery. Kill the process, reboot your machine, come back tomorrow. Everything is exactly where you left it.
+
+Three AI models. Unlimited parallelism. One orchestrator.
 
 ## Features
 
-- **Event-Driven Architecture**: Coordinates components through events, eliminating race conditions
-- **Intelligent Resource Management**: Monitors CPU and memory in real-time, spawning workers when resources are available
-- **Task Persistence & Recovery**: SQLite storage with automatic crash recovery
-- **Task Dependencies**: DAG-based dependency resolution with cycle detection
-- **Task Scheduling**: Cron and one-time scheduling with timezone support and missed run policies
-- **Task Resumption**: Resume failed/completed tasks with enriched context from automatic checkpoints
+- **Karpathy Optimization Loops** that run, score with eval scripts, and iterate until optimal. Retry strategy (exit code = done) or optimize strategy (minimize/maximize scoring). Pipeline loops repeat multi-step workflows.
+- **Multi-Agent Orchestration** to delegate to Claude, Codex, or Gemini with per-task agent selection
+- **DAG Task Dependencies** with cycle detection, failure cascading, and session continuation via checkpoint context injection
+- **Scheduled Pipelines** that chain sequential steps on cron or one-time schedules with per-step priority, working directory, and agent overrides
+- **Autoscaling Workers** with real-time CPU/memory monitoring and dynamic worker pool
+- **Crash Recovery** with SQLite WAL mode, automatic state recovery, and checkpoint-based task resumption
+- **Event-Driven Architecture** with specialized handlers that eliminate race conditions
 
-See **[FEATURES.md](./docs/FEATURES.md)** for complete feature list.
+See **[FEATURES.md](./docs/FEATURES.md)** for the complete list.
 
 ## Quick Start
 
@@ -216,6 +227,16 @@ await ResumeTask({
 ```
 
 Checkpoints are captured automatically on task completion/failure, preserving the last 50 lines of output. Resumed tasks receive the full checkpoint context in their prompt and track lineage via `parentTaskId` and `retryOf` fields.
+
+## Part of the AI Development Stack
+
+| Tool | Role | What It Does |
+|------|------|-------------|
+| **[Skim](https://github.com/dean0x/skim)** | Context Optimization | Compresses code, test output, build output, and git output for optimal LLM reasoning |
+| **[DevFlow](https://github.com/dean0x/devflow)** | Quality Orchestration | 18 parallel reviewers, working memory, self-learning, production-grade lifecycle workflows |
+| **Backbeat** | Agent Orchestration | Orchestration at scale. Karpathy optimization loops, multi-agent pipelines, DAG dependencies, autoscaling |
+
+Backbeat scales execution. DevFlow enforces quality. Skim optimizes context. No other stack covers all three.
 
 ## Architecture
 

@@ -70,7 +70,7 @@
   ],
   "author": "dean0x",
   "license": "MIT",
-  "description": "Backbeat — MCP server for orchestrating background AI coding agents (Claude, Codex, Gemini)",
+  "description": "AI coding agent orchestration at scale. Karpathy optimization loops, multi-agent pipelines, DAG dependencies, autoscaling workers. Claude, Codex, Gemini.",
   "publishConfig": {
     "access": "public"
   },
