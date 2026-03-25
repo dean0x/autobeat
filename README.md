@@ -78,7 +78,7 @@ Once configured, use these MCP tools:
 | **RetryTask** | Retry a failed or completed task | `RetryTask({ taskId })` |
 | **ScheduleTask** | Schedule recurring or one-time tasks | `ScheduleTask({ prompt: "...", scheduleType: "cron", cronExpression: "0 2 * * *" })` |
 | **ListSchedules** | List schedules with optional status filter | `ListSchedules({ status: "active" })` |
-| **GetSchedule** | Get schedule details and execution history | `GetSchedule({ scheduleId })` |
+| **ScheduleStatus** | Get schedule details and execution history | `ScheduleStatus({ scheduleId })` |
 | **CancelSchedule** | Cancel an active schedule (optionally cancel in-flight tasks) | `CancelSchedule({ scheduleId, reason, cancelTasks? })` |
 | **PauseSchedule** | Pause a schedule (resumable) | `PauseSchedule({ scheduleId })` |
 | **ResumeSchedule** | Resume a paused schedule | `ResumeSchedule({ scheduleId })` |
@@ -89,6 +89,9 @@ Once configured, use these MCP tools:
 | **LoopStatus** | Get loop details and iteration history | `LoopStatus({ loopId })` |
 | **ListLoops** | List loops with optional status filter | `ListLoops({ status: "running" })` |
 | **CancelLoop** | Cancel an active loop (optionally cancel in-flight tasks) | `CancelLoop({ loopId, cancelTasks: true })` |
+| **PauseLoop** | Pause an active loop (graceful or force) | `PauseLoop({ loopId, force?: true })` |
+| **ResumeLoop** | Resume a paused loop | `ResumeLoop({ loopId })` |
+| **ScheduleLoop** | Schedule a recurring or one-time loop | `ScheduleLoop({ prompt: "...", strategy: "retry", exitCondition: "...", cronExpression: "0 * * * *" })` |
 
 ### CLI Commands
 
@@ -105,7 +108,7 @@ Once configured, use these MCP tools:
 | `beat resume <task-id>` | Resume a task from its checkpoint |
 | `beat schedule create <prompt>` | Create a cron or one-time schedule |
 | `beat schedule list` | List schedules with optional status filter |
-| `beat schedule get <id>` | Get schedule details and execution history |
+| `beat schedule status <id>` | Get schedule details and execution history |
 | `beat schedule pause <id>` | Pause an active schedule |
 | `beat schedule resume <id>` | Resume a paused schedule |
 | `beat schedule cancel <id>` | Cancel a schedule |
@@ -113,7 +116,7 @@ Once configured, use these MCP tools:
 | `beat loop <prompt> --until <cmd>` | Create a retry loop (run until condition passes) |
 | `beat loop <prompt> --eval <cmd>` | Create an optimize loop (score-based) |
 | `beat loop list` | List loops with optional status filter |
-| `beat loop get <loop-id>` | Get loop details and iteration history |
+| `beat loop status <loop-id>` | Get loop details and iteration history |
 | `beat loop cancel <loop-id>` | Cancel a loop |
 | `beat config show\|set\|reset\|path` | Manage configuration |
 | `beat help` | Show help |
