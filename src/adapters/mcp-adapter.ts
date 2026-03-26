@@ -2554,13 +2554,13 @@ export class MCPAdapter {
   // Orchestrator tool handlers (v0.9.0)
   // ============================================================================
 
+  private readonly ORCHESTRATION_UNAVAILABLE: MCPToolResponse = {
+    content: [{ type: 'text', text: JSON.stringify({ error: 'Orchestration service not available' }, null, 2) }],
+    isError: true,
+  };
+
   private async handleCreateOrchestrator(args: unknown): Promise<MCPToolResponse> {
-    if (!this.orchestrationService) {
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ error: 'Orchestration service not available' }, null, 2) }],
-        isError: true,
-      };
-    }
+    if (!this.orchestrationService) return this.ORCHESTRATION_UNAVAILABLE;
 
     const parseResult = CreateOrchestratorSchema.safeParse(args);
     if (!parseResult.success) {
@@ -2619,12 +2619,7 @@ export class MCPAdapter {
   }
 
   private async handleOrchestratorStatus(args: unknown): Promise<MCPToolResponse> {
-    if (!this.orchestrationService) {
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ error: 'Orchestration service not available' }, null, 2) }],
-        isError: true,
-      };
-    }
+    if (!this.orchestrationService) return this.ORCHESTRATION_UNAVAILABLE;
 
     const parseResult = OrchestratorStatusSchema.safeParse(args);
     if (!parseResult.success) {
@@ -2674,12 +2669,7 @@ export class MCPAdapter {
   }
 
   private async handleListOrchestrators(args: unknown): Promise<MCPToolResponse> {
-    if (!this.orchestrationService) {
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ error: 'Orchestration service not available' }, null, 2) }],
-        isError: true,
-      };
-    }
+    if (!this.orchestrationService) return this.ORCHESTRATION_UNAVAILABLE;
 
     const parseResult = ListOrchestratorsSchema.safeParse(args);
     if (!parseResult.success) {
@@ -2690,8 +2680,11 @@ export class MCPAdapter {
     }
 
     const { status, limit, offset } = parseResult.data;
-    const orchStatus = status ? (status as OrchestratorStatus) : undefined;
-    const result = await this.orchestrationService.listOrchestrations(orchStatus, limit, offset);
+    const result = await this.orchestrationService.listOrchestrations(
+      status as OrchestratorStatus | undefined,
+      limit,
+      offset,
+    );
 
     return match(result, {
       ok: (orchestrations) => ({
@@ -2724,12 +2717,7 @@ export class MCPAdapter {
   }
 
   private async handleCancelOrchestrator(args: unknown): Promise<MCPToolResponse> {
-    if (!this.orchestrationService) {
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ error: 'Orchestration service not available' }, null, 2) }],
-        isError: true,
-      };
-    }
+    if (!this.orchestrationService) return this.ORCHESTRATION_UNAVAILABLE;
 
     const parseResult = CancelOrchestratorSchema.safeParse(args);
     if (!parseResult.success) {

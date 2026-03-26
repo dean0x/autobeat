@@ -12,7 +12,7 @@ import { type AgentProvider, isAgentProvider } from '../core/agents.js';
 import { LoopId, Orchestration, OrchestratorId, OrchestratorStatus } from '../core/domain.js';
 import { operationErrorHandler } from '../core/errors.js';
 import { OrchestrationRepository, SyncOrchestrationOperations } from '../core/interfaces.js';
-import { err, ok, type Result, tryCatchAsync } from '../core/result.js';
+import { type Result, tryCatchAsync } from '../core/result.js';
 import { Database } from './database.js';
 
 // ============================================================================
@@ -133,21 +133,21 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
   // ============================================================================
 
   async save(orchestration: Orchestration): Promise<Result<void>> {
-    try {
-      this.saveStmt.run(this.toRow(orchestration));
-      return ok(undefined);
-    } catch (error) {
-      return err(operationErrorHandler('save orchestration', { orchestratorId: orchestration.id })(error));
-    }
+    return tryCatchAsync(
+      async () => {
+        this.saveStmt.run(this.toRow(orchestration));
+      },
+      operationErrorHandler('save orchestration', { orchestratorId: orchestration.id }),
+    );
   }
 
   async update(orchestration: Orchestration): Promise<Result<void>> {
-    try {
-      this.updateStmt.run(this.toRow(orchestration));
-      return ok(undefined);
-    } catch (error) {
-      return err(operationErrorHandler('update orchestration', { orchestratorId: orchestration.id })(error));
-    }
+    return tryCatchAsync(
+      async () => {
+        this.updateStmt.run(this.toRow(orchestration));
+      },
+      operationErrorHandler('update orchestration', { orchestratorId: orchestration.id }),
+    );
   }
 
   async findById(id: OrchestratorId): Promise<Result<Orchestration | null>> {
