@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-This file provides project-specific guidance for Claude Code when working on Backbeat.
+This file provides project-specific guidance for Claude Code when working on Autobeat.
 
 ## Project Overview
 
-Backbeat is an MCP (Model Context Protocol) server that enables task delegation to background Claude Code instances. It uses hybrid event-driven architecture with workers, task dependencies (DAG-based), and SQLite persistence.
+Autobeat is an MCP (Model Context Protocol) server that enables task delegation to background Claude Code instances. It uses hybrid event-driven architecture with workers, task dependencies (DAG-based), and SQLite persistence.
 
 **Core Concept**: Transform a dedicated server into an AI powerhouse - orchestrate multiple Claude Code instances through one main session for parallel development across repositories.
 
@@ -176,4 +176,4 @@ Quick reference for common operations:
 
 ---
 
-**Note**: General engineering principles (Result types, DI, immutability, etc.) are defined in your global `~/.claude/CLAUDE.md`. This file contains only Backbeat-specific guidance.
+**Note**: General engineering principles (Result types, DI, immutability, etc.) are defined in your global `~/.claude/CLAUDE.md`. This file contains only Autobeat-specific guidance.
