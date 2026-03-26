@@ -36,11 +36,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
 
   function createTestOrchestration(overrides: Partial<Orchestration> = {}): Orchestration {
     return {
-      ...createOrchestration(
-        { goal: 'Build a new feature' },
-        '/tmp/state.json',
-        '/workspace',
-      ),
+      ...createOrchestration({ goal: 'Build a new feature' }, '/tmp/state.json', '/workspace'),
       ...overrides,
     } as Orchestration;
   }
@@ -77,10 +73,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
       repo.save(orch);
 
       // Create a loop first for FK constraint
-      const loop = createLoop(
-        { prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'true' },
-        '/tmp',
-      );
+      const loop = createLoop({ prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'true' }, '/tmp');
       await loopRepo.save(loop);
 
       const updated = updateOrchestration(orch, {
@@ -142,10 +135,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
   describe('findByLoopId()', () => {
     it('should find orchestration by loop ID', async () => {
       // Create a loop first for FK constraint
-      const loop = createLoop(
-        { prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'true' },
-        '/tmp',
-      );
+      const loop = createLoop({ prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'true' }, '/tmp');
       await loopRepo.save(loop);
 
       const orch = createTestOrchestration();
@@ -238,10 +228,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
     });
 
     it('findByLoopIdSync should find by loop ID', async () => {
-      const loop = createLoop(
-        { prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'true' },
-        '/tmp',
-      );
+      const loop = createLoop({ prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'true' }, '/tmp');
       await loopRepo.save(loop);
 
       const orch = createTestOrchestration();

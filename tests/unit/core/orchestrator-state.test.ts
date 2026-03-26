@@ -3,16 +3,16 @@
  * ARCHITECTURE: Tests state file I/O with atomic write behavior
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, unlinkSync, rmdirSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createInitialState,
+  type OrchestratorStateFile,
   readStateFile,
   writeExitConditionScript,
   writeStateFile,
-  type OrchestratorStateFile,
 } from '../../../src/core/orchestrator-state.js';
 
 describe('Orchestrator State File - Unit Tests', () => {

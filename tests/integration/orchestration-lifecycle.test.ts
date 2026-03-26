@@ -15,13 +15,13 @@ vi.mock('../../src/utils/git-state.js', () => ({
 
 import { existsSync } from 'fs';
 import { OrchestratorId, OrchestratorStatus } from '../../src/core/domain.js';
+import { readStateFile } from '../../src/core/orchestrator-state.js';
 import { Database } from '../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../src/implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from '../../src/implementations/orchestration-repository.js';
-import { readStateFile } from '../../src/core/orchestrator-state.js';
+import { OrchestrationHandler } from '../../src/services/handlers/orchestration-handler.js';
 import { LoopManagerService } from '../../src/services/loop-manager.js';
 import { OrchestrationManagerService } from '../../src/services/orchestration-manager.js';
-import { OrchestrationHandler } from '../../src/services/handlers/orchestration-handler.js';
 import { createTestConfiguration } from '../fixtures/factories.js';
 import { TestEventBus, TestLogger } from '../fixtures/test-doubles.js';
 
@@ -109,10 +109,7 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
       expect(createResult.ok).toBe(true);
       if (!createResult.ok) return;
 
-      const cancelResult = await orchService.cancelOrchestration(
-        createResult.value.id,
-        'Changed my mind',
-      );
+      const cancelResult = await orchService.cancelOrchestration(createResult.value.id, 'Changed my mind');
       expect(cancelResult.ok).toBe(true);
 
       // Should have LoopCancelled and OrchestrationCancelled events

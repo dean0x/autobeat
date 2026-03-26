@@ -47,10 +47,7 @@ describe('OrchestrationHandler - Unit Tests', () => {
   });
 
   async function createTestOrchestrationWithLoop() {
-    const loop = createLoop(
-      { prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'true' },
-      '/tmp',
-    );
+    const loop = createLoop({ prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'true' }, '/tmp');
     await loopRepo.save(loop);
 
     const orch = createOrchestration({ goal: 'Test' }, '/tmp/state.json', '/workspace');
@@ -114,10 +111,7 @@ describe('OrchestrationHandler - Unit Tests', () => {
   describe('Unknown loopId', () => {
     it('should be a no-op for loops not owned by any orchestration', async () => {
       // Create a loop that is NOT associated with any orchestration
-      const loop = createLoop(
-        { prompt: 'standalone', strategy: LoopStrategy.RETRY, exitCondition: 'true' },
-        '/tmp',
-      );
+      const loop = createLoop({ prompt: 'standalone', strategy: LoopStrategy.RETRY, exitCondition: 'true' }, '/tmp');
       await loopRepo.save(loop);
 
       // This should not throw or fail

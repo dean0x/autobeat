@@ -13,7 +13,13 @@
  */
 
 import { loadConfiguration } from '../core/configuration.js';
-import type { LoopRepository, OrchestrationRepository, OutputRepository, ScheduleRepository, TaskRepository } from '../core/interfaces.js';
+import type {
+  LoopRepository,
+  OrchestrationRepository,
+  OutputRepository,
+  ScheduleRepository,
+  TaskRepository,
+} from '../core/interfaces.js';
 import { Result, tryCatch } from '../core/result.js';
 import { Database } from '../implementations/database.js';
 import { SQLiteLoopRepository } from '../implementations/loop-repository.js';
