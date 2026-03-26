@@ -200,7 +200,7 @@ describe('OrchestrationManagerService - Unit Tests', () => {
         status: OrchestratorStatus.COMPLETED,
         completedAt: Date.now(),
       });
-      orchestrationRepo.update(completed);
+      await orchestrationRepo.update(completed);
 
       const cancelResult = await service.cancelOrchestration(orch.id);
       expect(cancelResult.ok).toBe(false);

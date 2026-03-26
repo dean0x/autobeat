@@ -697,11 +697,11 @@ export interface ExitConditionEvaluator {
  * Pattern: Repository pattern for orchestration management
  */
 export interface OrchestrationRepository {
-  save(orchestration: Orchestration): Result<void>;
-  update(orchestration: Orchestration): Result<void>;
+  save(orchestration: Orchestration): Promise<Result<void>>;
+  update(orchestration: Orchestration): Promise<Result<void>>;
   findById(id: OrchestratorId): Promise<Result<Orchestration | null>>;
   findAll(limit?: number, offset?: number): Promise<Result<readonly Orchestration[]>>;
-  findByStatus(status: OrchestratorStatus, limit?: number): Promise<Result<readonly Orchestration[]>>;
+  findByStatus(status: OrchestratorStatus, limit?: number, offset?: number): Promise<Result<readonly Orchestration[]>>;
   findByLoopId(loopId: LoopId): Promise<Result<Orchestration | null>>;
   delete(id: OrchestratorId): Promise<Result<void>>;
   cleanupOldOrchestrations(retentionMs: number): Promise<Result<number>>;

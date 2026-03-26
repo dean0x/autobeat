@@ -44,7 +44,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
   describe('save() and findById()', () => {
     it('should save and retrieve an orchestration by ID', async () => {
       const orch = createTestOrchestration();
-      const saveResult = repo.save(orch);
+      const saveResult = await repo.save(orch);
       expect(saveResult.ok).toBe(true);
 
       const findResult = await repo.findById(orch.id);
@@ -70,7 +70,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
   describe('update()', () => {
     it('should update an existing orchestration', async () => {
       const orch = createTestOrchestration();
-      repo.save(orch);
+      await repo.save(orch);
 
       // Create a loop first for FK constraint
       const loop = createLoop({ prompt: 'test', strategy: LoopStrategy.RETRY, exitCondition: 'true' }, '/tmp');
@@ -80,7 +80,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
         status: OrchestratorStatus.RUNNING,
         loopId: loop.id,
       });
-      const updateResult = repo.update(updated);
+      const updateResult = await repo.update(updated);
       expect(updateResult.ok).toBe(true);
 
       const findResult = await repo.findById(orch.id);
@@ -94,8 +94,8 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
     it('should return all orchestrations with pagination', async () => {
       const o1 = createTestOrchestration();
       const o2 = createTestOrchestration();
-      repo.save(o1);
-      repo.save(o2);
+      await repo.save(o1);
+      await repo.save(o2);
 
       const result = await repo.findAll();
       expect(result.ok).toBe(true);
@@ -105,7 +105,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
 
     it('should respect limit and offset', async () => {
       for (let i = 0; i < 5; i++) {
-        repo.save(createTestOrchestration());
+        await repo.save(createTestOrchestration());
       }
 
       const result = await repo.findAll(2, 1);
@@ -118,11 +118,11 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
   describe('findByStatus()', () => {
     it('should filter by status', async () => {
       const planning = createTestOrchestration();
-      repo.save(planning);
+      await repo.save(planning);
 
       const running = createTestOrchestration();
       const runningUpdated = updateOrchestration(running, { status: OrchestratorStatus.RUNNING });
-      repo.save(runningUpdated);
+      await repo.save(runningUpdated);
 
       const result = await repo.findByStatus(OrchestratorStatus.PLANNING);
       expect(result.ok).toBe(true);
@@ -140,7 +140,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
 
       const orch = createTestOrchestration();
       const withLoop = updateOrchestration(orch, { loopId: loop.id });
-      repo.save(withLoop);
+      await repo.save(withLoop);
 
       const result = await repo.findByLoopId(loop.id);
       expect(result.ok).toBe(true);
@@ -160,7 +160,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
   describe('delete()', () => {
     it('should delete an orchestration', async () => {
       const orch = createTestOrchestration();
-      repo.save(orch);
+      await repo.save(orch);
 
       const deleteResult = await repo.delete(orch.id);
       expect(deleteResult.ok).toBe(true);
@@ -179,14 +179,14 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
         status: OrchestratorStatus.COMPLETED,
         completedAt: Date.now() - 10 * 24 * 60 * 60 * 1000, // 10 days ago
       });
-      repo.save(oldCompleted);
+      await repo.save(oldCompleted);
 
       const recentOrch = createTestOrchestration();
       const recentCompleted = updateOrchestration(recentOrch, {
         status: OrchestratorStatus.COMPLETED,
         completedAt: Date.now(),
       });
-      repo.save(recentCompleted);
+      await repo.save(recentCompleted);
 
       const result = await repo.cleanupOldOrchestrations(7 * 24 * 60 * 60 * 1000);
       expect(result.ok).toBe(true);
@@ -197,7 +197,7 @@ describe('SQLiteOrchestrationRepository - Unit Tests', () => {
     it('should not delete running orchestrations', async () => {
       const running = createTestOrchestration();
       const updated = updateOrchestration(running, { status: OrchestratorStatus.RUNNING });
-      repo.save(updated);
+      await repo.save(updated);
 
       const result = await repo.cleanupOldOrchestrations(0); // Even with 0 retention
       expect(result.ok).toBe(true);

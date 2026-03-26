@@ -89,7 +89,7 @@ export class OrchestrationManagerService implements OrchestrationService {
       const stateDir = getStateDir();
       mkdirSync(stateDir, { recursive: true, mode: 0o700 });
 
-      const stateFileName = `state-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.json`;
+      const stateFileName = `state-${Date.now()}-${crypto.randomUUID().substring(0, 8)}.json`;
       stateFilePath = path.join(stateDir, stateFileName);
 
       // Write initial state
@@ -115,7 +115,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     const orchestration = createOrchestration({ ...request, agent }, stateFilePath, validatedWorkingDirectory);
 
     // Persist orchestration
-    const saveResult = this.orchestrationRepo.save(orchestration);
+    const saveResult = await this.orchestrationRepo.save(orchestration);
     if (!saveResult.ok) {
       this.logger.error('Failed to save orchestration', saveResult.error, {
         orchestratorId: orchestration.id,
@@ -138,7 +138,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     const loopResult = await this.loopService.createLoop({
       strategy: LoopStrategy.RETRY,
       prompt,
-      exitCondition: `node ${exitConditionScript} ${stateFilePath}`,
+      exitCondition: `node ${JSON.stringify(exitConditionScript)} ${JSON.stringify(stateFilePath)}`,
       maxIterations: orchestration.maxIterations,
       maxConsecutiveFailures: 5,
       freshContext: true,
@@ -162,7 +162,7 @@ export class OrchestrationManagerService implements OrchestrationService {
       status: OrchestratorStatus.RUNNING,
     });
 
-    const updateResult = this.orchestrationRepo.update(updatedOrchestration);
+    const updateResult = await this.orchestrationRepo.update(updatedOrchestration);
     if (!updateResult.ok) {
       this.logger.error('Failed to update orchestration with loop ID', updateResult.error, {
         orchestratorId: orchestration.id,
@@ -220,7 +220,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     offset?: number,
   ): Promise<Result<readonly Orchestration[]>> {
     if (status) {
-      return this.orchestrationRepo.findByStatus(status, limit);
+      return this.orchestrationRepo.findByStatus(status, limit, offset);
     }
     return this.orchestrationRepo.findAll(limit, offset);
   }
@@ -252,9 +252,18 @@ export class OrchestrationManagerService implements OrchestrationService {
           error: cancelResult.error.message,
         });
       }
+    } else {
+      // No loop yet (PLANNING state) — update DB directly since OrchestrationHandler
+      // only subscribes to loop lifecycle events and won't see OrchestrationCancelled.
+      const updated = updateOrchestration(orchestration, {
+        status: OrchestratorStatus.CANCELLED,
+        completedAt: Date.now(),
+      });
+      const updateResult = await this.orchestrationRepo.update(updated);
+      if (!updateResult.ok) return err(updateResult.error);
     }
 
-    // Emit cancellation event (handler will update DB status)
+    // Emit cancellation event (handler will update DB status via loop events when loopId exists)
     const emitResult = await this.eventBus.emit('OrchestrationCancelled', {
       orchestratorId: id,
       reason,

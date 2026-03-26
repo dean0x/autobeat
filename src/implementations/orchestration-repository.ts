@@ -65,7 +65,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
   private readonly updateStmt: SQLite.Statement;
   private readonly findByIdStmt: SQLite.Statement;
   private readonly findAllPaginatedStmt: SQLite.Statement;
-  private readonly findByStatusStmt: SQLite.Statement;
+  private readonly findByStatusPaginatedStmt: SQLite.Statement;
   private readonly findByLoopIdStmt: SQLite.Statement;
   private readonly deleteStmt: SQLite.Statement;
   private readonly cleanupStmt: SQLite.Statement;
@@ -109,8 +109,8 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       SELECT * FROM orchestrations ORDER BY created_at DESC LIMIT ? OFFSET ?
     `);
 
-    this.findByStatusStmt = this.db.prepare(`
-      SELECT * FROM orchestrations WHERE status = ? ORDER BY created_at DESC LIMIT ?
+    this.findByStatusPaginatedStmt = this.db.prepare(`
+      SELECT * FROM orchestrations WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
     `);
 
     this.findByLoopIdStmt = this.db.prepare(`
@@ -132,7 +132,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
   // Async operations (wrapped in tryCatchAsync)
   // ============================================================================
 
-  save(orchestration: Orchestration): Result<void> {
+  async save(orchestration: Orchestration): Promise<Result<void>> {
     try {
       this.saveStmt.run(this.toRow(orchestration));
       return ok(undefined);
@@ -141,7 +141,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
     }
   }
 
-  update(orchestration: Orchestration): Result<void> {
+  async update(orchestration: Orchestration): Promise<Result<void>> {
     try {
       this.updateStmt.run(this.toRow(orchestration));
       return ok(undefined);
@@ -170,11 +170,16 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
     }, operationErrorHandler('find all orchestrations'));
   }
 
-  async findByStatus(status: OrchestratorStatus, limit?: number): Promise<Result<readonly Orchestration[]>> {
+  async findByStatus(
+    status: OrchestratorStatus,
+    limit?: number,
+    offset?: number,
+  ): Promise<Result<readonly Orchestration[]>> {
     return tryCatchAsync(
       async () => {
         const effectiveLimit = limit ?? SQLiteOrchestrationRepository.DEFAULT_LIMIT;
-        const rows = this.findByStatusStmt.all(status, effectiveLimit) as OrchestrationRow[];
+        const effectiveOffset = offset ?? 0;
+        const rows = this.findByStatusPaginatedStmt.all(status, effectiveLimit, effectiveOffset) as OrchestrationRow[];
         return rows.map((row) => this.rowToOrchestration(row));
       },
       operationErrorHandler('find orchestrations by status', { status }),

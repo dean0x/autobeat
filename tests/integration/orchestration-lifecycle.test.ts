@@ -133,7 +133,7 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
         status: OrchestratorStatus.COMPLETED,
         completedAt: Date.now() - 10 * 24 * 60 * 60 * 1000, // 10 days ago
       });
-      orchRepo.update(completed);
+      await orchRepo.update(completed);
 
       const cleanupResult = await orchRepo.cleanupOldOrchestrations(7 * 24 * 60 * 60 * 1000);
       expect(cleanupResult.ok).toBe(true);
