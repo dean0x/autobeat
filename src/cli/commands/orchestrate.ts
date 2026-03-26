@@ -18,9 +18,25 @@ import type { LoopCancelledEvent, LoopCompletedEvent } from '../../core/events/e
 import type { OrchestrationService } from '../../core/interfaces.js';
 import { readStateFile } from '../../core/orchestrator-state.js';
 import { err, ok, type Result } from '../../core/result.js';
-import { createReadOnlyContext } from '../read-only-context.js';
-import { errorMessage, exitOnError, exitOnNull } from '../services.js';
+import { errorMessage, withReadOnlyContext, withServices } from '../services.js';
 import * as ui from '../ui.js';
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+function stepStatusIcon(status: string): string {
+  switch (status) {
+    case 'completed':
+      return 'done';
+    case 'failed':
+      return 'FAIL';
+    case 'in_progress':
+      return '...';
+    default:
+      return '   ';
+  }
+}
 
 // ============================================================================
 // Arg parsing — pure function
@@ -387,147 +403,102 @@ async function handleOrchestrateForeground(parsed: OrchestrateCreateParsed): Pro
 // ============================================================================
 
 async function handleOrchestrateStatus(orchestratorId: string): Promise<void> {
-  const ctx = exitOnError(createReadOnlyContext());
-  try {
-    // Use raw DB query since ReadOnlyContext doesn't include orchestration repo yet
-    const db = ctx as unknown as { close: () => void };
-    // Import orchestration repository for read-only query
-    const { SQLiteOrchestrationRepository } = await import('../../implementations/orchestration-repository.js');
-    const { Database } = await import('../../implementations/database.js');
+  const s = ui.createSpinner();
+  s.start('Fetching orchestration...');
+  const ctx = withReadOnlyContext(s);
+  s.stop('Ready');
 
-    // Create a fresh database connection for orchestration queries
-    const database = new Database();
-    const repo = new SQLiteOrchestrationRepository(database);
-
-    const result = await repo.findById(OrchestratorId(orchestratorId));
-    if (!result.ok) {
-      ui.error(`Failed to get orchestration: ${result.error.message}`);
-      database.close();
-      ctx.close();
-      process.exit(1);
-    }
-
-    if (!result.value) {
-      ui.error(`Orchestration ${orchestratorId} not found`);
-      database.close();
-      ctx.close();
-      process.exit(1);
-    }
-
-    const o = result.value;
-    ui.stdout(
-      JSON.stringify(
-        {
-          id: o.id,
-          goal: o.goal,
-          status: o.status,
-          loopId: o.loopId,
-          stateFilePath: o.stateFilePath,
-          workingDirectory: o.workingDirectory,
-          agent: o.agent,
-          maxDepth: o.maxDepth,
-          maxWorkers: o.maxWorkers,
-          maxIterations: o.maxIterations,
-          createdAt: new Date(o.createdAt).toISOString(),
-          updatedAt: new Date(o.updatedAt).toISOString(),
-          completedAt: o.completedAt ? new Date(o.completedAt).toISOString() : null,
-        },
-        null,
-        2,
-      ),
-    );
-
-    // Try to read and display state file plan
-    const stateResult = readStateFile(o.stateFilePath);
-    if (stateResult.ok) {
-      const state = stateResult.value;
-      ui.info(`\nState: ${state.status} (iteration ${state.iterationCount})`);
-      if (state.plan.length > 0) {
-        ui.info('Plan:');
-        for (const step of state.plan) {
-          const statusIcon =
-            step.status === 'completed'
-              ? 'done'
-              : step.status === 'failed'
-                ? 'FAIL'
-                : step.status === 'in_progress'
-                  ? '...'
-                  : '   ';
-          ui.info(`  [${statusIcon}] ${step.id}: ${step.description}${step.taskId ? ` (${step.taskId})` : ''}`);
-        }
-      }
-    }
-
-    database.close();
-    ctx.close();
-  } catch (error) {
-    ui.error(errorMessage(error));
+  const result = await ctx.orchestrationRepository.findById(OrchestratorId(orchestratorId));
+  if (!result.ok) {
+    ui.error(`Failed to get orchestration: ${result.error.message}`);
     ctx.close();
     process.exit(1);
   }
+
+  if (!result.value) {
+    ui.error(`Orchestration ${orchestratorId} not found`);
+    ctx.close();
+    process.exit(1);
+  }
+
+  const o = result.value;
+  ui.stdout(
+    JSON.stringify(
+      {
+        id: o.id,
+        goal: o.goal,
+        status: o.status,
+        loopId: o.loopId,
+        stateFilePath: o.stateFilePath,
+        workingDirectory: o.workingDirectory,
+        agent: o.agent,
+        maxDepth: o.maxDepth,
+        maxWorkers: o.maxWorkers,
+        maxIterations: o.maxIterations,
+        createdAt: new Date(o.createdAt).toISOString(),
+        updatedAt: new Date(o.updatedAt).toISOString(),
+        completedAt: o.completedAt ? new Date(o.completedAt).toISOString() : null,
+      },
+      null,
+      2,
+    ),
+  );
+
+  // Try to read and display state file plan
+  const stateResult = readStateFile(o.stateFilePath);
+  if (stateResult.ok) {
+    const state = stateResult.value;
+    ui.info(`\nState: ${state.status} (iteration ${state.iterationCount})`);
+    if (state.plan.length > 0) {
+      ui.info('Plan:');
+      for (const step of state.plan) {
+        const statusIcon = stepStatusIcon(step.status);
+        ui.info(`  [${statusIcon}] ${step.id}: ${step.description}${step.taskId ? ` (${step.taskId})` : ''}`);
+      }
+    }
+  }
+
+  ctx.close();
 }
 
 async function handleOrchestrateList(status?: string): Promise<void> {
-  const { Database } = await import('../../implementations/database.js');
-  const { SQLiteOrchestrationRepository } = await import('../../implementations/orchestration-repository.js');
-
-  const database = new Database();
-  const repo = new SQLiteOrchestrationRepository(database);
+  const s = ui.createSpinner();
+  s.start('Fetching orchestrations...');
+  const ctx = withReadOnlyContext(s);
+  s.stop('Ready');
 
   const orchStatus = status ? (status as OrchestratorStatus) : undefined;
-  const result = orchStatus ? await repo.findByStatus(orchStatus) : await repo.findAll();
+  const result = orchStatus
+    ? await ctx.orchestrationRepository.findByStatus(orchStatus)
+    : await ctx.orchestrationRepository.findAll();
 
   if (!result.ok) {
     ui.error(`Failed to list orchestrations: ${result.error.message}`);
-    database.close();
+    ctx.close();
     process.exit(1);
   }
 
   if (result.value.length === 0) {
     ui.info('No orchestrations found');
-    database.close();
+    ctx.close();
     return;
   }
 
   for (const o of result.value) {
-    const goal = o.goal.length > 60 ? o.goal.substring(0, 60) + '...' : o.goal;
+    const goal = o.goal.length > 60 ? `${o.goal.substring(0, 60)}...` : o.goal;
     ui.stdout(`${o.id}  ${o.status.padEnd(10)}  ${goal}`);
   }
 
-  database.close();
+  ctx.close();
 }
 
 async function handleOrchestrateCancel(orchestratorId: string, reason?: string): Promise<void> {
   const s = ui.createSpinner();
-  s.start('Initializing...');
-  const containerResult = await bootstrap({ mode: 'cli' });
-  if (!containerResult.ok) {
-    s.stop('Initialization failed');
-    ui.error(`Bootstrap failed: ${containerResult.error.message}`);
-    process.exit(1);
-  }
-  const container = containerResult.value;
-
-  // Resolve task manager first to ensure handlers are wired
-  const tmResult = await container.resolve('taskManager');
-  if (!tmResult.ok) {
-    s.stop('Initialization failed');
-    ui.error(`Failed to initialize: ${tmResult.error.message}`);
-    await container.dispose();
-    process.exit(1);
-  }
-
-  const serviceResult = container.get<OrchestrationService>('orchestrationService');
-  if (!serviceResult.ok) {
-    s.stop('Initialization failed');
-    ui.error(`Failed to get orchestration service: ${serviceResult.error.message}`);
-    await container.dispose();
-    process.exit(1);
-  }
-  const service = serviceResult.value;
+  s.start('Cancelling orchestration...');
+  const { container, orchestrationService } = await withServices(s);
   s.stop('Ready');
 
-  const result = await service.cancelOrchestration(OrchestratorId(orchestratorId), reason);
+  const result = await orchestrationService.cancelOrchestration(OrchestratorId(orchestratorId), reason);
   if (!result.ok) {
     ui.error(`Failed to cancel: ${result.error.message}`);
     await container.dispose();

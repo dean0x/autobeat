@@ -69,7 +69,7 @@ export class OrchestrationHandler extends BaseEventHandler {
    * IMPORTANT: No LoopFailed event exists. Both success and failure come through
    * LoopCompleted. We must load the loop from SQLite to check its actual status.
    */
-  private async handleLoopCompleted(event: LoopCompletedEvent): Promise<void> {
+  private handleLoopCompleted(event: LoopCompletedEvent): void {
     this.updateOrchestrationForLoop(event.loopId, (loopStatus) => {
       if (loopStatus === LoopStatus.COMPLETED) {
         return OrchestratorStatus.COMPLETED;
@@ -82,7 +82,7 @@ export class OrchestrationHandler extends BaseEventHandler {
   /**
    * Handle LoopCancelled: mark orchestration as cancelled
    */
-  private async handleLoopCancelled(event: LoopCancelledEvent): Promise<void> {
+  private handleLoopCancelled(event: LoopCancelledEvent): void {
     this.updateOrchestrationForLoop(event.loopId, () => OrchestratorStatus.CANCELLED);
   }
 

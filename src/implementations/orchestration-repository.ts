@@ -8,11 +8,11 @@
 import SQLite from 'better-sqlite3';
 import { unlinkSync } from 'fs';
 import { z } from 'zod';
-import { AGENT_PROVIDERS_TUPLE, type AgentProvider } from '../core/agents.js';
+import { type AgentProvider, isAgentProvider } from '../core/agents.js';
 import { LoopId, Orchestration, OrchestratorId, OrchestratorStatus } from '../core/domain.js';
 import { operationErrorHandler } from '../core/errors.js';
 import { OrchestrationRepository, SyncOrchestrationOperations } from '../core/interfaces.js';
-import { Result, tryCatchAsync } from '../core/result.js';
+import { err, ok, type Result, tryCatchAsync } from '../core/result.js';
 import { Database } from './database.js';
 
 // ============================================================================
@@ -135,20 +135,18 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
   save(orchestration: Orchestration): Result<void> {
     try {
       this.saveStmt.run(this.toRow(orchestration));
-      return { ok: true, value: undefined };
+      return ok(undefined);
     } catch (error) {
-      const handler = operationErrorHandler('save orchestration', { orchestratorId: orchestration.id });
-      return { ok: false, error: handler(error) };
+      return err(operationErrorHandler('save orchestration', { orchestratorId: orchestration.id })(error));
     }
   }
 
   update(orchestration: Orchestration): Result<void> {
     try {
       this.updateStmt.run(this.toRow(orchestration));
-      return { ok: true, value: undefined };
+      return ok(undefined);
     } catch (error) {
-      const handler = operationErrorHandler('update orchestration', { orchestratorId: orchestration.id });
-      return { ok: false, error: handler(error) };
+      return err(operationErrorHandler('update orchestration', { orchestratorId: orchestration.id })(error));
     }
   }
 
@@ -312,11 +310,9 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
   }
 
   private toAgentProvider(value: string): AgentProvider {
-    const schema = z.enum(AGENT_PROVIDERS_TUPLE);
-    const result = schema.safeParse(value);
-    if (!result.success) {
+    if (!isAgentProvider(value)) {
       throw new Error(`Unknown agent provider: ${value} - possible data corruption`);
     }
-    return result.data;
+    return value;
   }
 }
