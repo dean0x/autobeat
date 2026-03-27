@@ -42,7 +42,13 @@ import {
   ScheduleType,
 } from '../../../src/core/domain';
 import { AutobeatError, ErrorCode, taskNotFound } from '../../../src/core/errors';
-import type { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager } from '../../../src/core/interfaces';
+import type {
+  Logger,
+  LoopService,
+  OrchestrationService,
+  ScheduleService,
+  TaskManager,
+} from '../../../src/core/interfaces';
 import type { Result } from '../../../src/core/result';
 import { err, ok } from '../../../src/core/result';
 import { createTestConfiguration, TaskFactory } from '../../fixtures/factories';
@@ -2534,9 +2540,7 @@ describe('Orchestration tools via callTool()', () => {
     });
 
     it('should propagate service errors', async () => {
-      mockOrchService.setGetResult(
-        err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Orchestration not found', {})),
-      );
+      mockOrchService.setGetResult(err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Orchestration not found', {})));
       const adapter = makeAdapter(mockOrchService);
 
       const result = await adapter.callTool('OrchestratorStatus', {
@@ -2600,9 +2604,7 @@ describe('Orchestration tools via callTool()', () => {
     });
 
     it('should propagate service errors', async () => {
-      mockOrchService.setListResult(
-        err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB failure', {})),
-      );
+      mockOrchService.setListResult(err(new AutobeatError(ErrorCode.SYSTEM_ERROR, 'DB failure', {})));
       const adapter = makeAdapter(mockOrchService);
 
       const result = await adapter.callTool('ListOrchestrators', {});
@@ -2662,9 +2664,7 @@ describe('Orchestration tools via callTool()', () => {
     });
 
     it('should propagate service errors', async () => {
-      mockOrchService.setCancelResult(
-        err(new AutobeatError(ErrorCode.INVALID_OPERATION, 'Already cancelled', {})),
-      );
+      mockOrchService.setCancelResult(err(new AutobeatError(ErrorCode.INVALID_OPERATION, 'Already cancelled', {})));
       const adapter = makeAdapter(mockOrchService);
 
       const result = await adapter.callTool('CancelOrchestrator', {
