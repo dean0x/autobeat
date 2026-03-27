@@ -60,8 +60,8 @@ export interface DependencyHandlerDeps {
 }
 
 export class DependencyHandler extends BaseEventHandler {
-  private eventBus: EventBus;
-  private graph: DependencyGraph;
+  private readonly eventBus: EventBus;
+  private readonly graph: DependencyGraph;
   private readonly maxChainDepth: number;
   private readonly checkpointLookup?: CheckpointLookup;
 
