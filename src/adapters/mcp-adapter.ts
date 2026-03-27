@@ -333,7 +333,7 @@ export interface MCPAdapterDeps {
 }
 
 export class MCPAdapter {
-  private server: Server;
+  private readonly server: Server;
 
   private readonly taskManager: TaskManager;
   private readonly logger: Logger;

@@ -62,9 +62,9 @@ export interface LoopHandlerDeps {
 
 export class LoopHandler extends BaseEventHandler {
   // In-memory state (rebuilt from DB on restart)
-  private taskToLoop: Map<TaskId, LoopId> = new Map(); // taskId → loopId
-  private pipelineTasks: Map<string, Set<TaskId>> = new Map(); // "loopId:iteration" → set of taskIds
-  private cooldownTimers: Map<LoopId, NodeJS.Timeout> = new Map(); // loopId → timer
+  private readonly taskToLoop: Map<TaskId, LoopId> = new Map(); // taskId → loopId
+  private readonly pipelineTasks: Map<string, Set<TaskId>> = new Map(); // "loopId:iteration" → set of taskIds
+  private readonly cooldownTimers: Map<LoopId, NodeJS.Timeout> = new Map(); // loopId → timer
 
   private readonly loopRepo: LoopRepository & SyncLoopOperations;
   private readonly taskRepo: TaskRepository & SyncTaskOperations;

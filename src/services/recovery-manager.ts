@@ -28,6 +28,9 @@ export interface RecoveryManagerDeps {
   readonly orchestrationRepository?: OrchestrationRepository;
 }
 
+/** 7-day retention window for cleanup of terminal tasks, loops, and orchestrations */
+const CLEANUP_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 export class RecoveryManager {
   private readonly repository: TaskRepository;
   private readonly queue: TaskQueue;
@@ -180,7 +183,7 @@ export class RecoveryManager {
   }
 
   private async cleanupOldCompletedTasks(): Promise<void> {
-    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const sevenDaysMs = CLEANUP_RETENTION_MS;
     const cleanupResult = await this.repository.cleanupOldTasks(sevenDaysMs);
 
     if (cleanupResult.ok && cleanupResult.value > 0) {
@@ -191,7 +194,7 @@ export class RecoveryManager {
   private async cleanupOldLoops(): Promise<void> {
     if (!this.loopRepository) return;
 
-    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const sevenDaysMs = CLEANUP_RETENTION_MS;
     const cleanupResult = await this.loopRepository.cleanupOldLoops(sevenDaysMs);
 
     if (cleanupResult.ok && cleanupResult.value > 0) {
@@ -202,7 +205,7 @@ export class RecoveryManager {
   private async cleanupOldOrchestrations(): Promise<void> {
     if (!this.orchestrationRepository) return;
 
-    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const sevenDaysMs = CLEANUP_RETENTION_MS;
     const cleanupResult = await this.orchestrationRepository.cleanupOldOrchestrations(sevenDaysMs);
 
     if (cleanupResult.ok && cleanupResult.value > 0) {

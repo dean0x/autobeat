@@ -127,7 +127,7 @@ export function parseOrchestrateCreateArgs(args: readonly string[]): Result<Orch
   if (!goal) return err('goal is required');
 
   return ok({
-    kind: 'create' as const,
+    kind: 'create',
     goal,
     workingDirectory,
     agent,
