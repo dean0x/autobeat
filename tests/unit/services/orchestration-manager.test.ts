@@ -4,6 +4,7 @@
  * Pattern: Behavior-driven testing with Result pattern validation
  */
 
+import { unlinkSync } from 'fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock git-state before importing modules that depend on it
@@ -31,6 +32,8 @@ describe('OrchestrationManagerService - Unit Tests', () => {
   let logger: TestLogger;
   let loopService: LoopManagerService;
   let service: OrchestrationManagerService;
+  /** Track state files created during tests for cleanup */
+  const createdStateFiles: string[] = [];
   const config = createTestConfiguration({ defaultAgent: 'claude' });
 
   beforeEach(() => {
@@ -51,9 +54,26 @@ describe('OrchestrationManagerService - Unit Tests', () => {
         await loopRepo.save(loop);
       }
     });
+
+    // Track state files for cleanup
+    eventBus.subscribe('OrchestrationCreated', async (event: Record<string, unknown>) => {
+      const orch = event as { orchestration: { stateFilePath?: string } };
+      if (orch.orchestration?.stateFilePath) {
+        createdStateFiles.push(orch.orchestration.stateFilePath);
+      }
+    });
   });
 
   afterEach(() => {
+    // Clean up state files created during tests
+    for (const filePath of createdStateFiles) {
+      try {
+        unlinkSync(filePath);
+      } catch {
+        // File may not exist (e.g., test for invalid input)
+      }
+    }
+    createdStateFiles.length = 0;
     eventBus.dispose();
     db.close();
   });

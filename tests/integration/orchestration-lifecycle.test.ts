@@ -13,7 +13,7 @@ vi.mock('../../src/utils/git-state.js', () => ({
   validateGitRefName: vi.fn().mockReturnValue({ ok: true, value: undefined }),
 }));
 
-import { existsSync } from 'fs';
+import { existsSync, unlinkSync } from 'fs';
 import { OrchestratorId, OrchestratorStatus } from '../../src/core/domain.js';
 import { readStateFile } from '../../src/core/orchestrator-state.js';
 import { Database } from '../../src/implementations/database.js';
@@ -33,6 +33,8 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
   let logger: TestLogger;
   let loopService: LoopManagerService;
   let orchService: OrchestrationManagerService;
+  /** Track state files created during tests for cleanup */
+  const createdStateFiles: string[] = [];
   const config = createTestConfiguration({ defaultAgent: 'claude' });
 
   beforeEach(() => {
@@ -42,7 +44,13 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
     eventBus = new TestEventBus();
     logger = new TestLogger();
     loopService = new LoopManagerService(eventBus, logger, loopRepo, config);
-    orchService = new OrchestrationManagerService({ eventBus, logger, orchestrationRepo: orchRepo, loopService, config });
+    orchService = new OrchestrationManagerService({
+      eventBus,
+      logger,
+      orchestrationRepo: orchRepo,
+      loopService,
+      config,
+    });
 
     // Simulate LoopHandler: persist loop on LoopCreated event
     eventBus.subscribe('LoopCreated', async (event: Record<string, unknown>) => {
@@ -51,9 +59,26 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
         await loopRepo.save(loop);
       }
     });
+
+    // Track state files for cleanup
+    eventBus.subscribe('OrchestrationCreated', async (event: Record<string, unknown>) => {
+      const orch = event as { orchestration: { stateFilePath?: string } };
+      if (orch.orchestration?.stateFilePath) {
+        createdStateFiles.push(orch.orchestration.stateFilePath);
+      }
+    });
   });
 
   afterEach(() => {
+    // Clean up state files created during tests
+    for (const filePath of createdStateFiles) {
+      try {
+        unlinkSync(filePath);
+      } catch {
+        // File may not exist (e.g., test for invalid input)
+      }
+    }
+    createdStateFiles.length = 0;
     eventBus.dispose();
     db.close();
   });
