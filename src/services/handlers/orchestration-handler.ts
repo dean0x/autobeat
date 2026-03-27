@@ -6,6 +6,7 @@
  */
 
 import { LoopId, LoopStatus, OrchestratorStatus, updateOrchestration } from '../../core/domain.js';
+import { AutobeatError, ErrorCode } from '../../core/errors.js';
 import type { EventBus } from '../../core/events/event-bus.js';
 import type { LoopCancelledEvent, LoopCompletedEvent } from '../../core/events/events.js';
 import { BaseEventHandler } from '../../core/events/handlers.js';
@@ -15,52 +16,78 @@ import type {
   SyncOrchestrationOperations,
   TransactionRunner,
 } from '../../core/interfaces.js';
-import { ok, type Result } from '../../core/result.js';
+import { err, ok, type Result } from '../../core/result.js';
+
+export interface OrchestrationHandlerDeps {
+  readonly orchestrationRepo: SyncOrchestrationOperations;
+  readonly loopRepo: SyncLoopOperations;
+  readonly database: TransactionRunner;
+  readonly eventBus: EventBus;
+  readonly logger: Logger;
+}
 
 export class OrchestrationHandler extends BaseEventHandler {
+  private readonly orchestrationRepo: SyncOrchestrationOperations;
+  private readonly loopRepo: SyncLoopOperations;
+  private readonly database: TransactionRunner;
+  private readonly eventBus: EventBus;
+
   /**
    * Private constructor - use OrchestrationHandler.create() instead
    * ARCHITECTURE: Factory pattern ensures handler is fully initialized before use
    */
-  private constructor(
-    private readonly orchestrationRepo: SyncOrchestrationOperations,
-    private readonly loopRepo: SyncLoopOperations,
-    private readonly database: TransactionRunner,
-    logger: Logger,
-  ) {
-    super(logger, 'OrchestrationHandler');
+  private constructor(deps: OrchestrationHandlerDeps) {
+    super(deps.logger, 'OrchestrationHandler');
+    this.orchestrationRepo = deps.orchestrationRepo;
+    this.loopRepo = deps.loopRepo;
+    this.database = deps.database;
+    this.eventBus = deps.eventBus;
   }
 
   /**
    * Factory method to create a fully initialized OrchestrationHandler
    * ARCHITECTURE: Guarantees handler is ready to use — no uninitialized state possible
    */
-  static async create(
-    orchestrationRepo: SyncOrchestrationOperations,
-    loopRepo: SyncLoopOperations,
-    database: TransactionRunner,
-    eventBus: EventBus,
-    logger: Logger,
-  ): Promise<Result<OrchestrationHandler>> {
-    const handler = new OrchestrationHandler(orchestrationRepo, loopRepo, database, logger);
+  static async create(deps: OrchestrationHandlerDeps): Promise<Result<OrchestrationHandler, AutobeatError>> {
+    const handlerLogger = deps.logger.child ? deps.logger.child({ module: 'OrchestrationHandler' }) : deps.logger;
+
+    const handler = new OrchestrationHandler({ ...deps, logger: handlerLogger });
 
     // Subscribe to loop lifecycle events
-    const completedSub = eventBus.subscribe<LoopCompletedEvent>('LoopCompleted', async (event) =>
-      handler.handleLoopCompleted(event),
-    );
-    if (!completedSub.ok) {
-      logger.error('Failed to subscribe to LoopCompleted', completedSub.error);
+    const subscribeResult = handler.subscribeToEvents();
+    if (!subscribeResult.ok) {
+      return subscribeResult;
     }
 
-    const cancelledSub = eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) =>
-      handler.handleLoopCancelled(event),
-    );
-    if (!cancelledSub.ok) {
-      logger.error('Failed to subscribe to LoopCancelled', cancelledSub.error);
-    }
-
-    logger.info('OrchestrationHandler initialized');
+    handlerLogger.info('OrchestrationHandler initialized');
     return ok(handler);
+  }
+
+  /**
+   * Subscribe to loop lifecycle events
+   * ARCHITECTURE: Called by factory after initialization
+   */
+  private subscribeToEvents(): Result<void, AutobeatError> {
+    const subscriptions = [
+      this.eventBus.subscribe<LoopCompletedEvent>('LoopCompleted', async (event) =>
+        this.handleLoopCompleted(event),
+      ),
+      this.eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) =>
+        this.handleLoopCancelled(event),
+      ),
+    ];
+
+    for (const result of subscriptions) {
+      if (!result.ok) {
+        return err(
+          new AutobeatError(ErrorCode.SYSTEM_ERROR, `Failed to subscribe to events: ${result.error.message}`, {
+            error: result.error,
+          }),
+        );
+      }
+    }
+
+    return ok(undefined);
   }
 
   /**

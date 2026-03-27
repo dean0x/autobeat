@@ -35,7 +35,13 @@ describe('OrchestrationHandler - Unit Tests', () => {
     eventBus = new TestEventBus();
     logger = new TestLogger();
 
-    const result = await OrchestrationHandler.create(orchRepo, loopRepo, db, eventBus, logger);
+    const result = await OrchestrationHandler.create({
+      orchestrationRepo: orchRepo,
+      loopRepo: loopRepo,
+      database: db,
+      eventBus,
+      logger,
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('Failed to create handler');
     handler = result.value;

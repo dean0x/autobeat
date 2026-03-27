@@ -359,13 +359,13 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
   // ARCHITECTURE: Optional — only created if orchestrationRepository is registered
   let orchestrationHandler: OrchestrationHandler | undefined;
   if (deps.orchestrationRepository) {
-    const orchestrationHandlerResult = await OrchestrationHandler.create(
-      deps.orchestrationRepository,
-      deps.loopRepository,
-      deps.database,
+    const orchestrationHandlerResult = await OrchestrationHandler.create({
+      orchestrationRepo: deps.orchestrationRepository,
+      loopRepo: deps.loopRepository,
+      database: deps.database,
       eventBus,
-      childLogger('OrchestrationHandler'),
-    );
+      logger: childLogger('OrchestrationHandler'),
+    });
     if (!orchestrationHandlerResult.ok) {
       // Non-fatal: log warning but continue without orchestration handler
       setupLogger.warn('Failed to create OrchestrationHandler', {
