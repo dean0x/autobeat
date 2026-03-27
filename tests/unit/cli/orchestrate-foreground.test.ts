@@ -5,12 +5,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitForLoopCompletion } from '../../../src/cli/commands/orchestrate.js';
 import { loadConfiguration } from '../../../src/core/configuration.js';
+import type { Container } from '../../../src/core/container.js';
 import { LoopId } from '../../../src/core/domain.js';
 import { InMemoryEventBus } from '../../../src/core/events/event-bus.js';
-import type { Container } from '../../../src/core/container.js';
 import { err, ok } from '../../../src/core/result.js';
-import { waitForLoopCompletion } from '../../../src/cli/commands/orchestrate.js';
 import { createMockLogger } from '../../fixtures/mocks.js';
 
 function createMockContainer(eventBus: InMemoryEventBus): Container {

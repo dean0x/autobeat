@@ -8,6 +8,7 @@ import { bootstrap } from '../../bootstrap.js';
 import type { AgentProvider } from '../../core/agents.js';
 import { AGENT_PROVIDERS, isAgentProvider } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
+import type { LoopId } from '../../core/domain.js';
 import { OrchestratorId, OrchestratorStatus } from '../../core/domain.js';
 import type { EventBus } from '../../core/events/event-bus.js';
 import type { LoopCancelledEvent, LoopCompletedEvent } from '../../core/events/events.js';
@@ -34,6 +35,50 @@ function stepStatusIcon(status: string): string {
     default:
       return '   ';
   }
+}
+
+/**
+ * Subscribe to EventBus events for a specific loop and wait for terminal state.
+ * Returns 0 on LoopCompleted, 1 on LoopCancelled or if eventBus is unavailable.
+ * Mirrors waitForTaskCompletion in run.ts.
+ */
+export function waitForLoopCompletion(container: Container, loopId: LoopId): Promise<number> {
+  const eventBusResult = container.get<EventBus>('eventBus');
+  if (!eventBusResult.ok) {
+    ui.error(`Failed to get event bus: ${eventBusResult.error.message}`);
+    return Promise.resolve(1);
+  }
+  const eventBus = eventBusResult.value;
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    const subscriptionIds: string[] = [];
+
+    const cleanup = () => {
+      for (const id of subscriptionIds) {
+        eventBus.unsubscribe(id);
+      }
+    };
+
+    const resolveOnce = (code: number) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(code);
+    };
+
+    const completedSub = eventBus.subscribe<LoopCompletedEvent>('LoopCompleted', async (event) => {
+      if (event.loopId !== loopId) return;
+      resolveOnce(0);
+    });
+    if (completedSub.ok) subscriptionIds.push(completedSub.value);
+
+    const cancelledSub = eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) => {
+      if (event.loopId !== loopId) return;
+      resolveOnce(1);
+    });
+    if (cancelledSub.ok) subscriptionIds.push(cancelledSub.value);
+  });
 }
 
 // ============================================================================
@@ -267,54 +312,19 @@ async function handleOrchestrateForeground(parsed: OrchestrateCreateParsed): Pro
       process.exit(1);
     }
 
-    const eventBusResult = container.get<EventBus>('eventBus');
-    if (!eventBusResult.ok) {
-      ui.error(`Failed to get event bus: ${eventBusResult.error.message}`);
-      await container.dispose();
-      process.exit(1);
+    // SIGINT stays in parent — references service.cancelOrchestration (closure context)
+    const sigintHandler = () => {
+      process.stderr.write('\nCancelling orchestration...\n');
+      service.cancelOrchestration(orchestration.id, 'User interrupted (SIGINT)');
+    };
+    process.on('SIGINT', sigintHandler);
+
+    let exitCode: number;
+    try {
+      exitCode = await waitForLoopCompletion(container, orchestration.loopId);
+    } finally {
+      process.removeListener('SIGINT', sigintHandler);
     }
-    const eventBus = eventBusResult.value;
-
-    const exitCode = await new Promise<number>((resolve) => {
-      let resolved = false;
-      const subscriptionIds: string[] = [];
-
-      const cleanup = () => {
-        for (const id of subscriptionIds) {
-          eventBus.unsubscribe(id);
-        }
-      };
-
-      const resolveOnce = (code: number) => {
-        if (resolved) return;
-        resolved = true;
-        cleanup();
-        resolve(code);
-      };
-
-      // Handle SIGINT
-      const sigintHandler = () => {
-        process.stderr.write('\nCancelling orchestration...\n');
-        service.cancelOrchestration(orchestration.id, 'User interrupted (SIGINT)');
-      };
-      process.on('SIGINT', sigintHandler);
-
-      // Watch for loop completion
-      const completedSub = eventBus.subscribe<LoopCompletedEvent>('LoopCompleted', async (event) => {
-        if (event.loopId !== orchestration.loopId) return;
-        process.removeListener('SIGINT', sigintHandler);
-        resolveOnce(0);
-      });
-      if (completedSub.ok) subscriptionIds.push(completedSub.value);
-
-      // Watch for loop cancellation
-      const cancelledSub = eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) => {
-        if (event.loopId !== orchestration.loopId) return;
-        process.removeListener('SIGINT', sigintHandler);
-        resolveOnce(1);
-      });
-      if (cancelledSub.ok) subscriptionIds.push(cancelledSub.value);
-    });
 
     const waitSpinner = ui.createSpinner();
     if (exitCode === 0) {
