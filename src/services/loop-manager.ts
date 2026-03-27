@@ -41,7 +41,7 @@ export class LoopManagerService implements LoopService {
    * loopConfig before domain factory creation — prevents bypassing validations.
    */
   async validateCreateRequest(request: LoopCreateRequest): Promise<Result<void, Error>> {
-    // Validate prompt: required 1-4000 chars unless pipeline mode
+    // Validate prompt: required, non-empty unless pipeline mode
     const isPipelineMode = request.pipelineSteps && request.pipelineSteps.length > 0;
     if (!isPipelineMode) {
       if (!request.prompt || request.prompt.trim().length === 0) {
@@ -51,16 +51,6 @@ export class LoopManagerService implements LoopService {
           }),
         );
       }
-    }
-    // ARCHITECTURE: Internal service limit is 16000 to accommodate orchestrator prompts.
-    // MCP boundary schemas keep the user-facing limit at 4000 chars.
-    if (request.prompt && request.prompt.length > 16000) {
-      return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, 'prompt must not exceed 16000 characters', {
-          field: 'prompt',
-          length: request.prompt.length,
-        }),
-      );
     }
 
     // Validate exitCondition: required, non-empty
