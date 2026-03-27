@@ -1,5 +1,7 @@
 # Autobeat: Autonomous Coding Agent Orchestration Framework
 
+[![Website](https://img.shields.io/badge/Website-autobeat-6366f1)](https://dean0x.github.io/x/autobeat/)
+
 One goal in. Finished work out. No human in the loop.
 
 ```bash
