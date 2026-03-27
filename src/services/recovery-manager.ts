@@ -183,8 +183,7 @@ export class RecoveryManager {
   }
 
   private async cleanupOldCompletedTasks(): Promise<void> {
-    const sevenDaysMs = CLEANUP_RETENTION_MS;
-    const cleanupResult = await this.repository.cleanupOldTasks(sevenDaysMs);
+    const cleanupResult = await this.repository.cleanupOldTasks(CLEANUP_RETENTION_MS);
 
     if (cleanupResult.ok && cleanupResult.value > 0) {
       this.logger.info('Cleaned up old completed tasks', { count: cleanupResult.value });
