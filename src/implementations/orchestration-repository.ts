@@ -5,10 +5,10 @@
  * Rationale: Efficient orchestration persistence for orchestrator mode (v0.9.0)
  */
 
-import os from 'os';
-import path from 'path';
 import SQLite from 'better-sqlite3';
 import { unlink } from 'fs/promises';
+import os from 'os';
+import path from 'path';
 import { z } from 'zod';
 import { type AgentProvider, isAgentProvider } from '../core/agents.js';
 import { LoopId, Orchestration, OrchestratorId, OrchestratorStatus } from '../core/domain.js';

@@ -2697,11 +2697,7 @@ export class MCPAdapter {
     }
 
     const { status, limit, offset } = parseResult.data;
-    const result = await this.orchestrationService.listOrchestrations(
-      status,
-      limit,
-      offset,
-    );
+    const result = await this.orchestrationService.listOrchestrations(status, limit, offset);
 
     return match(result, {
       ok: (orchestrations) => ({

@@ -69,12 +69,8 @@ export class OrchestrationHandler extends BaseEventHandler {
    */
   private subscribeToEvents(): Result<void, AutobeatError> {
     const subscriptions = [
-      this.eventBus.subscribe<LoopCompletedEvent>('LoopCompleted', async (event) =>
-        this.handleLoopCompleted(event),
-      ),
-      this.eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) =>
-        this.handleLoopCancelled(event),
-      ),
+      this.eventBus.subscribe<LoopCompletedEvent>('LoopCompleted', async (event) => this.handleLoopCompleted(event)),
+      this.eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) => this.handleLoopCancelled(event)),
     ];
 
     for (const result of subscriptions) {
