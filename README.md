@@ -1,14 +1,9 @@
 # Autobeat: Autonomous Coding Agent Orchestration Framework
 
-[![npm version](https://img.shields.io/npm/v/autobeat.svg)](https://www.npmjs.com/package/autobeat)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
-[![CI](https://github.com/dean0x/autobeat/actions/workflows/ci.yml/badge.svg)](https://github.com/dean0x/autobeat/actions/workflows/ci.yml)
-
 One goal in. Finished work out. No human in the loop.
 
 ```bash
-beat orchestrate "Build a complete auth system with JWT, OAuth2, and MFA"
+beat orchestrate "Migrate the payment module to a standalone microservice with its own database, API, and test suite"
 ```
 
 Autobeat gives you four composable primitives — delegation, eval loops, persistence, and resource management — and lets you wire them together however you want. Loops inside loops. Pipelines inside orchestrators. Agents spawning agents. The framework doesn't prescribe your workflow. It gives you the building blocks and gets out of the way.
@@ -72,10 +67,10 @@ Restart your MCP client to connect. Autobeat works with Claude Code, Codex, Gemi
 beat init
 
 # Orchestrate — fire and forget
-beat orchestrate "Refactor the auth module to use JWT tokens"
+beat orchestrate "Add real-time collaborative editing to the document editor"
 
 # Or run a single task in the foreground
-beat run "Fix the failing test in auth.test.ts" -f
+beat run "Fix the failing test in parser.test.ts" -f
 ```
 
 ## Orchestrate Mode
@@ -84,7 +79,7 @@ The flagship. One command, autonomous execution.
 
 ```bash
 # Detached (default) — runs in the background
-beat orchestrate "Build a REST API with user auth, CRUD endpoints, and tests"
+beat orchestrate "Set up a GraphQL API with subscriptions, pagination, and integration tests"
 
 # Foreground — blocks and shows progress, Ctrl+C cancels
 beat orchestrate "Migrate the database schema" --foreground
