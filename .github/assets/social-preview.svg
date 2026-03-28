@@ -20,10 +20,6 @@
   <!-- Subtle border line at bottom -->
   <rect x="0" y="636" width="1280" height="4" fill="url(#accent)" opacity="0.3" />
 
-  <!-- Badge -->
-  <rect x="100" y="130" width="210" height="32" rx="16" fill="none" stroke="#1e1e2e" stroke-width="1" />
-  <text x="132" y="152" font-family="'SF Mono', 'Fira Code', monospace" font-size="14" fill="#a0a0b8">v1.0.0 — TypeScript</text>
-
   <!-- Title: "One goal in." in white -->
   <text x="100" y="230" font-family="system-ui, -apple-system, sans-serif" font-size="56" font-weight="800" fill="#e8e8f0" letter-spacing="-2">One goal in.</text>
 
