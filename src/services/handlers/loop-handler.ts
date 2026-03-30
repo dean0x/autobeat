@@ -277,14 +277,23 @@ export class LoopHandler extends BaseEventHandler {
         const evalResult = await this.exitConditionEvaluator.evaluate(loop, taskId);
 
         // Stale state guard: re-fetch loop and iteration after potentially slow eval (Step 8b)
-        // If loop was cancelled/paused while eval ran, skip result processing
+        // If loop was cancelled while eval ran, skip result processing
+        // Allow PAUSED through — consistent with the early guard at line 208 (graceful pause records results)
         const freshLoopResult = await this.loopRepo.findById(loopId);
-        if (!freshLoopResult.ok || !freshLoopResult.value || freshLoopResult.value.status !== LoopStatus.RUNNING) {
+        if (
+          !freshLoopResult.ok ||
+          !freshLoopResult.value ||
+          (freshLoopResult.value.status !== LoopStatus.RUNNING && freshLoopResult.value.status !== LoopStatus.PAUSED)
+        ) {
           const staleStatus = freshLoopResult.ok ? (freshLoopResult.value?.status ?? 'null') : 'error';
           this.logger.info('Loop no longer running after eval, skipping result processing', {
             loopId,
             status: staleStatus,
           });
+          // Clean up tracking before returning
+          this.cleanupPipelineTaskTracking(iteration);
+          this.taskToLoop.delete(taskId);
+          this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
           return ok(undefined);
         }
         const freshLoop = freshLoopResult.value;
@@ -300,6 +309,10 @@ export class LoopHandler extends BaseEventHandler {
             loopId,
             iterationStatus: staleIterStatus,
           });
+          // Clean up tracking before returning
+          this.cleanupPipelineTaskTracking(iteration);
+          this.taskToLoop.delete(taskId);
+          this.cleanupPipelineTasks(loopId, iteration.iterationNumber);
           return ok(undefined);
         }
         const freshIteration = freshIterationResult.value;
