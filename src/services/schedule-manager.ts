@@ -482,9 +482,11 @@ export class ScheduleManagerService implements ScheduleService {
     const { scheduledAtMs, expiresAtMs, nextRunAt, timezone } = timingResult.value;
 
     // Validate loopConfig basics
-    if (!request.loopConfig.exitCondition || request.loopConfig.exitCondition.trim().length === 0) {
+    // exitCondition is only required for shell eval mode; agent mode evaluates via LLM review
+    const evalMode = request.loopConfig.evalMode ?? 'shell';
+    if (evalMode === 'shell' && (!request.loopConfig.exitCondition || request.loopConfig.exitCondition.trim().length === 0)) {
       return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, 'loopConfig.exitCondition is required', {
+        new AutobeatError(ErrorCode.INVALID_INPUT, 'loopConfig.exitCondition is required for shell eval mode', {
           field: 'loopConfig.exitCondition',
         }),
       );
