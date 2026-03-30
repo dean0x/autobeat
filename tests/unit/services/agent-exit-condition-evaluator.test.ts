@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Loop } from '../../../src/core/domain.js';
-import { createLoop, LoopStrategy, OptimizeDirection, TaskId } from '../../../src/core/domain.js';
+import { createLoop, LoopId, LoopStrategy, OptimizeDirection, TaskId } from '../../../src/core/domain.js';
 import type { EvalResult, LoopRepository, OutputRepository } from '../../../src/core/interfaces.js';
 import { ok, err } from '../../../src/core/result.js';
 import { AgentExitConditionEvaluator } from '../../../src/services/agent-exit-condition-evaluator.js';
@@ -470,6 +470,90 @@ describe('AgentExitConditionEvaluator', () => {
       const result = await evalPromise;
       expect(result.passed).toBe(false);
       expect(result.error).toContain('timed out');
+    });
+
+    it('emits TaskCancellationRequested for eval task when parent loop is cancelled', async () => {
+      // Regression: eval task was orphaned when LoopCancelled fired during eval wait.
+      // The eval task is not in LoopHandler.taskToLoop by design, so handleLoopCancelled
+      // cannot reach it. AgentExitConditionEvaluator must self-cancel on LoopCancelled.
+      const loop = createTestLoop({ strategy: LoopStrategy.RETRY });
+      const outputRepo = createOutputRepo(['PASS']);
+      const loopRepo = createLoopRepo();
+      const evaluator = new AgentExitConditionEvaluator(eventBus, outputRepo, loopRepo, logger);
+
+      let capturedEvalTaskId: string | undefined;
+      const cancellationRequests: string[] = [];
+      const origEmit = eventBus.emit.bind(eventBus);
+      vi.spyOn(eventBus, 'emit').mockImplementation(async (type: string, payload: unknown) => {
+        if (type === 'TaskDelegated') {
+          capturedEvalTaskId = (payload as { task: { id: string } }).task.id;
+        }
+        if (type === 'TaskCancellationRequested') {
+          cancellationRequests.push((payload as { taskId: string }).taskId);
+        }
+        return origEmit(type as never, payload as never);
+      });
+
+      const evalPromise = evaluator.evaluate(loop, workTaskId);
+      await new Promise((r) => setImmediate(r));
+
+      // Simulate loop cancellation while eval is in-flight
+      await eventBus.emit('LoopCancelled', { loopId: loop.id, reason: 'user cancelled' });
+
+      // Give the LoopCancelled handler a tick to emit TaskCancellationRequested
+      await new Promise((r) => setImmediate(r));
+
+      // Verify TaskCancellationRequested was emitted for the eval task
+      expect(capturedEvalTaskId).toBeDefined();
+      expect(cancellationRequests).toContain(capturedEvalTaskId);
+
+      // Now simulate the TaskCancelled arriving (as WorkerHandler would emit after receiving
+      // TaskCancellationRequested) so the promise resolves and the test can complete
+      if (capturedEvalTaskId) {
+        await simulateEvalTaskCancelled(eventBus, capturedEvalTaskId);
+      }
+
+      const result = await evalPromise;
+      expect(result.passed).toBe(false);
+      expect(result.error).toContain('cancelled');
+    });
+
+    it('does not emit TaskCancellationRequested when a different loop is cancelled', async () => {
+      const loop = createTestLoop({ strategy: LoopStrategy.RETRY });
+      const outputRepo = createOutputRepo(['PASS']);
+      const loopRepo = createLoopRepo();
+      const evaluator = new AgentExitConditionEvaluator(eventBus, outputRepo, loopRepo, logger);
+
+      let capturedEvalTaskId: string | undefined;
+      const cancellationRequests: string[] = [];
+      const origEmit = eventBus.emit.bind(eventBus);
+      vi.spyOn(eventBus, 'emit').mockImplementation(async (type: string, payload: unknown) => {
+        if (type === 'TaskDelegated') {
+          capturedEvalTaskId = (payload as { task: { id: string } }).task.id;
+        }
+        if (type === 'TaskCancellationRequested') {
+          cancellationRequests.push((payload as { taskId: string }).taskId);
+        }
+        return origEmit(type as never, payload as never);
+      });
+
+      const evalPromise = evaluator.evaluate(loop, workTaskId);
+      await new Promise((r) => setImmediate(r));
+
+      // Cancel a DIFFERENT loop — should not affect this eval task
+      const otherLoopId = LoopId('loop-other-id');
+      await eventBus.emit('LoopCancelled', { loopId: otherLoopId, reason: 'user cancelled' });
+      await new Promise((r) => setImmediate(r));
+
+      // No cancellation should have been requested for the eval task
+      expect(cancellationRequests).not.toContain(capturedEvalTaskId);
+
+      // Complete the eval normally so the test can exit
+      if (capturedEvalTaskId) {
+        await simulateEvalTaskComplete(eventBus, capturedEvalTaskId);
+      }
+
+      await evalPromise;
     });
   });
 

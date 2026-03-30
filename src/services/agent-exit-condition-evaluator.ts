@@ -5,10 +5,11 @@
  * Rationale: Enables code-comprehension-based evaluation that shell commands cannot perform
  */
 
-import type { Loop, TaskId } from '../core/domain.js';
+import type { Loop, LoopId, TaskId } from '../core/domain.js';
 import { createTask, LoopStrategy } from '../core/domain.js';
 import { EventBus } from '../core/events/event-bus.js';
 import type {
+  LoopCancelledEvent,
   TaskCancelledEvent,
   TaskCompletedEvent,
   TaskFailedEvent,
@@ -28,10 +29,12 @@ type TaskCompletionStatus =
   | { type: 'timeout' }
   | { type: 'cancelled' };
 
+const MAX_FEEDBACK_LENGTH = 16_000;
+
 export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
   constructor(
     private readonly eventBus: EventBus,
-    private readonly outputRepository: OutputRepository,
+    private readonly outputRepo: OutputRepository,
     private readonly loopRepo: LoopRepository,
     private readonly logger: Logger,
   ) {}
@@ -61,7 +64,7 @@ export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
     });
 
     // Set up completion listener BEFORE emitting to prevent race conditions
-    const completionPromise = this.waitForTaskCompletion(evalTaskId, loop.evalTimeout);
+    const completionPromise = this.waitForTaskCompletion(evalTaskId, loop.evalTimeout, loop.id);
 
     const emitResult = await this.eventBus.emit('TaskDelegated', { task: evalTask });
     if (!emitResult.ok) {
@@ -100,7 +103,7 @@ export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
       return { passed: false, error: errorMsg };
     }
 
-    const outputResult = await this.outputRepository.get(evalTaskId);
+    const outputResult = await this.outputRepo.get(evalTaskId);
     if (!outputResult.ok || !outputResult.value) {
       this.logger.warn('Failed to read eval task output', {
         loopId: loop.id,
@@ -111,9 +114,9 @@ export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
     }
 
     const output = outputResult.value;
-    const fullText = [...output.stdout, ...output.stderr].join('\n');
+    const lines = [...output.stdout, ...output.stderr];
 
-    return this.parseEvalOutput(fullText, loop.strategy);
+    return this.parseEvalOutput(lines, loop.strategy);
   }
 
   /**
@@ -143,6 +146,8 @@ export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
 
     return `${header}
 
+IMPORTANT: Do NOT modify any files. You are an evaluator — read and assess only.
+
 Working directory: ${loop.workingDirectory}
 Iteration: ${loop.currentIteration}
 Task ID: ${taskId}
@@ -152,9 +157,16 @@ ${instructions}`;
 
   /**
    * Wait for eval task to reach a terminal state.
+   * Subscribes to LoopCancelled so that if the parent loop is cancelled while this
+   * eval is in-flight, the eval task gets a TaskCancellationRequested immediately
+   * rather than running until evalTimeout as an orphan consuming a worker slot.
    * Uses .unref() on timer to not block process exit.
    */
-  private waitForTaskCompletion(evalTaskId: TaskId, evalTimeout: number): Promise<TaskCompletionStatus> {
+  private waitForTaskCompletion(
+    evalTaskId: TaskId,
+    evalTimeout: number,
+    loopId: LoopId,
+  ): Promise<TaskCompletionStatus> {
     return new Promise((resolve) => {
       const subscriptionIds: string[] = [];
       let resolved = false;
@@ -197,10 +209,32 @@ ${instructions}`;
         }
       });
 
+      // Cancel the orphaned eval task when the parent loop is cancelled.
+      // The eval task is not tracked in LoopHandler.taskToLoop by design, so
+      // handleLoopCancelled cannot reach it. We detect the cancellation here
+      // and emit TaskCancellationRequested to free the worker slot immediately.
+      const loopCancelledSub = this.eventBus.subscribe<LoopCancelledEvent>(
+        'LoopCancelled',
+        async (event) => {
+          if (event.loopId !== loopId) return;
+          this.logger.info('Loop cancelled while eval task running — cancelling eval task', {
+            loopId,
+            evalTaskId,
+          });
+          await this.eventBus.emit('TaskCancellationRequested', {
+            taskId: evalTaskId,
+            reason: `Loop ${loopId} cancelled`,
+          });
+          // resolveOnce will fire once TaskCancelled arrives for evalTaskId above.
+          // Do not resolve here to avoid double-resolve ordering issues.
+        },
+      );
+
       if (completedSub.ok) subscriptionIds.push(completedSub.value);
       if (failedSub.ok) subscriptionIds.push(failedSub.value);
       if (cancelledSub.ok) subscriptionIds.push(cancelledSub.value);
       if (timeoutSub.ok) subscriptionIds.push(timeoutSub.value);
+      if (loopCancelledSub.ok) subscriptionIds.push(loopCancelledSub.value);
 
       // Fallback timer: evalTimeout + 5000ms grace period
       const timer = setTimeout(() => {
@@ -220,10 +254,10 @@ ${instructions}`;
    * Parse eval agent output into EvalResult.
    * For retry: last non-empty line must be PASS or FAIL.
    * For optimize: last non-empty line must be a finite number.
-   * Everything before the last line is captured as feedback.
+   * Everything before the last line is captured as feedback, capped at MAX_FEEDBACK_LENGTH.
    */
-  private parseEvalOutput(output: string, strategy: LoopStrategy): EvalResult {
-    const lines = output.split('\n').filter((line) => line.trim().length > 0);
+  private parseEvalOutput(rawLines: string[], strategy: LoopStrategy): EvalResult {
+    const lines = rawLines.filter((line) => line.trim().length > 0);
 
     if (lines.length === 0) {
       return { passed: false, error: 'Eval agent produced no output' };
@@ -232,7 +266,11 @@ ${instructions}`;
     const lastLine = lines[lines.length - 1].trim();
     // Everything before the last line (if any) as feedback
     const feedbackLines = lines.slice(0, -1);
-    const feedback = feedbackLines.length > 0 ? feedbackLines.join('\n') : undefined;
+    let feedback: string | undefined;
+    if (feedbackLines.length > 0) {
+      const joined = feedbackLines.join('\n');
+      feedback = joined.length > MAX_FEEDBACK_LENGTH ? joined.slice(0, MAX_FEEDBACK_LENGTH) : joined;
+    }
 
     if (strategy === LoopStrategy.RETRY) {
       if (lastLine === 'PASS') {
