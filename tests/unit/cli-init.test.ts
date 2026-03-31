@@ -7,7 +7,14 @@
 
 import { describe, expect, it } from 'vitest';
 import type { InitDeps, InitOptions } from '../../src/cli/commands/init';
-import { parseInitArgs, parseSkillsAgents, runInit } from '../../src/cli/commands/init';
+import {
+  AGENT_SKILL_DIRS,
+  defaultSkillsExist,
+  getSkillTargetDirs,
+  parseInitArgs,
+  parseSkillsAgents,
+  runInit,
+} from '../../src/cli/commands/init';
 import type { AgentAuthStatus, AgentProvider } from '../../src/core/agents';
 import { AGENT_PROVIDERS } from '../../src/core/agents';
 
@@ -577,5 +584,68 @@ describe('runInit — skill install (non-interactive)', () => {
     expect(updatePrompted).toBe(false);
     expect(copyCalled).toBe(true);
     expect(result).toMatchObject({ code: 0, agent: 'claude', skillPaths: expect.any(Array) });
+  });
+});
+
+// ============================================================================
+// AGENT_SKILL_DIRS
+// ============================================================================
+
+describe('AGENT_SKILL_DIRS', () => {
+  it('should map Claude to .claude/skills/autobeat', () => {
+    expect(AGENT_SKILL_DIRS.claude).toEqual(['.claude/skills/autobeat']);
+  });
+
+  it('should map Codex to .agents/skills/autobeat', () => {
+    expect(AGENT_SKILL_DIRS.codex).toEqual(['.agents/skills/autobeat']);
+  });
+
+  it('should map Gemini to both .gemini/ and .agents/', () => {
+    expect(AGENT_SKILL_DIRS.gemini).toEqual(['.gemini/skills/autobeat', '.agents/skills/autobeat']);
+  });
+
+  it('should have non-empty entries for all providers', () => {
+    for (const provider of AGENT_PROVIDERS) {
+      expect(AGENT_SKILL_DIRS[provider].length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ============================================================================
+// getSkillTargetDirs
+// ============================================================================
+
+describe('getSkillTargetDirs', () => {
+  it('should return correct absolute path for single agent', () => {
+    const dirs = getSkillTargetDirs(['claude'], '/project');
+    expect(dirs).toEqual(['/project/.claude/skills/autobeat']);
+  });
+
+  it('should deduplicate .agents/ when codex and gemini both target it', () => {
+    const dirs = getSkillTargetDirs(['codex', 'gemini'], '/project');
+    // codex → .agents/, gemini → .gemini/ + .agents/ (deduped) → 2 dirs, not 3
+    expect(dirs).toHaveLength(2);
+    expect(dirs).toContain('/project/.agents/skills/autobeat');
+    expect(dirs).toContain('/project/.gemini/skills/autobeat');
+  });
+
+  it('should return 3 unique dirs for all three agents', () => {
+    const dirs = getSkillTargetDirs(['claude', 'codex', 'gemini'], '/project');
+    expect(dirs).toHaveLength(3);
+    expect(new Set(dirs).size).toBe(3);
+  });
+
+  it('should return empty array for empty agents', () => {
+    expect(getSkillTargetDirs([], '/project')).toEqual([]);
+  });
+});
+
+// ============================================================================
+// defaultSkillsExist
+// ============================================================================
+
+describe('defaultSkillsExist', () => {
+  it('should return false for non-existent project path', () => {
+    expect(defaultSkillsExist(['claude'], '/nonexistent/path/that/does/not/exist')).toBe(false);
   });
 });

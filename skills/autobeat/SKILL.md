@@ -99,6 +99,8 @@ Should it run on a schedule?
 | `OrchestratorStatus` | Check orchestration progress |
 | `ListOrchestrators` | List orchestrations |
 | `CancelOrchestrator` | Cancel an orchestration |
+| `ListAgents` | List available agents with auth status |
+| `ConfigureAgent` | Check auth, store/reset API keys |
 
 ### CLI Commands
 

@@ -114,7 +114,7 @@ Get details of a specific schedule.
 |-----------|------|----------|---------|-------------|
 | `scheduleId` | string | Yes | — | Schedule ID |
 | `includeHistory` | boolean | No | false | Include execution history |
-| `historyLimit` | number | No | — | Max history entries |
+| `historyLimit` | number | No | 10 | Max history entries |
 
 ### CancelSchedule
 
@@ -309,6 +309,16 @@ Cancel an active orchestration.
 ### ListAgents
 
 List available AI agents with registration and auth status. No parameters.
+
+### ConfigureAgent
+
+Check auth status, store API key, or reset stored key for an agent.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `agent` | string | Yes | — | Agent provider (claude, codex, gemini) |
+| `action` | string | No | check | set, check, or reset |
+| `apiKey` | string | No | — | API key to store (required for set action) |
 
 ## CLI Commands
 
