@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { InitDeps, InitOptions } from '../../src/cli/commands/init';
-import { parseInitArgs, runInit } from '../../src/cli/commands/init';
+import { parseInitArgs, parseSkillsAgents, runInit } from '../../src/cli/commands/init';
 import type { AgentAuthStatus, AgentProvider } from '../../src/core/agents';
 import { AGENT_PROVIDERS } from '../../src/core/agents';
 
@@ -35,6 +35,17 @@ function makeDeps(overrides: Partial<InitDeps> = {}): InitDeps {
     isTTY: true,
     ...overrides,
   };
+}
+
+function makeSkillDeps(overrides: Partial<InitDeps> = {}): InitDeps {
+  return makeDeps({
+    confirmSkillInstall: async () => true,
+    selectSkillAgents: async () => ['claude'],
+    copySkills: () => ({ ok: true, paths: ['/project/.claude/skills/autobeat'] }),
+    skillsExist: () => false,
+    confirmSkillUpdate: async () => true,
+    ...overrides,
+  });
 }
 
 // ============================================================================
@@ -76,6 +87,54 @@ describe('parseInitArgs', () => {
 
   it('should parse combined flags', () => {
     expect(parseInitArgs(['-a', 'gemini', '-y'])).toEqual({ agent: 'gemini', yes: true });
+  });
+
+  it('should parse --install-skills flag', () => {
+    expect(parseInitArgs(['--install-skills'])).toEqual({ installSkills: true });
+  });
+
+  it('should parse --skills-agents flag', () => {
+    expect(parseInitArgs(['--skills-agents', 'claude,codex'])).toEqual({ skillsAgents: 'claude,codex' });
+  });
+
+  it('should parse --skills-agents=value syntax', () => {
+    expect(parseInitArgs(['--skills-agents=claude,gemini'])).toEqual({ skillsAgents: 'claude,gemini' });
+  });
+
+  it('should parse combined --agent --install-skills --skills-agents', () => {
+    expect(parseInitArgs(['--agent', 'claude', '--install-skills', '--skills-agents', 'claude,codex'])).toEqual({
+      agent: 'claude',
+      installSkills: true,
+      skillsAgents: 'claude,codex',
+    });
+  });
+});
+
+// ============================================================================
+// parseSkillsAgents
+// ============================================================================
+
+describe('parseSkillsAgents', () => {
+  it('should parse valid single agent', () => {
+    expect(parseSkillsAgents('claude')).toEqual(['claude']);
+  });
+
+  it('should parse valid comma-separated agents', () => {
+    expect(parseSkillsAgents('claude,codex,gemini')).toEqual(['claude', 'codex', 'gemini']);
+  });
+
+  it('should trim whitespace', () => {
+    expect(parseSkillsAgents('claude , codex')).toEqual(['claude', 'codex']);
+  });
+
+  it('should reject unknown agent', () => {
+    const result = parseSkillsAgents('claude,gpt4');
+    expect(typeof result).toBe('string');
+    expect(result).toContain('gpt4');
+  });
+
+  it('should filter empty strings', () => {
+    expect(parseSkillsAgents('claude,,codex')).toEqual(['claude', 'codex']);
   });
 });
 
@@ -270,5 +329,249 @@ describe('runInit — interactive', () => {
     const result = await runInit({}, deps);
 
     expect(result).toEqual({ code: 1, reason: 'Permission denied' });
+  });
+});
+
+// ============================================================================
+// runInit — Skill Install (interactive)
+// ============================================================================
+
+describe('runInit — skill install (interactive)', () => {
+  it('should install skills after agent selection', async () => {
+    let copiedAgents: readonly AgentProvider[] | undefined;
+    let copiedRoot: string | undefined;
+
+    const deps = makeSkillDeps({
+      copySkills(agents, projectRoot) {
+        copiedAgents = agents;
+        copiedRoot = projectRoot;
+        return { ok: true, paths: ['/project/.claude/skills/autobeat'] };
+      },
+    });
+
+    const result = await runInit({}, deps);
+
+    expect(result).toMatchObject({ code: 0, agent: 'claude' });
+    expect('skillPaths' in result && result.skillPaths).toEqual(['/project/.claude/skills/autobeat']);
+    expect(copiedAgents).toEqual(['claude']);
+    expect(copiedRoot).toBe(process.cwd());
+  });
+
+  it('should pass default agent to selectSkillAgents', async () => {
+    let receivedDefault: AgentProvider | undefined;
+
+    const deps = makeSkillDeps({
+      selectAgent: async () => 'gemini',
+      async selectSkillAgents(defaultAgent) {
+        receivedDefault = defaultAgent;
+        return ['gemini'];
+      },
+    });
+
+    await runInit({}, deps);
+
+    expect(receivedDefault).toBe('gemini');
+  });
+
+  it('should skip skill install when user declines confirm', async () => {
+    let copyCalled = false;
+
+    const deps = makeSkillDeps({
+      confirmSkillInstall: async () => false,
+      copySkills() {
+        copyCalled = true;
+        return { ok: true, paths: [] };
+      },
+    });
+
+    const result = await runInit({}, deps);
+
+    expect(copyCalled).toBe(false);
+    expect(result).toMatchObject({ code: 0, agent: 'claude' });
+    expect('skillPaths' in result).toBe(false);
+  });
+
+  it('should handle cancelled skill agent selection', async () => {
+    const deps = makeSkillDeps({
+      selectSkillAgents: async () => 'cancelled',
+    });
+
+    const result = await runInit({}, deps);
+
+    // Agent selection succeeded, skill cancelled — returns agent result without skills
+    expect(result).toMatchObject({ code: 0, agent: 'claude' });
+    expect('skillPaths' in result).toBe(false);
+  });
+
+  it('should handle cancelled skill confirm', async () => {
+    const deps = makeSkillDeps({
+      confirmSkillInstall: async () => 'cancelled',
+    });
+
+    const result = await runInit({}, deps);
+
+    expect(result).toMatchObject({ code: 0, agent: 'claude' });
+    expect('skillPaths' in result).toBe(false);
+  });
+
+  it('should prompt for update when skills already exist', async () => {
+    let updatePrompted = false;
+
+    const deps = makeSkillDeps({
+      skillsExist: () => true,
+      async confirmSkillUpdate() {
+        updatePrompted = true;
+        return true;
+      },
+    });
+
+    const result = await runInit({}, deps);
+
+    expect(updatePrompted).toBe(true);
+    expect(result).toMatchObject({ code: 0, agent: 'claude', skillPaths: expect.any(Array) });
+  });
+
+  it('should skip update when user declines', async () => {
+    let copyCalled = false;
+
+    const deps = makeSkillDeps({
+      skillsExist: () => true,
+      confirmSkillUpdate: async () => false,
+      copySkills() {
+        copyCalled = true;
+        return { ok: true, paths: [] };
+      },
+    });
+
+    const result = await runInit({}, deps);
+
+    expect(copyCalled).toBe(false);
+    expect(result).toMatchObject({ code: 0, agent: 'claude' });
+  });
+
+  it('should install for multiple agents', async () => {
+    let copiedAgents: readonly AgentProvider[] | undefined;
+
+    const deps = makeSkillDeps({
+      selectSkillAgents: async () => ['claude', 'codex', 'gemini'],
+      copySkills(agents) {
+        copiedAgents = agents;
+        return { ok: true, paths: [
+          '/project/.claude/skills/autobeat',
+          '/project/.agents/skills/autobeat',
+          '/project/.gemini/skills/autobeat',
+        ] };
+      },
+    });
+
+    const result = await runInit({}, deps);
+
+    expect(copiedAgents).toEqual(['claude', 'codex', 'gemini']);
+    expect('skillPaths' in result && result.skillPaths).toHaveLength(3);
+  });
+
+  it('should return error when copy fails', async () => {
+    const deps = makeSkillDeps({
+      copySkills: () => ({ ok: false, error: 'EACCES: permission denied' }),
+    });
+
+    const result = await runInit({}, deps);
+
+    expect(result).toEqual({ code: 1, reason: 'EACCES: permission denied' });
+  });
+});
+
+// ============================================================================
+// runInit — Skill Install (non-interactive)
+// ============================================================================
+
+describe('runInit — skill install (non-interactive)', () => {
+  it('should install skills with --agent --install-skills', async () => {
+    let copiedAgents: readonly AgentProvider[] | undefined;
+
+    const deps = makeSkillDeps({
+      isTTY: false,
+      copySkills(agents) {
+        copiedAgents = agents;
+        return { ok: true, paths: ['/project/.claude/skills/autobeat'] };
+      },
+    });
+
+    const result = await runInit({ agent: 'claude', installSkills: true }, deps);
+
+    expect(copiedAgents).toEqual(['claude']);
+    expect(result).toMatchObject({ code: 0, agent: 'claude', skillPaths: ['/project/.claude/skills/autobeat'] });
+  });
+
+  it('should install for explicit agents with --skills-agents', async () => {
+    let copiedAgents: readonly AgentProvider[] | undefined;
+
+    const deps = makeSkillDeps({
+      isTTY: false,
+      copySkills(agents) {
+        copiedAgents = agents;
+        return { ok: true, paths: [
+          '/project/.claude/skills/autobeat',
+          '/project/.agents/skills/autobeat',
+        ] };
+      },
+    });
+
+    const result = await runInit({ agent: 'claude', installSkills: true, skillsAgents: 'claude,codex' }, deps);
+
+    expect(copiedAgents).toEqual(['claude', 'codex']);
+    expect(result).toMatchObject({ code: 0, agent: 'claude', skillPaths: expect.any(Array) });
+  });
+
+  it('should reject invalid --skills-agents', async () => {
+    const deps = makeSkillDeps({ isTTY: false });
+
+    const result = await runInit({ agent: 'claude', installSkills: true, skillsAgents: 'claude,gpt4' }, deps);
+
+    expect(result).toMatchObject({ code: 1 });
+    expect('reason' in result && result.reason).toContain('gpt4');
+  });
+
+  it('should not install skills without --install-skills', async () => {
+    let copyCalled = false;
+
+    const deps = makeSkillDeps({
+      isTTY: false,
+      copySkills() {
+        copyCalled = true;
+        return { ok: true, paths: [] };
+      },
+    });
+
+    const result = await runInit({ agent: 'claude' }, deps);
+
+    expect(copyCalled).toBe(false);
+    expect(result).toMatchObject({ code: 0, agent: 'claude' });
+    expect('skillPaths' in result).toBe(false);
+  });
+
+  it('should auto-update with --yes when skills exist', async () => {
+    let updatePrompted = false;
+    let copyCalled = false;
+
+    const deps = makeSkillDeps({
+      isTTY: false,
+      skillsExist: () => true,
+      async confirmSkillUpdate() {
+        updatePrompted = true;
+        return true;
+      },
+      copySkills() {
+        copyCalled = true;
+        return { ok: true, paths: ['/project/.claude/skills/autobeat'] };
+      },
+    });
+
+    const result = await runInit({ agent: 'claude', installSkills: true, yes: true }, deps);
+
+    // --yes skips the update prompt
+    expect(updatePrompted).toBe(false);
+    expect(copyCalled).toBe(true);
+    expect(result).toMatchObject({ code: 0, agent: 'claude', skillPaths: expect.any(Array) });
   });
 });
