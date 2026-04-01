@@ -299,6 +299,7 @@ export class ScheduleManagerService implements ScheduleService {
         priority: request.priority,
         workingDirectory: validatedWorkingDirectory,
         agent: agentResult.value,
+        model: request.model,
       },
       pipelineSteps: normalizedSteps,
       scheduleType: request.scheduleType,
