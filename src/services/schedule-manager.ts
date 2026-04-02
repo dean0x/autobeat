@@ -500,7 +500,8 @@ export class ScheduleManagerService implements ScheduleService {
       );
     }
 
-    // Build the schedule with loopConfig and a placeholder taskTemplate
+    // Build the schedule with loopConfig (authoritative source) and a taskTemplate derived from it
+    // (Schedule type requires taskTemplate; used as fallback for workingDirectory in handleLoopTrigger)
     const schedule = createSchedule({
       taskTemplate: {
         prompt: request.loopConfig.prompt ?? '',
