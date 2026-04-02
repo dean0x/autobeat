@@ -756,6 +756,8 @@ export class MCPAdapter {
                   model: {
                     type: 'string',
                     description: 'Model override for this task (overrides agent-config default)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                 },
                 required: ['prompt', 'scheduleType'],
@@ -888,6 +890,8 @@ export class MCPAdapter {
                         model: {
                           type: 'string',
                           description: 'Model override for this step',
+                          minLength: 1,
+                          maxLength: 200,
                         },
                       },
                       required: ['prompt'],
@@ -912,6 +916,8 @@ export class MCPAdapter {
                   model: {
                     type: 'string',
                     description: 'Default model for all steps (individual steps can override)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                 },
                 required: ['steps'],
@@ -954,6 +960,8 @@ export class MCPAdapter {
                         model: {
                           type: 'string',
                           description: 'Model override for this step',
+                          minLength: 1,
+                          maxLength: 200,
                         },
                       },
                       required: ['prompt'],
@@ -1011,6 +1019,8 @@ export class MCPAdapter {
                   model: {
                     type: 'string',
                     description: 'Default model for all steps (individual steps can override)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                 },
                 required: ['steps', 'scheduleType'],
@@ -1105,6 +1115,8 @@ export class MCPAdapter {
                   model: {
                     type: 'string',
                     description: 'Model override for each iteration task (overrides agent-config default)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                   gitBranch: {
                     type: 'string',
@@ -1254,7 +1266,7 @@ export class MCPAdapter {
                   gitBranch: { type: 'string', description: 'Git branch name for loop iteration work' },
                   priority: { type: 'string', enum: ['P0', 'P1', 'P2'] },
                   agent: { type: 'string', enum: [...AGENT_PROVIDERS] },
-                  model: { type: 'string', description: 'Model override for each iteration task (overrides agent-config default)' },
+                  model: { type: 'string', description: 'Model override for each iteration task (overrides agent-config default)', minLength: 1, maxLength: 200 },
                   scheduleType: { type: 'string', enum: ['cron', 'one_time'] },
                   cronExpression: { type: 'string', description: 'Cron expression (5-field)' },
                   scheduledAt: { type: 'string', description: 'ISO 8601 datetime for one-time loops' },
@@ -1300,6 +1312,8 @@ export class MCPAdapter {
                   model: {
                     type: 'string',
                     description: 'Model override for the orchestrator (overrides agent-config default)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                   maxDepth: {
                     type: 'number',
@@ -1408,6 +1422,8 @@ export class MCPAdapter {
                   model: {
                     type: 'string',
                     description: 'Default model for this agent (set action, overridden by per-task model)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                 },
                 required: ['agent'],
@@ -2685,11 +2701,7 @@ export class MCPAdapter {
       const agentConfig = loadAgentConfig(provider);
       const authStatus = checkAgentAuth(provider, agentConfig.apiKey);
 
-      // Claude-specific: warn when baseUrl is configured without an API key
-      const claudeBaseUrlWarning =
-        provider === 'claude' && agentConfig.baseUrl && !agentConfig.apiKey
-          ? 'Warning: Claude requires an API key when using a custom baseUrl. The base URL will be ignored with login-based auth.'
-          : undefined;
+      const claudeBaseUrlWarning = this.getClaudeBaseUrlWarning(provider, agentConfig.baseUrl, agentConfig.apiKey);
 
       return {
         provider,
@@ -2926,6 +2938,18 @@ export class MCPAdapter {
   }
 
   /**
+   * Returns a warning string when Claude has a custom baseUrl configured without an API key.
+   * Login-based auth does not work with a custom baseUrl, so the setting will be silently
+   * ignored. Returns undefined for all other providers or when the condition is not met.
+   */
+  private getClaudeBaseUrlWarning(provider: string, baseUrl: string | undefined, apiKey: string | undefined): string | undefined {
+    if (provider === 'claude' && baseUrl && !apiKey) {
+      return 'Warning: Claude requires an API key when using a custom baseUrl. The base URL will be ignored with login-based auth.';
+    }
+    return undefined;
+  }
+
+  /**
    * Handle ConfigureAgent tool call
    * Actions: check auth status, set API key, reset stored key
    */
@@ -2957,18 +2981,25 @@ export class MCPAdapter {
         const agentConfig = loadAgentConfig(agent);
         const status = checkAgentAuth(agent, agentConfig.apiKey);
 
-        // Claude-specific: warn when baseUrl is configured without an API key
-        const checkPayload: Record<string, unknown> = {
+        interface CheckPayload {
+          success: boolean;
+          ready: boolean;
+          method: string;
+          hint?: string;
+          storedKey?: string;
+          baseUrl?: string;
+          model?: string;
+          warning?: string;
+        }
+        const checkWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
+        const checkPayload: CheckPayload = {
           success: true,
           ...status,
           ...(agentConfig.apiKey && { storedKey: maskApiKey(agentConfig.apiKey) }),
           ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
           ...(agentConfig.model && { model: agentConfig.model }),
+          ...(checkWarning && { warning: checkWarning }),
         };
-        if (agent === 'claude' && agentConfig.baseUrl && !agentConfig.apiKey) {
-          checkPayload.warning =
-            'Warning: Claude requires an API key when using a custom baseUrl. The base URL will be ignored with login-based auth.';
-        }
 
         return {
           content: [
@@ -2997,62 +3028,65 @@ export class MCPAdapter {
           };
         }
 
-        const messages: string[] = [];
+        // Perform all writes up-front to avoid partial-write: collect each
+        // result before returning so that a late failure reports which fields
+        // were already saved and which failed.
+        type WriteAttempt = { key: 'apiKey' | 'baseUrl' | 'model'; label: string; ok: boolean; error?: string };
+        const attempts: WriteAttempt[] = [];
 
         if (apiKey) {
           const result = saveAgentConfig(agent, 'apiKey', apiKey);
-          if (!result.ok) {
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error }, null, 2) }],
-              isError: true,
-            };
-          }
-          messages.push(`API key stored (${maskApiKey(apiKey)})`);
+          attempts.push({ key: 'apiKey', label: `API key stored (${maskApiKey(apiKey)})`, ok: result.ok, error: result.ok ? undefined : result.error });
         }
 
         if (baseUrl !== undefined) {
           const result = saveAgentConfig(agent, 'baseUrl', baseUrl);
-          if (!result.ok) {
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error }, null, 2) }],
-              isError: true,
-            };
-          }
-          messages.push(`baseUrl set to ${baseUrl}`);
+          attempts.push({ key: 'baseUrl', label: `baseUrl set to ${baseUrl}`, ok: result.ok, error: result.ok ? undefined : result.error });
         }
 
         if (model !== undefined) {
           const result = saveAgentConfig(agent, 'model', model);
-          if (!result.ok) {
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error }, null, 2) }],
-              isError: true,
-            };
-          }
-          messages.push(`model set to ${model}`);
+          attempts.push({ key: 'model', label: `model set to ${model}`, ok: result.ok, error: result.ok ? undefined : result.error });
         }
 
-        // Claude-specific: warn when baseUrl is configured without an API key
-        // (login-based auth does not work with a custom baseUrl)
-        const warningMessages: string[] = [];
-        if (agent === 'claude') {
-          const currentConfig = loadAgentConfig(agent);
-          const effectiveBaseUrl = baseUrl !== undefined ? baseUrl : currentConfig.baseUrl;
-          const effectiveApiKey = apiKey ?? currentConfig.apiKey;
-          if (effectiveBaseUrl && !effectiveApiKey) {
-            warningMessages.push(
-              'Warning: Claude requires an API key when using a custom baseUrl. The base URL will be ignored with login-based auth.',
-            );
-          }
+        const failed = attempts.filter((a) => !a.ok);
+        if (failed.length > 0) {
+          const saved = attempts.filter((a) => a.ok).map((a) => a.key);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    error: failed.map((a) => a.error).join('; '),
+                    ...(saved.length > 0 && { alreadySaved: saved }),
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+            isError: true,
+          };
         }
 
-        const responsePayload: Record<string, unknown> = {
+        // Compute Claude baseUrl warning using effective values after writes
+        const currentConfig = loadAgentConfig(agent);
+        const effectiveBaseUrl = baseUrl !== undefined ? baseUrl : currentConfig.baseUrl;
+        const effectiveApiKey = apiKey ?? currentConfig.apiKey;
+        const setWarning = this.getClaudeBaseUrlWarning(agent, effectiveBaseUrl, effectiveApiKey);
+
+        interface SetPayload {
+          success: boolean;
+          message: string;
+          warning?: string;
+        }
+        const responsePayload: SetPayload = {
           success: true,
-          message: `${agent}: ${messages.join(', ')}`,
+          message: `${agent}: ${attempts.map((a) => a.label).join(', ')}`,
+          ...(setWarning && { warning: setWarning }),
         };
-        if (warningMessages.length > 0) {
-          responsePayload.warning = warningMessages.join(' ');
-        }
 
         return {
           content: [
