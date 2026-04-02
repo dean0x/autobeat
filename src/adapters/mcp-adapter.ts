@@ -3018,7 +3018,7 @@ export class MCPAdapter {
               isError: true,
             };
           }
-          messages.push(baseUrl ? `baseUrl set to ${baseUrl}` : 'baseUrl cleared');
+          messages.push(`baseUrl set to ${baseUrl}`);
         }
 
         if (model !== undefined) {
@@ -3029,7 +3029,7 @@ export class MCPAdapter {
               isError: true,
             };
           }
-          messages.push(model ? `model set to ${model}` : 'model cleared');
+          messages.push(`model set to ${model}`);
         }
 
         // Claude-specific: warn when baseUrl is configured without an API key
