@@ -2,7 +2,8 @@
  * Claude Code agent adapter implementation
  *
  * ARCHITECTURE: Claude-specific logic on top of BaseAgentAdapter.
- * Includes prompt transformation for short commands and nesting prevention.
+ * Handles nesting prevention (strips CLAUDE_CODE_* env vars) and
+ * injects CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS when a baseUrl is active.
  */
 
 import { AgentProvider } from '../core/agents.js';

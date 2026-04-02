@@ -848,6 +848,36 @@ describe('TaskManagerService', () => {
         expect(result.value.retryOf).toBe(TaskId('retry-3'));
       });
     });
+
+    describe('model threading', () => {
+      it('should preserve model from original task on retry', async () => {
+        const failedTask = buildFailedTask({
+          id: TaskId('model-retry-1'),
+          model: 'claude-opus-4-5',
+        });
+        (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(failedTask));
+
+        const result = await service.retry(TaskId('model-retry-1'));
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.model).toBe('claude-opus-4-5');
+      });
+
+      it('should preserve undefined model from original task on retry', async () => {
+        const failedTask = buildFailedTask({
+          id: TaskId('model-retry-2'),
+          model: undefined,
+        });
+        (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(failedTask));
+
+        const result = await service.retry(TaskId('model-retry-2'));
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.model).toBeUndefined();
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1063,6 +1093,36 @@ describe('TaskManagerService', () => {
       });
 
       expect(result.ok).toBe(false);
+    });
+
+    describe('model threading', () => {
+      it('should preserve model from original task on resume', async () => {
+        const failed = buildFailedTask({
+          id: TaskId('model-resume-1'),
+          model: 'claude-opus-4-5',
+        });
+        (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(failed));
+
+        const result = await svcWithCheckpoint.resume({ taskId: TaskId('model-resume-1') });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.model).toBe('claude-opus-4-5');
+      });
+
+      it('should preserve undefined model from original task on resume', async () => {
+        const failed = buildFailedTask({
+          id: TaskId('model-resume-2'),
+          model: undefined,
+        });
+        (taskRepo.findById as ReturnType<typeof vi.fn>).mockResolvedValue(ok(failed));
+
+        const result = await svcWithCheckpoint.resume({ taskId: TaskId('model-resume-2') });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.value.model).toBeUndefined();
+      });
     });
   });
 });

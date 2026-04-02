@@ -258,6 +258,26 @@ describe('ScheduleManagerService - Unit Tests', () => {
       if (!result.ok) return;
       expect(result.value.maxRuns).toBe(5);
     });
+
+    it('should thread model into taskTemplate when provided', async () => {
+      const request = cronRequest({ model: 'claude-opus-4-5' });
+
+      const result = await service.createSchedule(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.model).toBe('claude-opus-4-5');
+    });
+
+    it('should leave model undefined in taskTemplate when not provided', async () => {
+      const request = cronRequest();
+
+      const result = await service.createSchedule(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.model).toBeUndefined();
+    });
   });
 
   describe('listSchedules()', () => {
@@ -770,6 +790,32 @@ describe('ScheduleManagerService - Unit Tests', () => {
       expect(result.ok).toBe(true);
       expect(eventBus.getEventCount('ScheduleCreated')).toBe(3);
     });
+
+    it('should thread shared model to all steps as default', async () => {
+      const result = await service.createPipeline(pipelineRequest({ model: 'claude-opus-4-5' }));
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const events = eventBus.getEmittedEvents('ScheduleCreated');
+      for (const event of events) {
+        expect(event.schedule.taskTemplate.model).toBe('claude-opus-4-5');
+      }
+    });
+
+    it('should allow per-step model override', async () => {
+      const result = await service.createPipeline({
+        steps: [{ prompt: 'Step one', model: 'claude-haiku-3' }, { prompt: 'Step two' }],
+        model: 'claude-opus-4-5',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const events = eventBus.getEmittedEvents('ScheduleCreated');
+      expect(events[0].schedule.taskTemplate.model).toBe('claude-haiku-3');
+      expect(events[1].schedule.taskTemplate.model).toBe('claude-opus-4-5');
+    });
   });
 
   describe('createScheduledPipeline()', () => {
@@ -1111,6 +1157,35 @@ describe('ScheduleManagerService - Unit Tests', () => {
       if (!result.ok) return;
       expect(result.value.nextRunAt).toBeDefined();
       expect(typeof result.value.nextRunAt).toBe('number');
+    });
+
+    it('should thread model into taskTemplate and loopConfig when provided', async () => {
+      const request = scheduledLoopRequest({
+        loopConfig: {
+          prompt: 'Fix failing tests',
+          strategy: LoopStrategy.RETRY,
+          exitCondition: 'npm test',
+          model: 'claude-opus-4-5',
+        },
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.model).toBe('claude-opus-4-5');
+      expect(result.value.loopConfig!.model).toBe('claude-opus-4-5');
+    });
+
+    it('should leave model undefined when not provided in loopConfig', async () => {
+      const request = scheduledLoopRequest();
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.model).toBeUndefined();
+      expect(result.value.loopConfig!.model).toBeUndefined();
     });
   });
 });
