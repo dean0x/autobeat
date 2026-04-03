@@ -97,6 +97,7 @@ interface OrchestrateCreateParsed {
   readonly goal: string;
   readonly workingDirectory?: string;
   readonly agent?: AgentProvider;
+  readonly model?: string;
   readonly maxDepth?: number;
   readonly maxWorkers?: number;
   readonly maxIterations?: number;
@@ -128,6 +129,7 @@ type OrchestrateParsed =
 export function parseOrchestrateCreateArgs(args: readonly string[]): Result<OrchestrateCreateParsed, string> {
   let workingDirectory: string | undefined;
   let agent: AgentProvider | undefined;
+  let model: string | undefined;
   let maxDepth: number | undefined;
   let maxWorkers: number | undefined;
   let maxIterations: number | undefined;
@@ -149,6 +151,11 @@ export function parseOrchestrateCreateArgs(args: readonly string[]): Result<Orch
       if (!next || next.startsWith('-')) return err(`--agent requires a name (${AGENT_PROVIDERS.join(', ')})`);
       if (!isAgentProvider(next)) return err(`Unknown agent: "${next}". Available: ${AGENT_PROVIDERS.join(', ')}`);
       agent = next;
+      i++;
+    } else if (arg === '--model' || arg === '-m') {
+      const next = args[i + 1];
+      if (!next || next.startsWith('-')) return err('--model requires a model name (e.g. claude-opus-4-5)');
+      model = next;
       i++;
     } else if (arg === '--max-depth') {
       const parsed = parseIntFlag('--max-depth', args[i + 1], 1, 10);
@@ -180,6 +187,7 @@ export function parseOrchestrateCreateArgs(args: readonly string[]): Result<Orch
     goal,
     workingDirectory,
     agent,
+    model,
     maxDepth,
     maxWorkers,
     maxIterations,
@@ -288,6 +296,7 @@ async function handleOrchestrateForeground(parsed: OrchestrateCreateParsed): Pro
       goal: parsed.goal,
       workingDirectory: parsed.workingDirectory,
       agent: parsed.agent,
+      model: parsed.model,
       maxDepth: parsed.maxDepth,
       maxWorkers: parsed.maxWorkers,
       maxIterations: parsed.maxIterations,
@@ -377,6 +386,7 @@ async function handleOrchestrateStatus(orchestratorId: string): Promise<void> {
         stateFilePath: o.stateFilePath,
         workingDirectory: o.workingDirectory,
         agent: o.agent,
+        ...(o.model && { model: o.model }),
         maxDepth: o.maxDepth,
         maxWorkers: o.maxWorkers,
         maxIterations: o.maxIterations,
@@ -497,6 +507,7 @@ export async function handleOrchestrateCommand(
         '  -f, --foreground               Block and wait for completion',
         '  -w, --working-directory DIR    Working directory for workers',
         '  -a, --agent AGENT              AI agent (claude, codex, gemini)',
+        '  -m, --model MODEL              Model override (e.g. claude-opus-4-5)',
         '  --max-depth N                  Max delegation depth (1-10, default: 3)',
         '  --max-workers N                Max concurrent workers (1-20, default: 5)',
         '  --max-iterations N             Max orchestrator iterations (1-200, default: 50)',

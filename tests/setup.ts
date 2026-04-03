@@ -9,19 +9,15 @@
  * Example:
  * TEST_ENV=performance npm test -- tests/performance/
  *
- * @see tests/unit/implementations/process-spawner.test.ts for resource cleanup example
  */
 
 import { afterAll, beforeAll } from 'vitest';
 import { InMemoryEventBus } from '../src/core/events/event-bus';
 import type { Database } from '../src/implementations/database';
-import type { ClaudeProcessSpawner } from '../src/implementations/process-spawner';
-
 // Define types for resources that need cleanup
 interface TestResources {
   eventBuses: Set<InMemoryEventBus>;
   databases: Set<Database>;
-  processSpawners: Set<ClaudeProcessSpawner>;
   intervals: Set<NodeJS.Timeout>;
   timeouts: Set<NodeJS.Timeout>;
 }
@@ -30,7 +26,6 @@ interface TestResources {
 const activeResources: TestResources = {
   eventBuses: new Set<InMemoryEventBus>(),
   databases: new Set<Database>(),
-  processSpawners: new Set<ClaudeProcessSpawner>(),
   intervals: new Set<NodeJS.Timeout>(),
   timeouts: new Set<NodeJS.Timeout>(),
 };
@@ -162,19 +157,6 @@ afterAll(() => {
   }
   activeResources.databases.clear();
 
-  // Dispose all process spawners
-  for (const spawner of activeResources.processSpawners) {
-    try {
-      if (spawner.dispose) {
-        spawner.dispose();
-      }
-    } catch (error) {
-      cleanupErrors.push(new Error(`Failed to dispose process spawner: ${error}`));
-      console.error('Failed to dispose process spawner:', error);
-    }
-  }
-  activeResources.processSpawners.clear();
-
   // Force garbage collection if available
   if (global.gc) {
     try {
@@ -197,8 +179,8 @@ afterAll(() => {
 
 // Export helper to register resources for cleanup
 export function registerForCleanup(
-  resource: InMemoryEventBus | Database | ClaudeProcessSpawner,
-  type: 'eventBus' | 'database' | 'spawner',
+  resource: InMemoryEventBus | Database,
+  type: 'eventBus' | 'database',
 ): void {
   switch (type) {
     case 'eventBus':
@@ -206,9 +188,6 @@ export function registerForCleanup(
       break;
     case 'database':
       activeResources.databases.add(resource as Database);
-      break;
-    case 'spawner':
-      activeResources.processSpawners.add(resource as ClaudeProcessSpawner);
       break;
   }
 }

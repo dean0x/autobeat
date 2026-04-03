@@ -71,6 +71,7 @@ export class ScheduleManagerService implements ScheduleService {
         priority: request.priority,
         workingDirectory: validatedWorkingDirectory,
         agent: agentResult.value,
+        model: request.model,
       },
       scheduleType: request.scheduleType,
       cronExpression: request.cronExpression,
@@ -298,6 +299,7 @@ export class ScheduleManagerService implements ScheduleService {
         priority: request.priority,
         workingDirectory: validatedWorkingDirectory,
         agent: agentResult.value,
+        model: request.model,
       },
       pipelineSteps: normalizedSteps,
       scheduleType: request.scheduleType,
@@ -364,6 +366,7 @@ export class ScheduleManagerService implements ScheduleService {
         workingDirectory: step.workingDirectory ?? request.workingDirectory,
         afterScheduleId: previousScheduleId,
         agent: step.agent ?? request.agent,
+        model: step.model ?? request.model,
       });
 
       if (!result.ok) {
@@ -497,13 +500,15 @@ export class ScheduleManagerService implements ScheduleService {
       );
     }
 
-    // Build the schedule with loopConfig and a placeholder taskTemplate
+    // Build the schedule with loopConfig (authoritative source) and a taskTemplate derived from it
+    // (Schedule type requires taskTemplate; used as fallback for workingDirectory in handleLoopTrigger)
     const schedule = createSchedule({
       taskTemplate: {
         prompt: request.loopConfig.prompt ?? '',
         priority: request.loopConfig.priority,
         workingDirectory: request.loopConfig.workingDirectory,
         agent: request.loopConfig.agent,
+        model: request.loopConfig.model,
       },
       scheduleType: request.scheduleType,
       cronExpression: request.cronExpression,

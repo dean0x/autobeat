@@ -88,7 +88,6 @@ import { SQLiteLoopRepository } from './implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from './implementations/orchestration-repository.js';
 import { BufferedOutputCapture } from './implementations/output-capture.js';
 import { SQLiteOutputRepository } from './implementations/output-repository.js';
-import { ClaudeProcessSpawner } from './implementations/process-spawner.js';
 import { ProcessSpawnerAdapter } from './implementations/process-spawner-adapter.js';
 import { SystemResourceMonitor } from './implementations/resource-monitor.js';
 import { SQLiteScheduleRepository } from './implementations/schedule-repository.js';
@@ -318,18 +317,6 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register core services
   container.registerSingleton('taskQueue', () => new PriorityTaskQueue());
-
-  container.registerSingleton('processSpawner', () => {
-    // Use injected ProcessSpawner if provided (for testing)
-    if (options.processSpawner) {
-      logger.info('Using injected ProcessSpawner');
-      return options.processSpawner;
-    }
-
-    const configResult = container.get<Configuration>('config');
-    if (!configResult.ok) throw new Error('Config required for ProcessSpawner');
-    return new ClaudeProcessSpawner(configResult.value, 'claude');
-  });
 
   // Register AgentRegistry for multi-agent support (v0.5.0)
   // ARCHITECTURE: If a custom ProcessSpawner is injected (tests), wrap it in a

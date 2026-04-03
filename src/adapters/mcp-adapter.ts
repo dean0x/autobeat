@@ -62,6 +62,7 @@ const DelegateTaskSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('AI agent to execute the task (uses configured default if omitted)'),
+  model: z.string().min(1).max(200).optional().describe('Model override for this task (overrides agent-config default)'),
 });
 
 const TaskStatusSchema = z.object({
@@ -107,6 +108,7 @@ const ScheduleTaskSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('AI agent to execute the task (uses configured default if omitted)'),
+  model: z.string().min(1).max(200).optional().describe('Model override for this task (overrides agent-config default)'),
 });
 
 const ListSchedulesSchema = z.object({
@@ -147,6 +149,7 @@ const CreatePipelineSchema = z.object({
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
         agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
+        model: z.string().min(1).max(200).optional().describe('Model override for this step'),
       }),
     )
     .min(2, 'Pipeline requires at least 2 steps')
@@ -164,6 +167,12 @@ const CreatePipelineSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
+  model: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe('Default model for all steps (individual steps can override)'),
 });
 
 const SchedulePipelineSchema = z.object({
@@ -174,6 +183,7 @@ const SchedulePipelineSchema = z.object({
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
         agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
+        model: z.string().min(1).max(200).optional().describe('Model override for this step'),
       }),
     )
     .min(2, 'Pipeline requires at least 2 steps')
@@ -196,6 +206,12 @@ const SchedulePipelineSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
+  model: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe('Default model for all steps (individual steps can override)'),
 });
 
 // Orchestrator-related Zod schemas (v0.9.0 Orchestrator Mode)
@@ -203,6 +219,7 @@ const CreateOrchestratorSchema = z.object({
   goal: z.string().min(1).max(8000).describe('High-level goal for the orchestrator to achieve'),
   workingDirectory: z.string().optional().describe('Working directory for workers (absolute path)'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('AI agent for the orchestrator loop'),
+  model: z.string().min(1).max(200).optional().describe('Model override for the orchestrator (overrides agent-config default)'),
   maxDepth: z.number().min(1).max(10).optional().default(3).describe('Max delegation depth'),
   maxWorkers: z.number().min(1).max(20).optional().default(5).describe('Max concurrent workers'),
   maxIterations: z.number().min(1).max(200).optional().default(50).describe('Max orchestrator iterations'),
@@ -228,8 +245,10 @@ const ConfigureAgentSchema = z.object({
   action: z
     .enum(['set', 'check', 'reset'])
     .default('check')
-    .describe('Action: set API key, check auth status, or reset stored key'),
-  apiKey: z.string().min(1).optional().describe('API key to store (required for set action)'),
+    .describe('Action: set config values, check auth status, or reset all stored config'),
+  apiKey: z.string().min(1).optional().describe('API key to store (set action)'),
+  baseUrl: z.string().url().optional().describe('Base URL override (set action, e.g. https://proxy.example.com/v1)'),
+  model: z.string().min(1).max(200).optional().describe('Default model override for this agent (set action)'),
 });
 
 // Loop-related Zod schemas (v0.7.0 Task/Pipeline Loops)
@@ -278,6 +297,7 @@ const CreateLoopSchema = z.object({
     .describe('Pipeline step prompts (creates pipeline loop)'),
   priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Task priority'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent provider'),
+  model: z.string().min(1).max(200).optional().describe('Model override for each iteration task (overrides agent-config default)'),
   gitBranch: z.string().optional().describe('Git branch name for loop iteration work'),
 });
 
@@ -339,6 +359,7 @@ const ScheduleLoopSchema = z.object({
   gitBranch: z.string().optional().describe('Git branch name for loop iteration work'),
   priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Task priority'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent provider'),
+  model: z.string().min(1).max(200).optional().describe('Model override for each iteration task (overrides agent-config default)'),
   // Schedule fields
   scheduleType: z.enum(['cron', 'one_time']).describe('Schedule type'),
   cronExpression: z.string().optional().describe('Cron expression (5-field) for recurring loops'),
@@ -572,6 +593,12 @@ export class MCPAdapter {
                     enum: [...AGENT_PROVIDERS],
                     description: `AI agent to execute the task (${this.config.defaultAgent ? `default: ${this.config.defaultAgent}` : 'required if no default configured'})`,
                   },
+                  model: {
+                    type: 'string',
+                    description: 'Model override for this task (overrides agent-config default)',
+                    minLength: 1,
+                    maxLength: 200,
+                  },
                 },
                 required: ['prompt'],
               },
@@ -726,6 +753,12 @@ export class MCPAdapter {
                     enum: [...AGENT_PROVIDERS],
                     description: `AI agent to execute the task (${this.config.defaultAgent ? `default: ${this.config.defaultAgent}` : 'required if no default configured'})`,
                   },
+                  model: {
+                    type: 'string',
+                    description: 'Model override for this task (overrides agent-config default)',
+                    minLength: 1,
+                    maxLength: 200,
+                  },
                 },
                 required: ['prompt', 'scheduleType'],
               },
@@ -854,6 +887,12 @@ export class MCPAdapter {
                           enum: [...AGENT_PROVIDERS],
                           description: 'Agent override for this step',
                         },
+                        model: {
+                          type: 'string',
+                          description: 'Model override for this step',
+                          minLength: 1,
+                          maxLength: 200,
+                        },
                       },
                       required: ['prompt'],
                     },
@@ -873,6 +912,12 @@ export class MCPAdapter {
                     type: 'string',
                     enum: [...AGENT_PROVIDERS],
                     description: 'Default agent for all steps (individual steps can override)',
+                  },
+                  model: {
+                    type: 'string',
+                    description: 'Default model for all steps (individual steps can override)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                 },
                 required: ['steps'],
@@ -911,6 +956,12 @@ export class MCPAdapter {
                           type: 'string',
                           enum: [...AGENT_PROVIDERS],
                           description: 'Agent override for this step',
+                        },
+                        model: {
+                          type: 'string',
+                          description: 'Model override for this step',
+                          minLength: 1,
+                          maxLength: 200,
                         },
                       },
                       required: ['prompt'],
@@ -964,6 +1015,12 @@ export class MCPAdapter {
                     type: 'string',
                     enum: [...AGENT_PROVIDERS],
                     description: 'Default agent for all steps (individual steps can override)',
+                  },
+                  model: {
+                    type: 'string',
+                    description: 'Default model for all steps (individual steps can override)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                 },
                 required: ['steps', 'scheduleType'],
@@ -1054,6 +1111,12 @@ export class MCPAdapter {
                     type: 'string',
                     enum: [...AGENT_PROVIDERS],
                     description: `AI agent to execute iterations (${this.config.defaultAgent ? `default: ${this.config.defaultAgent}` : 'required if no default configured'})`,
+                  },
+                  model: {
+                    type: 'string',
+                    description: 'Model override for each iteration task (overrides agent-config default)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                   gitBranch: {
                     type: 'string',
@@ -1203,6 +1266,7 @@ export class MCPAdapter {
                   gitBranch: { type: 'string', description: 'Git branch name for loop iteration work' },
                   priority: { type: 'string', enum: ['P0', 'P1', 'P2'] },
                   agent: { type: 'string', enum: [...AGENT_PROVIDERS] },
+                  model: { type: 'string', description: 'Model override for each iteration task (overrides agent-config default)', minLength: 1, maxLength: 200 },
                   scheduleType: { type: 'string', enum: ['cron', 'one_time'] },
                   cronExpression: { type: 'string', description: 'Cron expression (5-field)' },
                   scheduledAt: { type: 'string', description: 'ISO 8601 datetime for one-time loops' },
@@ -1244,6 +1308,12 @@ export class MCPAdapter {
                     type: 'string',
                     enum: [...AGENT_PROVIDERS],
                     description: 'AI agent for the orchestrator loop',
+                  },
+                  model: {
+                    type: 'string',
+                    description: 'Model override for the orchestrator (overrides agent-config default)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                   maxDepth: {
                     type: 'number',
@@ -1326,7 +1396,8 @@ export class MCPAdapter {
             },
             {
               name: 'ConfigureAgent',
-              description: 'Check auth status, store API key, or reset stored key for an agent',
+              description:
+                'Check auth status, store API key/baseUrl/model, or reset stored config for an agent. Note: to clear individual fields (baseUrl, model), use action=reset (clears all) or the CLI `beat agents config set <agent> <field> ""`. The MCP set action requires non-empty values.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -1342,7 +1413,17 @@ export class MCPAdapter {
                   },
                   apiKey: {
                     type: 'string',
-                    description: 'API key to store (required for set action)',
+                    description: 'API key to store (set action)',
+                  },
+                  baseUrl: {
+                    type: 'string',
+                    description: 'Base URL override for the agent API (set action, e.g. https://proxy.example.com/v1)',
+                  },
+                  model: {
+                    type: 'string',
+                    description: 'Default model for this agent (set action, overridden by per-task model)',
+                    minLength: 1,
+                    maxLength: 200,
                   },
                 },
                 required: ['agent'],
@@ -1400,6 +1481,7 @@ export class MCPAdapter {
       dependsOn: data.dependsOn ? data.dependsOn.map(TaskId) : undefined,
       continueFrom: data.continueFrom ? TaskId(data.continueFrom) : undefined,
       agent: data.agent as AgentProvider | undefined,
+      model: data.model,
     };
 
     // Delegate task using our new architecture
@@ -1490,6 +1572,7 @@ export class MCPAdapter {
                   exitCode: task.exitCode,
                   workingDirectory: task.workingDirectory,
                   agent: task.agent ?? 'unknown',
+                  ...(task.model && { model: task.model }),
                 }),
               },
             ],
@@ -1735,6 +1818,7 @@ export class MCPAdapter {
       expiresAt: data.expiresAt,
       afterScheduleId: data.afterSchedule ? ScheduleId(data.afterSchedule) : undefined,
       agent: data.agent as AgentProvider | undefined,
+      model: data.model,
     };
 
     const result = await this.scheduleService.createSchedule(request);
@@ -2076,6 +2160,7 @@ export class MCPAdapter {
         priority: s.priority as Priority | undefined,
         workingDirectory: s.workingDirectory,
         agent: (s.agent ?? data.agent) as AgentProvider | undefined,
+        model: s.model ?? data.model,
       })),
       priority: data.priority as Priority | undefined,
       workingDirectory: data.workingDirectory,
@@ -2133,6 +2218,7 @@ export class MCPAdapter {
         priority: s.priority as Priority | undefined,
         workingDirectory: s.workingDirectory,
         agent: s.agent as AgentProvider | undefined,
+        model: s.model ?? data.model,
       })),
       scheduleType: data.scheduleType === 'cron' ? ScheduleType.CRON : ScheduleType.ONE_TIME,
       cronExpression: data.cronExpression,
@@ -2145,6 +2231,7 @@ export class MCPAdapter {
       expiresAt: data.expiresAt,
       afterScheduleId: data.afterSchedule ? ScheduleId(data.afterSchedule) : undefined,
       agent: data.agent as AgentProvider | undefined,
+      model: data.model,
     };
 
     const result = await this.scheduleService.createScheduledPipeline(request);
@@ -2224,6 +2311,7 @@ export class MCPAdapter {
       pipelineSteps: data.pipelineSteps,
       priority: data.priority as Priority | undefined,
       agent: data.agent as AgentProvider | undefined,
+      model: data.model,
       gitBranch: data.gitBranch,
     };
 
@@ -2556,6 +2644,7 @@ export class MCPAdapter {
       gitBranch: data.gitBranch,
       priority: data.priority as Priority | undefined,
       agent: data.agent as AgentProvider | undefined,
+      model: data.model,
     };
 
     const request: ScheduledLoopCreateRequest = {
@@ -2612,6 +2701,8 @@ export class MCPAdapter {
       const agentConfig = loadAgentConfig(provider);
       const authStatus = checkAgentAuth(provider, agentConfig.apiKey);
 
+      const claudeBaseUrlWarning = this.getClaudeBaseUrlWarning(provider, agentConfig.baseUrl, agentConfig.apiKey);
+
       return {
         provider,
         description: AGENT_DESCRIPTIONS[provider],
@@ -2620,6 +2711,9 @@ export class MCPAdapter {
         authStatus: authStatus.ready ? 'ready' : 'not-configured',
         authMethod: authStatus.method,
         ...(authStatus.hint && { hint: authStatus.hint }),
+        ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
+        ...(agentConfig.model && { model: agentConfig.model }),
+        ...(claudeBaseUrlWarning && { warning: claudeBaseUrlWarning }),
       };
     });
 
@@ -2677,6 +2771,7 @@ export class MCPAdapter {
       goal: data.goal,
       workingDirectory: data.workingDirectory,
       agent: data.agent as AgentProvider | undefined,
+      model: data.model,
       maxDepth: data.maxDepth,
       maxWorkers: data.maxWorkers,
       maxIterations: data.maxIterations,
@@ -2738,6 +2833,7 @@ export class MCPAdapter {
                   stateFilePath: orchestration.stateFilePath,
                   workingDirectory: orchestration.workingDirectory,
                   agent: orchestration.agent,
+                  ...(orchestration.model && { model: orchestration.model }),
                   maxDepth: orchestration.maxDepth,
                   maxWorkers: orchestration.maxWorkers,
                   maxIterations: orchestration.maxIterations,
@@ -2842,6 +2938,18 @@ export class MCPAdapter {
   }
 
   /**
+   * Returns a warning string when Claude has a custom baseUrl configured without an API key.
+   * Login-based auth does not work with a custom baseUrl, so the setting will be silently
+   * ignored. Returns undefined for all other providers or when the condition is not met.
+   */
+  private getClaudeBaseUrlWarning(provider: string, baseUrl: string | undefined, apiKey: string | undefined): string | undefined {
+    if (provider === 'claude' && baseUrl && !apiKey) {
+      return 'Warning: Claude requires an API key when using a custom baseUrl. The base URL will be ignored with login-based auth.';
+    }
+    return undefined;
+  }
+
+  /**
    * Handle ConfigureAgent tool call
    * Actions: check auth status, set API key, reset stored key
    */
@@ -2866,58 +2974,125 @@ export class MCPAdapter {
       };
     }
 
-    const { agent, action, apiKey } = parseResult.data;
+    const { agent, action, apiKey, baseUrl, model } = parseResult.data;
 
     switch (action) {
       case 'check': {
         const agentConfig = loadAgentConfig(agent);
         const status = checkAgentAuth(agent, agentConfig.apiKey);
+
+        interface CheckPayload {
+          success: boolean;
+          ready: boolean;
+          method: string;
+          hint?: string;
+          storedKey?: string;
+          baseUrl?: string;
+          model?: string;
+          warning?: string;
+        }
+        const checkWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
+        const checkPayload: CheckPayload = {
+          success: true,
+          ...status,
+          ...(agentConfig.apiKey && { storedKey: maskApiKey(agentConfig.apiKey) }),
+          ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
+          ...(agentConfig.model && { model: agentConfig.model }),
+          ...(checkWarning && { warning: checkWarning }),
+        };
+
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(
-                {
-                  success: true,
-                  ...status,
-                  ...(agentConfig.apiKey && { storedKey: maskApiKey(agentConfig.apiKey) }),
-                },
-                null,
-                2,
-              ),
+              text: JSON.stringify(checkPayload, null, 2),
             },
           ],
         };
       }
 
       case 'set': {
-        if (!apiKey) {
+        if (!apiKey && !baseUrl && !model) {
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({ success: false, error: 'apiKey is required for set action' }, null, 2),
+                text: JSON.stringify(
+                  { success: false, error: 'At least one of apiKey, baseUrl, or model is required for set action' },
+                  null,
+                  2,
+                ),
               },
             ],
             isError: true,
           };
         }
-        const result = saveAgentConfig(agent, 'apiKey', apiKey);
-        if (!result.ok) {
+
+        // Perform all writes up-front to avoid partial-write: collect each
+        // result before returning so that a late failure reports which fields
+        // were already saved and which failed.
+        type WriteAttempt = { key: 'apiKey' | 'baseUrl' | 'model'; label: string; ok: boolean; error?: string };
+        const attempts: WriteAttempt[] = [];
+
+        if (apiKey) {
+          const result = saveAgentConfig(agent, 'apiKey', apiKey);
+          attempts.push({ key: 'apiKey', label: `API key stored (${maskApiKey(apiKey)})`, ok: result.ok, error: result.ok ? undefined : result.error });
+        }
+
+        if (baseUrl !== undefined) {
+          const result = saveAgentConfig(agent, 'baseUrl', baseUrl);
+          attempts.push({ key: 'baseUrl', label: `baseUrl set to ${baseUrl}`, ok: result.ok, error: result.ok ? undefined : result.error });
+        }
+
+        if (model !== undefined) {
+          const result = saveAgentConfig(agent, 'model', model);
+          attempts.push({ key: 'model', label: `model set to ${model}`, ok: result.ok, error: result.ok ? undefined : result.error });
+        }
+
+        const failed = attempts.filter((a) => !a.ok);
+        if (failed.length > 0) {
+          const saved = attempts.filter((a) => a.ok).map((a) => a.key);
           return {
-            content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error }, null, 2) }],
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    error: failed.map((a) => a.error).join('; '),
+                    ...(saved.length > 0 && { alreadySaved: saved }),
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
             isError: true,
           };
         }
+
+        // Compute Claude baseUrl warning using effective values after writes
+        const currentConfig = loadAgentConfig(agent);
+        const effectiveBaseUrl = baseUrl !== undefined ? baseUrl : currentConfig.baseUrl;
+        const effectiveApiKey = apiKey ?? currentConfig.apiKey;
+        const setWarning = this.getClaudeBaseUrlWarning(agent, effectiveBaseUrl, effectiveApiKey);
+
+        interface SetPayload {
+          success: boolean;
+          message: string;
+          warning?: string;
+        }
+        const responsePayload: SetPayload = {
+          success: true,
+          message: `${agent}: ${attempts.map((a) => a.label).join(', ')}`,
+          ...(setWarning && { warning: setWarning }),
+        };
+
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(
-                { success: true, message: `API key stored for ${agent} (${maskApiKey(apiKey)})` },
-                null,
-                2,
-              ),
+              text: JSON.stringify(responsePayload, null, 2),
             },
           ],
         };
