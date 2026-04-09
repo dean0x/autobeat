@@ -9,6 +9,7 @@ import {
   panelStatusSummary,
   relativeTime,
   scoreTrend,
+  statusColor,
   statusIcon,
   truncateCell,
 } from '../../../../src/cli/dashboard/format.js';
@@ -63,6 +64,48 @@ describe('relativeTime', () => {
 
   it('returns "in Xd" for future dates in days', () => {
     expect(relativeTime(now + 2 * 24 * 60 * 60_000 + 30_000)).toBe('in 2d');
+  });
+});
+
+describe('statusColor', () => {
+  it('maps running to cyan', () => {
+    expect(statusColor('running')).toBe('cyan');
+  });
+
+  it('maps active to cyan', () => {
+    expect(statusColor('active')).toBe('cyan');
+  });
+
+  it('maps planning to cyan', () => {
+    expect(statusColor('planning')).toBe('cyan');
+  });
+
+  it('maps completed to green', () => {
+    expect(statusColor('completed')).toBe('green');
+  });
+
+  it('maps failed to red', () => {
+    expect(statusColor('failed')).toBe('red');
+  });
+
+  it('maps cancelled to red', () => {
+    expect(statusColor('cancelled')).toBe('red');
+  });
+
+  it('maps paused to yellow', () => {
+    expect(statusColor('paused')).toBe('yellow');
+  });
+
+  it('maps queued to gray', () => {
+    expect(statusColor('queued')).toBe('gray');
+  });
+
+  it('maps expired to gray', () => {
+    expect(statusColor('expired')).toBe('gray');
+  });
+
+  it('maps unknown status to gray', () => {
+    expect(statusColor('unknown-status')).toBe('gray');
   });
 });
 
@@ -161,6 +204,19 @@ describe('truncateCell', () => {
   it('handles maxWidth of 1', () => {
     const result = truncateCell('hello', 1);
     expect(result.length).toBeLessThanOrEqual(1);
+  });
+
+  it('uses ASCII fast-path for printable ASCII strings', () => {
+    // All chars in 0x20–0x7E range — should use slice, not stringWidth loop
+    const result = truncateCell('Hello, world!', 8);
+    expect(result).toBe('Hello, …');
+    expect(result.length).toBeLessThanOrEqual(8);
+  });
+
+  it('handles wide Unicode characters (2-column emoji/CJK)', () => {
+    // Each CJK char is 2 columns wide. maxWidth=5 → targetWidth=4 → fits 2 chars (4 cols)
+    const result = truncateCell('日本語', 5);
+    expect(result).toBe('日本…');
   });
 });
 
