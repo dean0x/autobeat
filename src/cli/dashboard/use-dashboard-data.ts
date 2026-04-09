@@ -128,6 +128,10 @@ async function fetchDetailExtra(
  * data and set an error message instead of clearing data.
  *
  * The `closing` ref prevents setState calls after the component unmounts.
+ * The `fetching` ref guards against overlapping poll calls: if a fetch is
+ * still in flight when the next interval fires, the new call is skipped.
+ * The `viewStateRef` captures the latest viewState without being a dep of
+ * doFetch — this keeps the polling interval stable across navigations.
  */
 export function useDashboardData(ctx: ReadOnlyContext, viewState: ViewState): UseDashboardDataResult {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -137,10 +141,19 @@ export function useDashboardData(ctx: ReadOnlyContext, viewState: ViewState): Us
   // Prevent setState after unmount or shutdown
   const closing = useRef(false);
 
-  // Stable reference to the fetch function — rebuilt only when ctx/viewState changes
+  // Always holds the latest viewState — updated synchronously before each render
+  const viewStateRef = useRef(viewState);
+  viewStateRef.current = viewState;
+
+  // Guard against overlapping in-flight fetches caused by slow SQLite under load
+  const fetching = useRef(false);
+
+  // Stable fetch function — ctx is the only dep; viewState is read via ref
   const doFetch = useCallback(async (): Promise<void> => {
+    if (fetching.current) return;
+    fetching.current = true;
     try {
-      const result = await fetchAllData(ctx, viewState);
+      const result = await fetchAllData(ctx, viewStateRef.current);
 
       if (closing.current) return;
 
@@ -158,8 +171,10 @@ export function useDashboardData(ctx: ReadOnlyContext, viewState: ViewState): Us
         const message = e instanceof Error ? e.message : String(e);
         setError(`Unexpected fetch error: ${message}`);
       }
+    } finally {
+      fetching.current = false;
     }
-  }, [ctx, viewState]);
+  }, [ctx]);
 
   useEffect(() => {
     closing.current = false;
