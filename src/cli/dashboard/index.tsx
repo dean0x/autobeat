@@ -35,10 +35,16 @@ export async function startDashboard(): Promise<void> {
     process.exit(1);
   }
 
-  // Read version from package.json
+  // Read version from package.json — graceful fallback if missing or malformed
   const dirname = path.dirname(fileURLToPath(import.meta.url));
-  const pkg = JSON.parse(readFileSync(path.join(dirname, '..', '..', '..', 'package.json'), 'utf-8'));
-  const version: string = (pkg as { version?: string }).version ?? '0.0.0';
+  let version = '0.0.0';
+  try {
+    const raw = readFileSync(path.join(dirname, '..', '..', '..', 'package.json'), 'utf-8');
+    const pkg = JSON.parse(raw) as { version?: string };
+    version = pkg.version ?? '0.0.0';
+  } catch {
+    // Fallback — dashboard still works without version display
+  }
 
   const ctxResult = createReadOnlyContext();
   if (!ctxResult.ok) {
