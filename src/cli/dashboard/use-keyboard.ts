@@ -35,6 +35,14 @@ const FILTER_CYCLE: readonly (string | null)[] = [
   'cancelled',
 ];
 
+/** Map of digit keys 1–4 to their corresponding panel IDs */
+const PANEL_JUMP_KEYS: Record<string, PanelId> = {
+  '1': 'loops',
+  '2': 'tasks',
+  '3': 'schedules',
+  '4': 'orchestrations',
+};
+
 interface UseKeyboardParams {
   readonly view: ViewState;
   readonly nav: NavState;
@@ -190,14 +198,8 @@ function handleMainKeys(
   }
 
   // 1-4 — jump to panel by number
-  const PANEL_BY_KEY: Record<string, PanelId> = {
-    '1': 'loops',
-    '2': 'tasks',
-    '3': 'schedules',
-    '4': 'orchestrations',
-  };
-  if (input in PANEL_BY_KEY) {
-    setNav((prev) => ({ ...prev, focusedPanel: PANEL_BY_KEY[input] as PanelId }));
+  if (input in PANEL_JUMP_KEYS) {
+    setNav((prev) => ({ ...prev, focusedPanel: PANEL_JUMP_KEYS[input] }));
     return true;
   }
 

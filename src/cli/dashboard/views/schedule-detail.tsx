@@ -11,7 +11,7 @@ import type { ScheduleExecution } from '../../../core/interfaces.js';
 import { Field, StatusField } from '../components/field.js';
 import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
-import { formatRunProgress, relativeTime, statusIcon, truncateCell } from '../format.js';
+import { formatRunProgress, relativeTime, statusColor, statusIcon, truncateCell } from '../format.js';
 
 interface ScheduleDetailProps {
   readonly schedule: Schedule;
@@ -29,12 +29,7 @@ function renderExecutionRow(exec: ScheduleExecution, index: number, isSelected: 
   const errorMsg = exec.errorMessage ? truncateCell(exec.errorMessage, 18) : '—';
 
   const bg = isSelected ? 'blue' : undefined;
-  const statusColor =
-    exec.status === 'completed' || exec.status === 'triggered'
-      ? 'green'
-      : exec.status === 'failed' || exec.status === 'missed'
-        ? 'red'
-        : undefined;
+  const color = statusColor(exec.status);
   const statusText = `${statusIcon(exec.status)} ${exec.status}`;
 
   return (
@@ -43,7 +38,7 @@ function renderExecutionRow(exec: ScheduleExecution, index: number, isSelected: 
         {String(index + 1).padStart(3, ' ')}
       </Text>
       <Text> </Text>
-      <Text color={statusColor}>{statusText.padEnd(12, ' ')}</Text>
+      <Text color={color}>{statusText.padEnd(12, ' ')}</Text>
       <Text> </Text>
       <Text dimColor>{scheduledFor.padEnd(12, ' ')}</Text>
       <Text> </Text>

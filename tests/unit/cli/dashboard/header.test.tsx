@@ -112,7 +112,7 @@ describe('Header', () => {
 // ============================================================================
 
 describe('buildHealthSummary (via Header)', () => {
-  function render_summary(data: DashboardData): string {
+  function renderSummary(data: DashboardData): string {
     const { lastFrame } = render(
       <Header version="0.0.1" data={data} refreshedAt={null} error={null} />,
     );
@@ -120,12 +120,12 @@ describe('buildHealthSummary (via Header)', () => {
   }
 
   it('shows "idle" when all counts are zero', () => {
-    const frame = render_summary(makeData());
+    const frame = renderSummary(makeData());
     expect(frame).toContain('idle');
   });
 
   it('shows running count for running tasks', () => {
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({ taskCounts: { total: 2, byStatus: { running: 2 } } }),
     );
     expect(frame).toContain('●2 run');
@@ -133,7 +133,7 @@ describe('buildHealthSummary (via Header)', () => {
 
   it('shows running count aggregated across entity types', () => {
     // 1 running task + 1 running loop + 1 running orchestration = 3
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({
         taskCounts: { total: 1, byStatus: { running: 1 } },
         loopCounts: { total: 1, byStatus: { running: 1 } },
@@ -144,7 +144,7 @@ describe('buildHealthSummary (via Header)', () => {
   });
 
   it('treats active schedules as running', () => {
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({
         scheduleCounts: { total: 1, byStatus: { active: 2 } },
       }),
@@ -153,7 +153,7 @@ describe('buildHealthSummary (via Header)', () => {
   });
 
   it('treats planning orchestrations as running', () => {
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({
         orchestrationCounts: { total: 1, byStatus: { planning: 1 } },
       }),
@@ -162,28 +162,28 @@ describe('buildHealthSummary (via Header)', () => {
   });
 
   it('shows queued count for queued tasks', () => {
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({ taskCounts: { total: 3, byStatus: { queued: 3 } } }),
     );
     expect(frame).toContain('○3 queue');
   });
 
   it('treats paused loops as queued', () => {
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({ loopCounts: { total: 1, byStatus: { paused: 1 } } }),
     );
     expect(frame).toContain('○1 queue');
   });
 
   it('treats paused schedules as queued', () => {
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({ scheduleCounts: { total: 1, byStatus: { paused: 1 } } }),
     );
     expect(frame).toContain('○1 queue');
   });
 
   it('shows failed count for failed tasks', () => {
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({ taskCounts: { total: 1, byStatus: { failed: 1 } } }),
     );
     expect(frame).toContain('✗1 fail');
@@ -191,7 +191,7 @@ describe('buildHealthSummary (via Header)', () => {
 
   it('shows failed count aggregated across entity types', () => {
     // 1 failed task + 1 cancelled schedule + 1 failed orchestration = 3
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({
         taskCounts: { total: 1, byStatus: { failed: 1 } },
         scheduleCounts: { total: 1, byStatus: { cancelled: 1 } },
@@ -202,7 +202,7 @@ describe('buildHealthSummary (via Header)', () => {
   });
 
   it('shows all three categories when each has values', () => {
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({
         taskCounts: { total: 5, byStatus: { running: 1, queued: 2, failed: 2 } },
       }),
@@ -214,7 +214,7 @@ describe('buildHealthSummary (via Header)', () => {
 
   it('omits categories with zero count', () => {
     // Only running — no queued or failed
-    const frame = render_summary(
+    const frame = renderSummary(
       makeData({ taskCounts: { total: 1, byStatus: { running: 1 } } }),
     );
     expect(frame).not.toContain('queue');

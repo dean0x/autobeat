@@ -54,9 +54,11 @@ export function statusColor(status: string): string {
     case 'planning':
       return 'cyan';
     case 'completed':
+    case 'triggered':
       return 'green';
     case 'failed':
     case 'cancelled':
+    case 'missed':
       return 'red';
     case 'paused':
       return 'yellow';
@@ -162,20 +164,15 @@ export function formatRunProgress(current: number, max: number | null | undefine
 }
 
 // ============================================================================
-// Elapsed time formatting
+// Elapsed time and duration formatting
 // ============================================================================
 
 /**
- * Format elapsed time from a start timestamp (epoch ms) to now.
- * Returns human-readable string like "45s", "2m 30s", "1h 5m".
+ * Format a non-negative millisecond count as a human-readable duration string.
+ * Examples: "45s", "2m 30s", "1h 5m"
  */
-export function formatElapsed(startedAt: number): string {
-  const elapsedMs = Date.now() - startedAt;
-  if (elapsedMs < 0) {
-    return '0s';
-  }
-
-  const totalSeconds = Math.floor(elapsedMs / 1_000);
+function formatMs(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1_000);
   const totalMinutes = Math.floor(totalSeconds / 60);
   const totalHours = Math.floor(totalMinutes / 60);
 
@@ -192,9 +189,14 @@ export function formatElapsed(startedAt: number): string {
   return `${totalSeconds}s`;
 }
 
-// ============================================================================
-// Duration formatting
-// ============================================================================
+/**
+ * Format elapsed time from a start timestamp (epoch ms) to now.
+ * Returns human-readable string like "45s", "2m 30s", "1h 5m".
+ */
+export function formatElapsed(startedAt: number): string {
+  const elapsedMs = Date.now() - startedAt;
+  return elapsedMs < 0 ? '0s' : formatMs(elapsedMs);
+}
 
 /**
  * Format the duration between two epoch ms timestamps (start → end).
@@ -205,22 +207,7 @@ export function formatDuration(startedAt: number | undefined, completedAt: numbe
   if (startedAt === undefined || completedAt === undefined) {
     return '—';
   }
-  const ms = completedAt - startedAt;
-  const totalSeconds = Math.floor(ms / 1_000);
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const totalHours = Math.floor(totalMinutes / 60);
-
-  if (totalHours > 0) {
-    const remainingMinutes = totalMinutes % 60;
-    return remainingMinutes > 0 ? `${totalHours}h ${remainingMinutes}m` : `${totalHours}h`;
-  }
-
-  if (totalMinutes > 0) {
-    const remainingSeconds = totalSeconds % 60;
-    return remainingSeconds > 0 ? `${totalMinutes}m ${remainingSeconds}s` : `${totalMinutes}m`;
-  }
-
-  return `${totalSeconds}s`;
+  return formatMs(completedAt - startedAt);
 }
 
 // ============================================================================
