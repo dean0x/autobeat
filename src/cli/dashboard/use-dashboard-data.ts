@@ -10,7 +10,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { LoopId, ScheduleId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
@@ -79,7 +78,7 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
   // Fetch detail extras if in detail view (best-effort — errors yield undefined)
   let detailExtra: DetailExtra = {};
   if (viewState.kind === 'detail') {
-    detailExtra = await fetchDetailExtra(ctx, viewState.entityType, viewState.entityId);
+    detailExtra = await fetchDetailExtra(ctx, viewState);
   }
 
   return ok({
@@ -97,16 +96,20 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
 
 /**
  * Fetch detail-view extras (iterations for loops, execution history for schedules).
+ * Accepts the narrowed detail variant so branded IDs flow without unsafe casts.
  * Returns empty DetailExtra on any error — dashboard degrades gracefully.
  */
-async function fetchDetailExtra(ctx: ReadOnlyContext, entityType: string, entityId: string): Promise<DetailExtra> {
-  if (entityType === 'loops') {
-    const result = await ctx.loopRepository.getIterations(entityId as LoopId, 50);
+async function fetchDetailExtra(
+  ctx: ReadOnlyContext,
+  detail: Extract<ViewState, { readonly kind: 'detail' }>,
+): Promise<DetailExtra> {
+  if (detail.entityType === 'loops') {
+    const result = await ctx.loopRepository.getIterations(detail.entityId, 50);
     return { iterations: result.ok ? result.value : undefined };
   }
 
-  if (entityType === 'schedules') {
-    const result = await ctx.scheduleRepository.getExecutionHistory(entityId as ScheduleId, 50);
+  if (detail.entityType === 'schedules') {
+    const result = await ctx.scheduleRepository.getExecutionHistory(detail.entityId, 50);
     return { executions: result.ok ? result.value : undefined };
   }
 
