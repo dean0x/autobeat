@@ -6,7 +6,7 @@
 
 import { render } from 'ink-testing-library';
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatElapsed } from '../../../../src/cli/dashboard/format.js';
 import type { DashboardData } from '../../../../src/cli/dashboard/types.js';
 import { DetailView } from '../../../../src/cli/dashboard/views/detail-view.js';
@@ -572,31 +572,42 @@ describe('DetailView', () => {
 // ============================================================================
 
 describe('formatElapsed', () => {
+  const FROZEN_NOW = 1_700_000_000_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FROZEN_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('returns "0s" for future timestamps', () => {
-    expect(formatElapsed(Date.now() + 5_000)).toBe('0s');
+    expect(formatElapsed(FROZEN_NOW + 5_000)).toBe('0s');
   });
 
   it('returns seconds for elapsed < 60s', () => {
-    expect(formatElapsed(Date.now() - 45_000)).toBe('45s');
+    expect(formatElapsed(FROZEN_NOW - 45_000)).toBe('45s');
   });
 
   it('returns "1m 30s" for 90 seconds elapsed', () => {
-    expect(formatElapsed(Date.now() - 90_000)).toBe('1m 30s');
+    expect(formatElapsed(FROZEN_NOW - 90_000)).toBe('1m 30s');
   });
 
   it('returns "2m" for exactly 120 seconds elapsed', () => {
-    expect(formatElapsed(Date.now() - 120_000)).toBe('2m');
+    expect(formatElapsed(FROZEN_NOW - 120_000)).toBe('2m');
   });
 
   it('returns "1h 5m" for 65 minutes elapsed', () => {
-    expect(formatElapsed(Date.now() - 65 * 60_000)).toBe('1h 5m');
+    expect(formatElapsed(FROZEN_NOW - 65 * 60_000)).toBe('1h 5m');
   });
 
   it('returns "2h" for exactly 2 hours elapsed', () => {
-    expect(formatElapsed(Date.now() - 2 * 3_600_000)).toBe('2h');
+    expect(formatElapsed(FROZEN_NOW - 2 * 3_600_000)).toBe('2h');
   });
 
   it('returns "0s" for exactly now', () => {
-    expect(formatElapsed(Date.now())).toBe('0s');
+    expect(formatElapsed(FROZEN_NOW)).toBe('0s');
   });
 });
