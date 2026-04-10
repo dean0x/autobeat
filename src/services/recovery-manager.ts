@@ -239,8 +239,15 @@ export class RecoveryManager {
           workerRepo: this.workerRepo,
           isProcessAlive: this.isProcessAlive,
         });
-      } catch {
-        continue; // Defensive: skip this orchestration on unexpected error
+      } catch (error) {
+        // Defensive: skip this orchestration on unexpected error.
+        // Log so an unseen bug in the liveness chain doesn't silently disable zombie detection.
+        this.logger.warn('Liveness check threw unexpectedly — skipping orchestration', {
+          orchestratorId: o.id,
+          loopId: o.loopId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        continue;
       }
 
       if (liveness !== 'dead') continue;
@@ -253,6 +260,11 @@ export class RecoveryManager {
       const updateResult = await this.orchestrationRepo.update(failed);
       if (updateResult.ok) {
         this.logger.warn('Marked zombie RUNNING orchestration as FAILED (worker PID dead)', {
+          orchestratorId: o.id,
+          loopId: o.loopId,
+        });
+      } else {
+        this.logger.error('Failed to mark zombie orchestration as FAILED', updateResult.error, {
           orchestratorId: o.id,
           loopId: o.loopId,
         });
