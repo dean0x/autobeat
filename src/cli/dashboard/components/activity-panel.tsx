@@ -69,7 +69,7 @@ function renderActivityRow(entry: ActivityEntry, _index: number, isSelected: boo
 }
 
 export const ActivityPanel: React.FC<ActivityPanelProps> = React.memo(
-  ({ activityFeed, selectedIndex, scrollOffset, focused, onSelect: _onSelect }) => {
+  ({ activityFeed, selectedIndex, scrollOffset, focused, onSelect }) => {
     const borderColor = focused ? 'cyan' : undefined;
 
     if (activityFeed.length === 0) {

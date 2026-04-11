@@ -299,6 +299,7 @@ async function fetchWorkspaceExtras(
 
 /**
  * Fetch detail-view extras (iterations for loops, execution history for schedules).
+ * Phase E adds orchestration-specific extras: children list + cost aggregate.
  * Accepts the narrowed detail variant so branded IDs flow without unsafe casts.
  * Returns empty DetailExtra on any error — dashboard degrades gracefully.
  */
@@ -316,7 +317,19 @@ async function fetchDetailExtra(
     return { executions: result.ok ? result.value : undefined };
   }
 
-  // tasks and orchestrations don't have dedicated extra data at this phase
+  if (detail.entityType === 'orchestrations') {
+    // Phase E: fetch children (up to 50) and cost aggregate in parallel
+    const [childrenResult, costResult] = await Promise.all([
+      ctx.orchestrationRepository.getOrchestratorChildren(detail.entityId, 50),
+      ctx.usageRepository.sumByOrchestrationId(detail.entityId),
+    ]);
+    return {
+      orchestrationChildren: childrenResult.ok ? childrenResult.value : undefined,
+      orchestrationCostAggregate: costResult.ok ? costResult.value : undefined,
+    };
+  }
+
+  // tasks don't have dedicated extra data
   return {};
 }
 

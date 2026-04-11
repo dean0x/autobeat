@@ -5,13 +5,15 @@
  */
 
 import { Box, useApp } from 'ink';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import type { ActivityEntry } from '../../core/domain.js';
 import type { OutputRepository, ResourceMonitor } from '../../core/interfaces.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { Footer } from './components/footer.js';
 import { Header } from './components/header.js';
 import { computeMetricsLayout, computeWorkspaceLayout } from './layout.js';
 import type { DashboardMutationContext, NavState, ViewState } from './types.js';
+import { openDetail } from './types.js';
 import { useDashboardData } from './use-dashboard-data.js';
 import { useKeyboard } from './use-keyboard.js';
 import { useResourceMetrics } from './use-resource-metrics.js';
@@ -110,7 +112,33 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     refreshNow,
     exit,
     mutations,
+    workspaceNav,
+    setWorkspaceNav,
   });
+
+  /**
+   * Activity row selection — map ActivityEntry kind to detail entityType and open.
+   * Phase E: wires the stub in MetricsView.ActivityPanel.onSelect.
+   */
+  const handleActivitySelect = useCallback(
+    (entry: ActivityEntry) => {
+      switch (entry.kind) {
+        case 'task':
+          setView(openDetail('tasks', entry.entityId as never, 'main'));
+          break;
+        case 'loop':
+          setView(openDetail('loops', entry.entityId as never, 'main'));
+          break;
+        case 'orchestration':
+          setView(openDetail('orchestrations', entry.entityId as never, 'main'));
+          break;
+        case 'schedule':
+          setView(openDetail('schedules', entry.entityId as never, 'main'));
+          break;
+      }
+    },
+    [setView],
+  );
 
   // View dispatcher
   const renderView = (): React.ReactNode => {
@@ -122,6 +150,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
           nav={nav}
           resourceMetrics={resourceMetrics}
           resourceError={resourceError}
+          onActivitySelect={handleActivitySelect}
         />
       );
     }
@@ -150,7 +179,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
 
   return (
     <Box flexDirection="column" width="100%">
-      <Header version={version} data={data} refreshedAt={refreshedAt} error={error} />
+      <Header version={version} data={data} refreshedAt={refreshedAt} error={error} viewKind={view.kind} />
       {renderView()}
       <Footer viewKind={view.kind} hasMutations={mutations !== undefined} />
     </Box>

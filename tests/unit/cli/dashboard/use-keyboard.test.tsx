@@ -29,6 +29,7 @@ import type {
   ViewState,
 } from '../../../../src/cli/dashboard/types.js';
 import { useKeyboard } from '../../../../src/cli/dashboard/use-keyboard.js';
+import { createInitialWorkspaceNavState } from '../../../../src/cli/dashboard/workspace-types.js';
 import type {
   Loop,
   LoopId,
@@ -164,12 +165,13 @@ function KeyboardWrapper({
 }: WrapperProps): React.ReactElement {
   const [view, setView] = useState<ViewState>(initialView);
   const [nav, setNav] = useState<NavState>(initialNav);
+  const [workspaceNav, setWorkspaceNav] = useState(createInitialWorkspaceNavState());
   const data = initialData ?? makeDashboardData();
 
   const exit = useCallback(() => onExit?.(), [onExit]);
   const refreshNow = useCallback(() => onRefresh?.(), [onRefresh]);
 
-  useKeyboard({ view, nav, data, setView, setNav, refreshNow, exit, mutations });
+  useKeyboard({ view, nav, data, setView, setNav, refreshNow, exit, mutations, workspaceNav, setWorkspaceNav });
 
   return (
     <Box flexDirection="column">
@@ -714,6 +716,33 @@ describe('useKeyboard — d: delete terminal entity keybinding', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
     expect(deleteSchedule).toHaveBeenCalledWith('sched-done');
+  });
+});
+
+// ============================================================================
+// Global v/m/w keys — already covered in workspace-keyboard.test.tsx for workspace
+// Spot-check from main view here to confirm no interference with main-view keys
+// ============================================================================
+
+describe('useKeyboard — global v/m/w no interference in main', () => {
+  it('"v" from main transitions to workspace without crashing', async () => {
+    // This just verifies the key is consumed and we don't crash in the main handler
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} />);
+    expect(lastFrame()).toContain('view:main');
+    await press(stdin, 'v');
+    expect(lastFrame()).toContain('view:workspace');
+  });
+
+  it('"m" from main stays in main', async () => {
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} />);
+    await press(stdin, 'm');
+    expect(lastFrame()).toContain('view:main');
+  });
+
+  it('"w" from main transitions to workspace', async () => {
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} />);
+    await press(stdin, 'w');
+    expect(lastFrame()).toContain('view:workspace');
   });
 });
 

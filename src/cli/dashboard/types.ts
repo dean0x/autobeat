@@ -160,6 +160,10 @@ export interface DashboardData {
   readonly executions?: readonly ScheduleExecution[];
   /** Liveness state per orchestration ID — only populated for RUNNING orchestrations */
   readonly orchestrationLiveness?: Readonly<Record<string, Liveness>>;
+  /** Children tasks attributed to the viewed orchestration (Phase E — only in orchestration detail view) */
+  readonly orchestrationChildren?: readonly OrchestratorChild[];
+  /** Aggregated cost/token usage for the viewed orchestration (Phase E — only in orchestration detail view) */
+  readonly orchestrationCostAggregate?: TaskUsage;
 
   // Metrics view extras (v1.3.0)
   readonly costRollup24h?: TaskUsage;
@@ -187,8 +191,13 @@ export interface DashboardData {
 
 /**
  * Optional detail-view extras — fetched when in detail mode
+ * Phase E adds orchestration-specific extras: children list + cost aggregate.
  */
 export interface DetailExtra {
   readonly iterations?: readonly LoopIteration[];
   readonly executions?: readonly ScheduleExecution[];
+  /** Children tasks attributed to the viewed orchestration (Phase E) */
+  readonly orchestrationChildren?: readonly OrchestratorChild[];
+  /** Aggregated cost/token usage for the viewed orchestration (Phase E) */
+  readonly orchestrationCostAggregate?: TaskUsage;
 }

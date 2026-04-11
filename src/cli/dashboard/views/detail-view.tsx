@@ -56,7 +56,14 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
       case 'orchestrations': {
         const orchestration = data?.orchestrations.find((o) => o.id === entityId);
         if (orchestration === undefined) return <NotFound entityType={entityType} entityId={entityId} />;
-        return <OrchestrationDetail orchestration={orchestration} animFrame={animFrame} />;
+        return (
+          <OrchestrationDetail
+            orchestration={orchestration}
+            animFrame={animFrame}
+            children={data?.orchestrationChildren ?? []}
+            costAggregate={data?.orchestrationCostAggregate}
+          />
+        );
       }
     }
   },

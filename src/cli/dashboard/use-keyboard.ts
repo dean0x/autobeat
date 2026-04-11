@@ -10,6 +10,7 @@ import { useRef } from 'react';
 import type { LoopId, OrchestratorId, ScheduleId, TaskId } from '../../core/domain.js';
 import { LoopStatus, OrchestratorStatus, ScheduleStatus, TaskStatus } from '../../core/domain.js';
 import type { DashboardData, DashboardMutationContext, NavState, PanelId, ViewState } from './types.js';
+import type { WorkspaceNavState } from './workspace-types.js';
 
 /**
  * Minimal shape required for navigation — id and status are the only fields
@@ -72,6 +73,12 @@ interface UseKeyboardParams {
    * Unified UX across all four panels (loops, tasks, schedules, orchestrations).
    */
   readonly mutations?: DashboardMutationContext;
+  /**
+   * Phase E: workspace navigation state.
+   * When provided, enables handleWorkspaceKeys when view.kind === 'workspace'.
+   */
+  readonly workspaceNav?: WorkspaceNavState;
+  readonly setWorkspaceNav?: React.Dispatch<React.SetStateAction<WorkspaceNavState>>;
 }
 
 /** Conservative upper bound for detail scroll when caller does not provide content length */
@@ -92,6 +99,8 @@ interface KeyHandlerParams {
   readonly detailContentLength: number;
   readonly mutations?: DashboardMutationContext;
   readonly refreshNow: () => void;
+  readonly workspaceNav?: WorkspaceNavState;
+  readonly setWorkspaceNav?: React.Dispatch<React.SetStateAction<WorkspaceNavState>>;
 }
 
 /**
@@ -187,6 +196,299 @@ function handleDetailKeys(
 
   // Any other key in detail view is swallowed (no fallthrough to main handler)
   return true;
+}
+
+/**
+ * Handle key input while in the workspace view.
+ * Returns true if the key was consumed.
+ *
+ * Key routing:
+ *  - ↑/k / ↓/j   : move nav cursor (nav focus only)
+ *  - Enter        : commit nav selection → grid focus; grid focus → drill into child detail
+ *  - Tab          : cycle focusArea nav → grid → nav
+ *  - Shift+Tab    : reverse cycle
+ *  - 1-9          : jump to panel index (grid focus)
+ *  - f            : toggle fullscreen for focused panel
+ *  - [/]          : scroll focused panel up/down with auto-tail toggle
+ *  - g/G          : jump to top / bottom of focused panel
+ *  - PgUp/PgDn    : page grid
+ *  - Esc/Backspace: exit fullscreen → return to main
+ *  - c/d          : cancel/delete (nav: committed orch; grid: focused child task)
+ */
+function handleWorkspaceKeys(
+  input: string,
+  key: Parameters<Parameters<typeof useInput>[0]>[1],
+  params: KeyHandlerParams,
+): boolean {
+  const { view, setView, dataRef, mutations, refreshNow } = params;
+  if (view.kind !== 'workspace') return false;
+  const { workspaceNav, setWorkspaceNav } = params;
+  if (!workspaceNav || !setWorkspaceNav) return false;
+
+  // Esc / Backspace — exit fullscreen if active; otherwise return to main
+  if (key.escape || key.backspace) {
+    if (workspaceNav.fullscreenPanelIndex !== null) {
+      setWorkspaceNav((prev) => ({ ...prev, fullscreenPanelIndex: null }));
+    } else {
+      setView({ kind: 'main' });
+    }
+    return true;
+  }
+
+  // Tab — cycle focusArea: nav → grid → nav; also cycle focusedPanelIndex within grid
+  if (key.tab && !key.shift) {
+    setWorkspaceNav((prev) => {
+      if (prev.focusArea === 'nav') {
+        return { ...prev, focusArea: 'grid' };
+      }
+      // grid → advance panel or wrap back to nav
+      const data = dataRef.current;
+      const childCount = data?.workspaceData?.children.length ?? 0;
+      if (childCount === 0) {
+        // No panels — just toggle back to nav
+        return { ...prev, focusArea: 'nav' };
+      }
+      const nextPanel = (prev.focusedPanelIndex + 1) % childCount;
+      if (nextPanel === 0) {
+        // Wrapped around — go back to nav
+        return { ...prev, focusArea: 'nav', focusedPanelIndex: 0 };
+      }
+      return { ...prev, focusArea: 'grid', focusedPanelIndex: nextPanel };
+    });
+    return true;
+  }
+
+  // Shift+Tab — reverse cycle
+  if (key.tab && key.shift) {
+    setWorkspaceNav((prev) => {
+      if (prev.focusArea === 'grid') {
+        return { ...prev, focusArea: 'nav' };
+      }
+      return { ...prev, focusArea: 'grid' };
+    });
+    return true;
+  }
+
+  // ↑ / k — move nav cursor up (nav focus only)
+  if (key.upArrow || input === 'k') {
+    if (workspaceNav.focusArea === 'nav') {
+      setWorkspaceNav((prev) => ({
+        ...prev,
+        selectedOrchestratorIndex: Math.max(0, prev.selectedOrchestratorIndex - 1),
+      }));
+      return true;
+    }
+    return true; // consume in grid too (no-op for now)
+  }
+
+  // ↓ / j — move nav cursor down (nav focus only)
+  // Upper clamp: if orchestration list is available, clamp to list length - 1.
+  // When list is empty (e.g. during test with no data), allow cursor to move freely.
+  if (key.downArrow || input === 'j') {
+    if (workspaceNav.focusArea === 'nav') {
+      const orchList = dataRef.current?.orchestrations;
+      const maxIdx = orchList && orchList.length > 0 ? orchList.length - 1 : Number.MAX_SAFE_INTEGER;
+      setWorkspaceNav((prev) => ({
+        ...prev,
+        selectedOrchestratorIndex: Math.min(maxIdx, prev.selectedOrchestratorIndex + 1),
+      }));
+      return true;
+    }
+    return true; // consume in grid too
+  }
+
+  // Enter — commit (nav focus) or drill into child detail (grid focus)
+  if (key.return) {
+    if (workspaceNav.focusArea === 'nav') {
+      setWorkspaceNav((prev) => ({
+        ...prev,
+        committedOrchestratorIndex: prev.selectedOrchestratorIndex,
+        fullscreenPanelIndex: null,
+        focusArea: 'grid',
+      }));
+      return true;
+    }
+    // grid focus — drill into child task detail
+    const data = dataRef.current;
+    const children = data?.workspaceData?.children;
+    if (children && children.length > 0) {
+      const child = children[workspaceNav.focusedPanelIndex];
+      if (child) {
+        setView({ kind: 'detail', entityType: 'tasks', entityId: child.taskId as TaskId, returnTo: 'workspace' });
+      }
+    }
+    return true;
+  }
+
+  // f — toggle fullscreen for focused panel (grid focus)
+  if (input === 'f') {
+    if (workspaceNav.focusArea === 'grid') {
+      setWorkspaceNav((prev) => ({
+        ...prev,
+        fullscreenPanelIndex: prev.fullscreenPanelIndex === prev.focusedPanelIndex ? null : prev.focusedPanelIndex,
+      }));
+    }
+    return true;
+  }
+
+  // 1–9 — jump to panel by number (grid focus)
+  if (input >= '1' && input <= '9' && workspaceNav.focusArea === 'grid') {
+    const panelIdx = parseInt(input, 10) - 1;
+    const data = dataRef.current;
+    const childCount = data?.workspaceData?.children.length ?? 0;
+    if (panelIdx < childCount) {
+      setWorkspaceNav((prev) => ({ ...prev, focusedPanelIndex: panelIdx }));
+    }
+    return true;
+  }
+
+  // [ — scroll focused panel up
+  if (input === '[') {
+    const data = dataRef.current;
+    const children = data?.workspaceData?.children;
+    if (children && children.length > 0) {
+      const child = children[workspaceNav.focusedPanelIndex];
+      if (child) {
+        const taskId = child.taskId;
+        setWorkspaceNav((prev) => ({
+          ...prev,
+          panelScrollOffsets: {
+            ...prev.panelScrollOffsets,
+            [taskId]: Math.max(0, (prev.panelScrollOffsets[taskId] ?? 0) - 1),
+          },
+          autoTailEnabled: { ...prev.autoTailEnabled, [taskId]: false },
+        }));
+      }
+    }
+    return true;
+  }
+
+  // ] — scroll focused panel down
+  if (input === ']') {
+    const data = dataRef.current;
+    const children = data?.workspaceData?.children;
+    if (children && children.length > 0) {
+      const child = children[workspaceNav.focusedPanelIndex];
+      if (child) {
+        const taskId = child.taskId;
+        setWorkspaceNav((prev) => ({
+          ...prev,
+          panelScrollOffsets: {
+            ...prev.panelScrollOffsets,
+            [taskId]: (prev.panelScrollOffsets[taskId] ?? 0) + 1,
+          },
+          // auto-tail stays as-is — caller re-enables when reaching bottom
+        }));
+      }
+    }
+    return true;
+  }
+
+  // g — jump to top of focused panel
+  if (input === 'g') {
+    const data = dataRef.current;
+    const children = data?.workspaceData?.children;
+    if (children && children.length > 0) {
+      const child = children[workspaceNav.focusedPanelIndex];
+      if (child) {
+        const taskId = child.taskId;
+        setWorkspaceNav((prev) => ({
+          ...prev,
+          panelScrollOffsets: { ...prev.panelScrollOffsets, [taskId]: 0 },
+          autoTailEnabled: { ...prev.autoTailEnabled, [taskId]: false },
+        }));
+      }
+    }
+    return true;
+  }
+
+  // G — jump to bottom and re-engage auto-tail
+  if (input === 'G') {
+    const data = dataRef.current;
+    const children = data?.workspaceData?.children;
+    if (children && children.length > 0) {
+      const child = children[workspaceNav.focusedPanelIndex];
+      if (child) {
+        const taskId = child.taskId;
+        setWorkspaceNav((prev) => ({
+          ...prev,
+          panelScrollOffsets: { ...prev.panelScrollOffsets, [taskId]: 0 },
+          autoTailEnabled: { ...prev.autoTailEnabled, [taskId]: true },
+        }));
+      }
+    }
+    return true;
+  }
+
+  // PgUp — previous grid page
+  if (key.pageUp) {
+    setWorkspaceNav((prev) => ({
+      ...prev,
+      gridPage: Math.max(0, prev.gridPage - 1),
+    }));
+    return true;
+  }
+
+  // PgDn — next grid page
+  if (key.pageDown) {
+    setWorkspaceNav((prev) => ({
+      ...prev,
+      gridPage: prev.gridPage + 1,
+    }));
+    return true;
+  }
+
+  // c — cancel (nav: committed orch with cascade; grid: focused child task)
+  if (input === 'c' && mutations) {
+    const data = dataRef.current;
+    if (workspaceNav.focusArea === 'nav') {
+      const orchs = data?.orchestrations ?? [];
+      const orch = orchs[workspaceNav.committedOrchestratorIndex];
+      if (orch && !TERMINAL_STATUSES.orchestrations.includes(orch.status as OrchestratorStatus)) {
+        void (async () => {
+          await mutations.orchestrationService.cancelOrchestration(
+            orch.id as OrchestratorId,
+            'User cancelled via dashboard',
+            { cancelAttributedTasks: true },
+          );
+          refreshNow();
+        })();
+      }
+    } else {
+      // grid focus — cancel focused child task
+      const children = data?.workspaceData?.children;
+      if (children && children.length > 0) {
+        const child = children[workspaceNav.focusedPanelIndex];
+        if (child && !TERMINAL_STATUSES.tasks.includes(child.status as TaskStatus)) {
+          void (async () => {
+            await mutations.taskManager.cancel(child.taskId as TaskId, 'User cancelled via dashboard');
+            refreshNow();
+          })();
+        }
+      }
+    }
+    return true;
+  }
+
+  // d — delete terminal entity (grid focus only; nav focus is ignored)
+  if (input === 'd' && mutations) {
+    if (workspaceNav.focusArea === 'grid') {
+      const data = dataRef.current;
+      const children = data?.workspaceData?.children;
+      if (children && children.length > 0) {
+        const child = children[workspaceNav.focusedPanelIndex];
+        if (child && TERMINAL_STATUSES.tasks.includes(child.status as TaskStatus)) {
+          void (async () => {
+            await mutations.taskRepo.delete(child.taskId as TaskId);
+            refreshNow();
+          })();
+        }
+      }
+    }
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -421,7 +723,14 @@ function handleMainKeys(
 
 /**
  * Custom hook wrapping Ink's useInput.
- * Routes keys to handlers based on current view (main or detail).
+ * Routes keys to handlers based on current view (main, workspace, or detail).
+ *
+ * Global keys (handled before view dispatch):
+ *  - q: quit
+ *  - r: refresh
+ *  - v: toggle between main/workspace (ignored when in detail — user must Esc first)
+ *  - m: jump to main (works from any view)
+ *  - w: jump to workspace (works from any view)
  */
 export function useKeyboard({
   view,
@@ -433,6 +742,8 @@ export function useKeyboard({
   exit,
   detailContentLength,
   mutations,
+  workspaceNav,
+  setWorkspaceNav,
 }: UseKeyboardParams): void {
   // Keep a ref to the latest data so setNav functional updaters always see
   // current data, not stale closure data from the render that registered useInput.
@@ -450,6 +761,28 @@ export function useKeyboard({
       return;
     }
 
+    // v — toggle between main and workspace (ignored in detail view)
+    if (input === 'v' && view.kind !== 'detail') {
+      if (view.kind === 'workspace') {
+        setView({ kind: 'main' });
+      } else {
+        setView({ kind: 'workspace' });
+      }
+      return;
+    }
+
+    // m — jump to main from any view
+    if (input === 'm' && view.kind !== 'detail') {
+      setView({ kind: 'main' });
+      return;
+    }
+
+    // w — jump to workspace from any view
+    if (input === 'w' && view.kind !== 'detail') {
+      setView({ kind: 'workspace' });
+      return;
+    }
+
     const params: KeyHandlerParams = {
       view,
       nav,
@@ -460,10 +793,14 @@ export function useKeyboard({
       detailContentLength: detailContentLength ?? DETAIL_SCROLL_MAX_DEFAULT,
       mutations,
       refreshNow,
+      workspaceNav,
+      setWorkspaceNav,
     };
 
     if (view.kind === 'detail') {
       handleDetailKeys(input, key, params);
+    } else if (view.kind === 'workspace') {
+      handleWorkspaceKeys(input, key, params);
     } else {
       handleMainKeys(input, key, params);
     }

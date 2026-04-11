@@ -12,7 +12,7 @@
 
 import { Box, Text } from 'ink';
 import React from 'react';
-import type { SystemResources } from '../../../core/domain.js';
+import type { ActivityEntry, SystemResources } from '../../../core/domain.js';
 import { ActivityPanel } from '../components/activity-panel.js';
 import { CostTile } from '../components/cost-tile.js';
 import { CountsPanel } from '../components/counts-panel.js';
@@ -45,6 +45,11 @@ interface MetricsViewProps {
   readonly nav: NavState;
   readonly resourceMetrics: SystemResources | null;
   readonly resourceError: string | null;
+  /**
+   * Phase E: called when the user presses Enter on an Activity row.
+   * Opens the detail view for that entity.
+   */
+  readonly onActivitySelect?: (entry: ActivityEntry) => void;
 }
 
 // ============================================================================
@@ -70,7 +75,7 @@ function extractGroup(byStatus: Record<string, number>): CountsShape {
 // ============================================================================
 
 export const MetricsView: React.FC<MetricsViewProps> = React.memo(
-  ({ layout, data, nav, resourceMetrics, resourceError }) => {
+  ({ layout, data, nav, resourceMetrics, resourceError, onActivitySelect }) => {
     // Degraded mode: terminal too small
     if (layout.mode === 'too-small') {
       return (
@@ -120,9 +125,7 @@ export const MetricsView: React.FC<MetricsViewProps> = React.memo(
             selectedIndex={nav.selectedIndices.tasks}
             scrollOffset={nav.scrollOffsets.tasks}
             focused={nav.focusedPanel === 'tasks'}
-            onSelect={() => {
-              // Phase E will wire this to navigation — placeholder for now
-            }}
+            onSelect={(entry) => onActivitySelect?.(entry)}
           />
           <CountsPanel counts={counts} />
         </Box>
