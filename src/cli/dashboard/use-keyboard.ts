@@ -149,6 +149,16 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
+ * Resolve the currently selected child index from a taskId.
+ * Returns 0 when no taskId is set or the taskId is not found in the list.
+ */
+function resolveChildIndex(selectedTaskId: string | null, children: readonly { taskId: string }[]): number {
+  if (!selectedTaskId) return 0;
+  const idx = children.findIndex((c) => c.taskId === selectedTaskId);
+  return idx >= 0 ? idx : 0;
+}
+
+/**
  * Handle key input while in the detail view.
  * Returns true if the key was consumed.
  *
@@ -195,10 +205,7 @@ function handleDetailKeys(
     if (key.upArrow || input === 'k') {
       if (children.length === 0) return true;
       setNav((prev) => {
-        const currentId = prev.orchestrationChildSelectedTaskId;
-        const currentIdx = currentId ? children.findIndex((c) => c.taskId === currentId) : 0;
-        const effectiveIdx = currentIdx < 0 ? 0 : currentIdx;
-        const nextIdx = Math.max(0, effectiveIdx - 1);
+        const nextIdx = Math.max(0, resolveChildIndex(prev.orchestrationChildSelectedTaskId, children) - 1);
         return { ...prev, orchestrationChildSelectedTaskId: children[nextIdx]?.taskId ?? null };
       });
       return true;
@@ -207,10 +214,10 @@ function handleDetailKeys(
     if (key.downArrow || input === 'j') {
       if (children.length === 0) return true;
       setNav((prev) => {
-        const currentId = prev.orchestrationChildSelectedTaskId;
-        const currentIdx = currentId ? children.findIndex((c) => c.taskId === currentId) : 0;
-        const effectiveIdx = currentIdx < 0 ? 0 : currentIdx;
-        const nextIdx = Math.min(children.length - 1, effectiveIdx + 1);
+        const nextIdx = Math.min(
+          children.length - 1,
+          resolveChildIndex(prev.orchestrationChildSelectedTaskId, children) + 1,
+        );
         return { ...prev, orchestrationChildSelectedTaskId: children[nextIdx]?.taskId ?? null };
       });
       return true;
@@ -219,10 +226,7 @@ function handleDetailKeys(
     if (key.return) {
       // Enter: drill into the selected child task detail
       if (children.length === 0) return true;
-      const currentId = nav.orchestrationChildSelectedTaskId;
-      const currentIdx = currentId ? children.findIndex((c) => c.taskId === currentId) : 0;
-      const effectiveIdx = currentIdx < 0 ? 0 : currentIdx;
-      const child = children[effectiveIdx];
+      const child = children[resolveChildIndex(nav.orchestrationChildSelectedTaskId, children)];
       if (!child) return true;
       const originalReturnTo: 'main' | 'workspace' = view.returnTo === 'workspace' ? 'workspace' : 'main';
       setView({

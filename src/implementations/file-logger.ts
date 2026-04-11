@@ -40,10 +40,17 @@ interface LogEntry {
 }
 
 // ============================================================================
+// DisposableLogger — Logger with lifecycle dispose()
+// ============================================================================
+
+/** Logger that can be shut down cleanly. Returned by FileLogger.create(). */
+export type DisposableLogger = Logger & { dispose(): Promise<void> };
+
+// ============================================================================
 // SilentLogger — no-op fallback used when the file cannot be opened
 // ============================================================================
 
-class SilentLogger implements Logger {
+class SilentLogger implements DisposableLogger {
   debug(_message: string, _context?: Record<string, unknown>): void {}
   info(_message: string, _context?: Record<string, unknown>): void {}
   warn(_message: string, _context?: Record<string, unknown>): void {}
@@ -62,7 +69,7 @@ class SilentLogger implements Logger {
  * Writes structured JSON log lines to a file.
  * Constructed via the static `FileLogger.create()` factory which returns a
  * SilentLogger fallback if the file cannot be opened — callers always get a
- * valid Logger, never an error.
+ * valid DisposableLogger, never an error.
  */
 export class FileLogger implements Logger {
   private readonly fileHandle: import('node:fs/promises').FileHandle;
@@ -79,16 +86,14 @@ export class FileLogger implements Logger {
    * Creates the parent directory if it does not exist (idempotent).
    * Returns a SilentLogger on any open/mkdir failure — never throws.
    */
-  static async create(
-    filePath: string = DEFAULT_DASHBOARD_LOG_PATH,
-  ): Promise<FileLogger & { dispose(): Promise<void> }> {
+  static async create(filePath: string = DEFAULT_DASHBOARD_LOG_PATH): Promise<DisposableLogger> {
     try {
       await mkdir(path.dirname(filePath), { recursive: true });
       const handle = await open(filePath, 'a');
       return new FileLogger(handle);
     } catch {
       // Silent fallback — never throw into the dashboard UI
-      return new SilentLoggerWithDispose() as unknown as FileLogger & { dispose(): Promise<void> };
+      return new SilentLogger();
     }
   }
 
@@ -153,12 +158,4 @@ export class FileLogger implements Logger {
       // Intentional: log write failures must never propagate to the UI
     });
   }
-}
-
-// ============================================================================
-// Private: SilentLogger with dispose() — returned on open failure
-// ============================================================================
-
-class SilentLoggerWithDispose extends SilentLogger {
-  override async dispose(): Promise<void> {}
 }
