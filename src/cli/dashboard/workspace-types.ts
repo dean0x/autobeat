@@ -1,6 +1,6 @@
 /**
  * Workspace view navigation state
- * ARCHITECTURE: Separate from NavState to keep main-view reducer independent
+ * ARCHITECTURE: Separate from NavState to keep MetricsView state independent
  * Pattern: Immutable state with factory function for initialization
  */
 
