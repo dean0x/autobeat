@@ -40,19 +40,17 @@ import { err, ok, type Result } from '../core/result.js';
 import { validatePath } from '../utils/validation.js';
 import { buildOrchestratorPrompt } from './orchestrator-prompt.js';
 
-/** Options for cancelOrchestration (v1.3.0 cancel cascade) */
-export interface CancelOrchestrationOptions {
-  /** When true (default), cancel all queued/running tasks attributed to this orchestration */
-  readonly cancelAttributedTasks?: boolean;
-}
-
 export interface OrchestrationManagerServiceDeps {
   readonly eventBus: EventBus;
   readonly logger: Logger;
   readonly orchestrationRepo: OrchestrationRepository;
   readonly loopService: LoopService;
   readonly config: Configuration;
-  /** Optional — enables cancel cascade for attributed sub-tasks (v1.3.0) */
+  /**
+   * @deprecated v1.3.0: Cancel cascade is now handled by AttributedTaskCancellationHandler
+   * subscribing to OrchestrationCancelled. These deps are accepted for bootstrap
+   * backward-compatibility but are no longer used by this service.
+   */
   readonly taskRepository?: TaskRepository;
   readonly taskManager?: TaskManager;
 }
@@ -63,8 +61,6 @@ export class OrchestrationManagerService implements OrchestrationService {
   private readonly orchestrationRepo: OrchestrationRepository;
   private readonly loopService: LoopService;
   private readonly config: Configuration;
-  private readonly taskRepository?: TaskRepository;
-  private readonly taskManager?: TaskManager;
 
   constructor(deps: OrchestrationManagerServiceDeps) {
     this.eventBus = deps.eventBus;
@@ -72,8 +68,6 @@ export class OrchestrationManagerService implements OrchestrationService {
     this.orchestrationRepo = deps.orchestrationRepo;
     this.loopService = deps.loopService;
     this.config = deps.config;
-    this.taskRepository = deps.taskRepository;
-    this.taskManager = deps.taskManager;
     this.logger.debug('OrchestrationManagerService initialized');
   }
 
@@ -349,11 +343,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     return this.orchestrationRepo.findAll(limit, offset);
   }
 
-  async cancelOrchestration(
-    id: OrchestratorId,
-    reason?: string,
-    opts?: CancelOrchestrationOptions,
-  ): Promise<Result<void>> {
+  async cancelOrchestration(id: OrchestratorId, reason?: string): Promise<Result<void>> {
     const lookupResult = await this.getOrchestration(id);
     if (!lookupResult.ok) return lookupResult;
 
@@ -391,14 +381,10 @@ export class OrchestrationManagerService implements OrchestrationService {
       if (!updateResult.ok) return err(updateResult.error);
     }
 
-    // v1.3.0: Cancel cascade — cancel all directly-attributed queued/running tasks
-    // Default: true (cascade enabled unless caller explicitly opts out)
-    const shouldCascade = opts?.cancelAttributedTasks !== false;
-    if (shouldCascade && this.taskRepository && this.taskManager) {
-      await this.cancelAttributedTasks(id, reason);
-    }
-
-    // Emit cancellation event (handler will update DB status via loop events when loopId exists)
+    // Emit cancellation event.
+    // ARCHITECTURE: AttributedTaskCancellationHandler subscribes to OrchestrationCancelled
+    // and cancels attributed sub-tasks — cancel cascade is event-driven (v1.3.0).
+    // OrchestrationHandler updates DB status via loop events when loopId exists.
     const emitResult = await this.eventBus.emit('OrchestrationCancelled', {
       orchestratorId: id,
       reason,
@@ -412,42 +398,5 @@ export class OrchestrationManagerService implements OrchestrationService {
     }
 
     return ok(undefined);
-  }
-
-  /**
-   * Cancel all active tasks directly attributed to an orchestration via orchestrator_id.
-   * Errors are logged as warnings — they must never block the orchestration cancel.
-   */
-  private async cancelAttributedTasks(id: OrchestratorId, reason?: string): Promise<void> {
-    if (!this.taskRepository || !this.taskManager) return;
-
-    const findResult = await this.taskRepository.findByOrchestratorId(id, {
-      statuses: ['queued', 'running'],
-    });
-
-    if (!findResult.ok) {
-      this.logger.warn('cancelOrchestration: failed to find attributed tasks', {
-        orchestratorId: id,
-        error: findResult.error.message,
-      });
-      return;
-    }
-
-    const tasks = findResult.value;
-    this.logger.info('cancelOrchestration: cancelling attributed tasks', {
-      orchestratorId: id,
-      taskCount: tasks.length,
-    });
-
-    for (const task of tasks) {
-      const cancelResult = await this.taskManager.cancel(task.id, reason ?? 'Orchestration cancelled');
-      if (!cancelResult.ok) {
-        this.logger.warn('cancelOrchestration: failed to cancel attributed task', {
-          orchestratorId: id,
-          taskId: task.id,
-          error: cancelResult.error.message,
-        });
-      }
-    }
   }
 }

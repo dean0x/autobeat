@@ -23,6 +23,7 @@ import {
   SyncOrchestrationOperations,
   SyncScheduleOperations,
   SyncTaskOperations,
+  TaskManager,
   TaskQueue,
   TaskRepository,
   TransactionRunner,
@@ -33,6 +34,7 @@ import { err, ok, Result } from '../core/result.js';
 import { AgentExitConditionEvaluator } from './agent-exit-condition-evaluator.js';
 import { CompositeExitConditionEvaluator } from './composite-exit-condition-evaluator.js';
 import { ShellExitConditionEvaluator } from './exit-condition-evaluator.js';
+import { AttributedTaskCancellationHandler } from './handlers/attributed-task-cancellation-handler.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
 import { LoopHandler } from './handlers/loop-handler.js';
@@ -65,6 +67,8 @@ export interface HandlerDependencies {
   readonly loopService?: LoopService;
   readonly orchestrationRepository?: SyncOrchestrationOperations;
   readonly usageRepository?: UsageRepository;
+  /** Optional — enables cancel cascade for attributed sub-tasks (v1.3.0) */
+  readonly taskManager?: TaskManager;
 }
 
 /**
@@ -84,6 +88,8 @@ export interface HandlerSetupResult {
   readonly orchestrationHandler?: OrchestrationHandler;
   /** UsageCaptureHandler uses factory pattern, returned separately for unified lifecycle */
   readonly usageCaptureHandler?: UsageCaptureHandler;
+  /** AttributedTaskCancellationHandler — cancel cascade on OrchestrationCancelled (v1.3.0) */
+  readonly attributedTaskCancellationHandler?: AttributedTaskCancellationHandler;
 }
 
 /**
@@ -181,6 +187,10 @@ export function extractHandlerDependencies(container: Container): Result<Handler
   const usageRepositoryResult = getDependency<UsageRepository>(container, 'usageRepository');
   const usageRepository = usageRepositoryResult.ok ? usageRepositoryResult.value : undefined;
 
+  // Optional: TaskManager for AttributedTaskCancellationHandler (graceful if not registered)
+  const taskManagerResult = getDependency<TaskManager>(container, 'taskManager');
+  const taskManager = taskManagerResult.ok ? taskManagerResult.value : undefined;
+
   return ok({
     config: configResult.value,
     logger: loggerResult.value,
@@ -199,6 +209,7 @@ export function extractHandlerDependencies(container: Container): Result<Handler
     loopService,
     orchestrationRepository,
     usageRepository,
+    taskManager,
   });
 }
 
@@ -425,9 +436,36 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     }
   }
 
+  // 10. Attributed Task Cancellation Handler — cancel cascade on OrchestrationCancelled (v1.3.0)
+  // ARCHITECTURE: Optional — only created if both taskRepository and taskManager are registered.
+  // Extracts the cancel cascade logic from OrchestrationManagerService into event-driven pattern.
+  // Best-effort: failures are logged but never block other handlers.
+  let attributedTaskCancellationHandler: AttributedTaskCancellationHandler | undefined;
+  if (deps.taskManager) {
+    const atcHandlerResult = await AttributedTaskCancellationHandler.create({
+      taskRepository: deps.taskRepository,
+      taskManager: deps.taskManager,
+      eventBus,
+      logger: childLogger('AttributedTaskCancellationHandler'),
+    });
+    if (!atcHandlerResult.ok) {
+      // Non-fatal: log warning but continue without attributed task cancellation
+      setupLogger.warn('Failed to create AttributedTaskCancellationHandler', {
+        error: atcHandlerResult.error.message,
+      });
+    } else {
+      attributedTaskCancellationHandler = atcHandlerResult.value;
+    }
+  }
+
   setupLogger.info('Event handlers initialized successfully', {
     standardHandlers: standardHandlers.length,
-    totalHandlers: standardHandlers.length + 4 + (orchestrationHandler ? 1 : 0) + (usageCaptureHandler ? 1 : 0),
+    totalHandlers:
+      standardHandlers.length +
+      4 +
+      (orchestrationHandler ? 1 : 0) +
+      (usageCaptureHandler ? 1 : 0) +
+      (attributedTaskCancellationHandler ? 1 : 0),
   });
 
   return ok({
@@ -438,5 +476,6 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     loopHandler,
     orchestrationHandler,
     usageCaptureHandler,
+    attributedTaskCancellationHandler,
   });
 }

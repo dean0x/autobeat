@@ -260,76 +260,34 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       expect(cancelResult.error.message).toContain('not active');
     });
 
-    it('should cascade-cancel directly-attributed tasks (v1.3.0)', async () => {
-      const { createTask, TaskStatus, updateTask } = await import('../../../src/core/domain.js');
-      const { SQLiteTaskRepository } = await import('../../../src/implementations/task-repository.js');
-      const { ok } = await import('../../../src/core/result.js');
-
-      // Wire in a taskRepository and a taskManager stub so cascade executes
-      const taskRepo = new SQLiteTaskRepository(db);
-      const cancelledIds: string[] = [];
-      const taskManagerStub = {
-        cancel: async (taskId: string, _reason?: string) => {
-          cancelledIds.push(taskId);
-          // Also flip the row to CANCELLED so downstream assertions see the state.
-          // TaskRepository.update signature is (taskId, partial), not (fullTask).
-          await taskRepo.update(taskId as ReturnType<typeof createTask>['id'], {
-            status: TaskStatus.CANCELLED,
-          });
-          return ok(undefined);
-        },
-      } as unknown as import('../../../src/core/interfaces.js').TaskManager;
-
-      const cascadeService = new OrchestrationManagerService({
-        eventBus,
-        logger,
-        orchestrationRepo,
-        loopService,
-        config,
-        taskRepository: taskRepo,
-        taskManager: taskManagerStub,
-      });
-
-      const createResult = await cascadeService.createOrchestration({ goal: 'Cascade test' });
+    it('should emit OrchestrationCancelled event so AttributedTaskCancellationHandler can cascade', async () => {
+      // ARCHITECTURE: v1.3.0 cancel cascade is event-driven.
+      // cancelOrchestration emits OrchestrationCancelled, and AttributedTaskCancellationHandler
+      // (registered in handler-setup.ts) handles attributed task cancellation.
+      // This test verifies the service emits the correct event with expected payload.
+      const createResult = await service.createOrchestration({ goal: 'Cascade event test' });
       expect(createResult.ok).toBe(true);
       if (!createResult.ok) return;
       const orch = createResult.value;
 
-      // Seed 3 directly-attributed tasks in queued/running states
-      const t1 = createTask({ prompt: 'attributed 1', orchestratorId: orch.id });
-      const t2Base = createTask({ prompt: 'attributed 2', orchestratorId: orch.id });
-      const t2 = updateTask(t2Base, { status: TaskStatus.RUNNING });
-      const t3 = createTask({ prompt: 'attributed 3', orchestratorId: orch.id });
-      await taskRepo.save(t1);
-      await taskRepo.save(t2);
-      await taskRepo.save(t3);
-
-      // A terminal task — must NOT be cancelled by cascade
-      const terminalBase = createTask({ prompt: 'already completed', orchestratorId: orch.id });
-      const terminal = updateTask(terminalBase, { status: TaskStatus.COMPLETED });
-      await taskRepo.save(terminal);
-
-      const cancelResult = await cascadeService.cancelOrchestration(orch.id, 'cascade');
+      const cancelResult = await service.cancelOrchestration(orch.id, 'cascade reason');
       expect(cancelResult.ok).toBe(true);
 
-      // All 3 active attributed tasks were cancelled via taskManager
-      expect(cancelledIds).toEqual(expect.arrayContaining([t1.id, t2.id, t3.id]));
-      expect(cancelledIds).not.toContain(terminal.id);
-
-      // DB state: t1/t2/t3 are CANCELLED, terminal is still COMPLETED
-      for (const id of [t1.id, t2.id, t3.id]) {
-        const row = await taskRepo.findById(id);
-        expect(row.ok).toBe(true);
-        if (!row.ok || !row.value) throw new Error('task row missing');
-        expect(row.value.status).toBe(TaskStatus.CANCELLED);
-      }
-      const terminalRow = await taskRepo.findById(terminal.id);
-      expect(terminalRow.ok).toBe(true);
-      if (!terminalRow.ok || !terminalRow.value) throw new Error('terminal task row missing');
-      expect(terminalRow.value.status).toBe(TaskStatus.COMPLETED);
+      // OrchestrationCancelled event must be emitted with the orchestration ID and reason
+      const cancelledEvents = eventBus.getEmittedEvents('OrchestrationCancelled') as Array<{
+        orchestratorId: string;
+        reason?: string;
+      }>;
+      expect(cancelledEvents.length).toBeGreaterThanOrEqual(1);
+      const evt = cancelledEvents.find((e) => e.orchestratorId === orch.id);
+      expect(evt).toBeDefined();
+      expect(evt?.reason).toBe('cascade reason');
     });
 
-    it('should respect opts.cancelAttributedTasks=false (opt-out)', async () => {
+    it('should not cascade directly in service (AttributedTaskCancellationHandler handles it)', async () => {
+      // ARCHITECTURE: The service no longer directly cancels attributed tasks.
+      // The cascade is handled by AttributedTaskCancellationHandler on OrchestrationCancelled.
+      // This test verifies the service does not perform inline task cancellation.
       const { createTask } = await import('../../../src/core/domain.js');
       const { SQLiteTaskRepository } = await import('../../../src/implementations/task-repository.js');
       const { ok } = await import('../../../src/core/result.js');
@@ -343,7 +301,9 @@ describe('OrchestrationManagerService - Unit Tests', () => {
         },
       } as unknown as import('../../../src/core/interfaces.js').TaskManager;
 
-      const noCascadeService = new OrchestrationManagerService({
+      // Even when taskRepository and taskManager are passed (for backward-compat),
+      // the service should not call taskManager.cancel directly — cascade is event-driven.
+      const cascadeService = new OrchestrationManagerService({
         eventBus,
         logger,
         orchestrationRepo,
@@ -353,18 +313,18 @@ describe('OrchestrationManagerService - Unit Tests', () => {
         taskManager: taskManagerStub,
       });
 
-      const createResult = await noCascadeService.createOrchestration({ goal: 'Opt-out' });
+      const createResult = await cascadeService.createOrchestration({ goal: 'No inline cascade' });
       expect(createResult.ok).toBe(true);
       if (!createResult.ok) return;
       const orch = createResult.value;
 
-      const attributed = createTask({ prompt: 'should survive', orchestratorId: orch.id });
+      const attributed = createTask({ prompt: 'attributed', orchestratorId: orch.id });
       await taskRepo.save(attributed);
 
-      const cancelResult = await noCascadeService.cancelOrchestration(orch.id, 'no cascade', {
-        cancelAttributedTasks: false,
-      });
+      const cancelResult = await cascadeService.cancelOrchestration(orch.id, 'cascade test');
       expect(cancelResult.ok).toBe(true);
+
+      // taskManager.cancel should NOT be called by the service — event handler does it
       expect(cancelledIds).toHaveLength(0);
     });
   });
