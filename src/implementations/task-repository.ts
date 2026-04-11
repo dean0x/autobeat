@@ -79,6 +79,10 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
   private readonly countByStatusStmt: SQLite.Statement;
   private readonly findAllPaginatedStmt: SQLite.Statement;
   private readonly findUpdatedSinceStmt: SQLite.Statement;
+  // v1.3.0 additions — cached to avoid re-prepare on every 1s dashboard poll
+  private readonly findByOrchestratorIdStmt: SQLite.Statement;
+  private readonly taskThroughputStmt: SQLite.Statement;
+  private readonly loopThroughputStmt: SQLite.Statement;
 
   /** Default pagination limit for findAll() */
   private static readonly DEFAULT_LIMIT = 100;
@@ -166,7 +170,9 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?
     `);
 
-    // NOTE: tasks table has no updated_at column — use completed_at (transition time) or created_at
+    // NOTE: tasks table has no updated_at column — use completed_at (transition time) or created_at.
+    // idx_tasks_updated_expr (migration v20) is a SQLite expression index on
+    // COALESCE(completed_at, started_at, created_at) that covers this WHERE + ORDER BY.
     this.findUpdatedSinceStmt = this.db.prepare(`
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
@@ -176,6 +182,40 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       WHERE COALESCE(completed_at, started_at, created_at) >= ?
       ORDER BY COALESCE(completed_at, started_at, created_at) DESC
       LIMIT ?
+    `);
+
+    // findByOrchestratorId (no status filter) — cached for the common path.
+    // The status-filter branch uses a dynamic IN-list and cannot share a single
+    // prepared statement; it remains inline with a TODO comment below.
+    this.findByOrchestratorIdStmt = this.db.prepare(`
+      SELECT id, prompt, status, priority, working_directory,
+             timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
+             created_at, started_at, completed_at, worker_id, exit_code,
+             dependencies, continue_from, agent, model, orchestrator_id
+      FROM tasks
+      WHERE orchestrator_id = ?
+      ORDER BY created_at DESC
+    `);
+
+    // getThroughputStats — two statements (tasks + loops), both cached.
+    // COALESCE(completed_at, created_at) is covered by idx_tasks_updated_expr (v20)
+    // for the WHERE clause filter.
+    this.taskThroughputStmt = this.db.prepare(`
+      SELECT
+        COUNT(*)                                             AS total,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+        AVG(CASE WHEN completed_at IS NOT NULL AND started_at IS NOT NULL
+                 THEN completed_at - started_at END)         AS avg_duration_ms
+      FROM tasks
+      WHERE COALESCE(completed_at, created_at) >= ?
+        AND status IN ('completed', 'failed', 'cancelled')
+    `);
+
+    this.loopThroughputStmt = this.db.prepare(`
+      SELECT COUNT(*) AS total
+      FROM loops
+      WHERE COALESCE(completed_at, created_at) >= ?
+        AND status IN ('completed', 'failed', 'cancelled')
     `);
 
     this.deleteStmt = this.db.prepare(`
@@ -388,7 +428,10 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
     return tryCatchAsync(
       async () => {
         if (opts?.statuses && opts.statuses.length > 0) {
-          // Dynamic query with status filter — build in-list at runtime
+          // TODO: Dynamic IN-list prevents a single cached statement here.
+          // Cache would require per-length variants or a different query strategy
+          // (e.g., temp table or JSON-each). Left inline as the status-filter
+          // path is only used by the drill-through view, not the 1s activity poll.
           const placeholders = opts.statuses.map(() => '?').join(', ');
           const stmt = this.db.prepare(`
             SELECT id, prompt, status, priority, working_directory,
@@ -403,16 +446,8 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
           return rows.map((row) => this.rowToTask(row));
         }
 
-        const stmt = this.db.prepare(`
-          SELECT id, prompt, status, priority, working_directory,
-                 timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
-                 created_at, started_at, completed_at, worker_id, exit_code,
-                 dependencies, continue_from, agent, model, orchestrator_id
-          FROM tasks
-          WHERE orchestrator_id = ?
-          ORDER BY created_at DESC
-        `);
-        const rows = stmt.all(orchId) as TaskRow[];
+        // Common (no status filter) path — uses cached statement.
+        const rows = this.findByOrchestratorIdStmt.all(orchId) as TaskRow[];
         return rows.map((row) => this.rowToTask(row));
       },
       operationErrorHandler('find tasks by orchestrator', { orchestratorId: orchId }),
@@ -426,31 +461,14 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       const since = Date.now() - windowMs;
       const windowHours = windowMs / 3_600_000;
 
-      // Count completed/failed tasks in window
-      const taskStatsStmt = this.db.prepare(`
-          SELECT
-            COUNT(*)                                             AS total,
-            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
-            AVG(CASE WHEN completed_at IS NOT NULL AND started_at IS NOT NULL
-                     THEN completed_at - started_at END)         AS avg_duration_ms
-          FROM tasks
-          WHERE COALESCE(completed_at, created_at) >= ?
-            AND status IN ('completed', 'failed', 'cancelled')
-        `);
-      const taskStats = taskStatsStmt.get(since) as {
+      // Count completed/failed tasks in window — uses cached statements.
+      const taskStats = this.taskThroughputStmt.get(since) as {
         total: number;
         completed: number;
         avg_duration_ms: number | null;
       };
 
-      // Count completed/failed loops in window
-      const loopStmt = this.db.prepare(`
-          SELECT COUNT(*) AS total
-          FROM loops
-          WHERE COALESCE(completed_at, created_at) >= ?
-            AND status IN ('completed', 'failed', 'cancelled')
-        `);
-      const loopStats = loopStmt.get(since) as { total: number };
+      const loopStats = this.loopThroughputStmt.get(since) as { total: number };
 
       const total = taskStats.total ?? 0;
       const completed = taskStats.completed ?? 0;

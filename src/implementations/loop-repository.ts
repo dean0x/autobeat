@@ -187,6 +187,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
   private readonly findRunningIterationsStmt: SQLite.Statement;
   private readonly findByScheduleIdStmt: SQLite.Statement;
   private readonly cleanupOldLoopsStmt: SQLite.Statement;
+  // v1.3.0 addition — cached to avoid re-prepare on every 1s dashboard poll
+  private readonly findUpdatedSinceStmt: SQLite.Statement;
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -312,6 +314,14 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
     // NOTE: Excludes 'paused' loops — paused loops should survive cleanup
     this.cleanupOldLoopsStmt = this.db.prepare(`
       DELETE FROM loops WHERE status IN ('completed', 'failed', 'cancelled') AND completed_at < ?
+    `);
+
+    // idx_loops_updated_at (migration v20) covers WHERE + ORDER BY.
+    this.findUpdatedSinceStmt = this.db.prepare(`
+      SELECT * FROM loops
+      WHERE updated_at >= ?
+      ORDER BY updated_at DESC
+      LIMIT ?
     `);
   }
 
@@ -746,13 +756,7 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
   async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Loop[]>> {
     return tryCatchAsync(
       async () => {
-        const stmt = this.db.prepare(`
-          SELECT * FROM loops
-          WHERE updated_at >= ?
-          ORDER BY updated_at DESC
-          LIMIT ?
-        `);
-        const rows = stmt.all(sinceMs, limit) as LoopRow[];
+        const rows = this.findUpdatedSinceStmt.all(sinceMs, limit) as LoopRow[];
         return rows.map((row) => this.rowToLoop(row));
       },
       operationErrorHandler('find loops updated since', { sinceMs }),

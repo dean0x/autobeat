@@ -10,11 +10,47 @@
  */
 
 import SQLite from 'better-sqlite3';
+import { z } from 'zod';
 import { LoopId, OrchestratorId, TaskId, TaskUsage } from '../core/domain.js';
 import { operationErrorHandler } from '../core/errors.js';
 import { UsageRepository } from '../core/interfaces.js';
-import { ok, Result, tryCatchAsync } from '../core/result.js';
+import { Result, tryCatchAsync } from '../core/result.js';
 import { Database } from './database.js';
+
+// ============================================================================
+// Zod schemas for boundary validation
+// Pattern: Parse, don't validate — ensures type safety at system boundary
+// ============================================================================
+
+/**
+ * Validates a raw task_usage row from the database.
+ * All numeric columns are coerced via z.number() — SQLite returns JS numbers
+ * for INTEGER/REAL columns so no coerce is needed, but the schema makes the
+ * contract explicit and catches database corruption at the boundary.
+ */
+const TaskUsageRowSchema = z.object({
+  task_id: z.string().min(1),
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cache_creation_input_tokens: z.number(),
+  cache_read_input_tokens: z.number(),
+  total_cost_usd: z.number(),
+  model: z.string().nullable(),
+  captured_at: z.number(),
+});
+
+/**
+ * Validates an aggregate row (SUM queries — no task_id or captured_at).
+ * COALESCE in the SQL guarantees non-null numbers; schema confirms that
+ * invariant at the boundary so downstream code never needs null-guards.
+ */
+const TaskUsageAggregateRowSchema = z.object({
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cache_creation_input_tokens: z.number(),
+  cache_read_input_tokens: z.number(),
+  total_cost_usd: z.number(),
+});
 
 /**
  * Zero-value aggregate returned when no usage rows match a query.
@@ -34,6 +70,11 @@ export class SQLiteUsageRepository implements UsageRepository {
   private readonly db: SQLite.Database;
   private readonly saveStmt: SQLite.Statement;
   private readonly getStmt: SQLite.Statement;
+  private readonly sumByOrchestrationStmt: SQLite.Statement;
+  private readonly sumByLoopStmt: SQLite.Statement;
+  private readonly sumGlobalStmt: SQLite.Statement;
+  private readonly sumGlobalSinceStmt: SQLite.Statement;
+  private readonly topOrchsByCostStmt: SQLite.Statement;
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -62,6 +103,84 @@ export class SQLiteUsageRepository implements UsageRepository {
     this.getStmt = this.db.prepare(`
       SELECT * FROM task_usage WHERE task_id = ?
     `);
+
+    // Recursive CTE walks the retry chain so retries roll up into root task cost.
+    // idx_tasks_retry_of (migration v20) covers the recursive JOIN on tasks.retry_of.
+    this.sumByOrchestrationStmt = this.db.prepare(`
+      WITH RECURSIVE task_tree(root_id, task_id) AS (
+        -- Base: tasks directly attributed OR via loop iterations
+        SELECT id AS root_id, id AS task_id
+          FROM tasks
+          WHERE orchestrator_id = ?
+             OR id IN (
+               SELECT task_id FROM loop_iterations
+                 WHERE loop_id = (SELECT loop_id FROM orchestrations WHERE id = ?)
+                   AND task_id IS NOT NULL
+             )
+        UNION
+        -- Recurse: retries of tasks already in the tree
+        SELECT tt.root_id, t.id
+          FROM tasks t
+          INNER JOIN task_tree tt ON t.retry_of = tt.task_id
+      )
+      SELECT
+        COALESCE(SUM(u.input_tokens), 0)                 AS input_tokens,
+        COALESCE(SUM(u.output_tokens), 0)                AS output_tokens,
+        COALESCE(SUM(u.cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
+        COALESCE(SUM(u.cache_read_input_tokens), 0)      AS cache_read_input_tokens,
+        COALESCE(SUM(u.total_cost_usd), 0)               AS total_cost_usd
+      FROM task_tree tt
+      LEFT JOIN task_usage u ON u.task_id = tt.task_id
+    `);
+
+    this.sumByLoopStmt = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(u.input_tokens), 0)                 AS input_tokens,
+        COALESCE(SUM(u.output_tokens), 0)                AS output_tokens,
+        COALESCE(SUM(u.cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
+        COALESCE(SUM(u.cache_read_input_tokens), 0)      AS cache_read_input_tokens,
+        COALESCE(SUM(u.total_cost_usd), 0)               AS total_cost_usd
+      FROM loop_iterations li
+      LEFT JOIN task_usage u ON u.task_id = li.task_id
+      WHERE li.loop_id = ?
+    `);
+
+    // sumGlobal has two variants (with/without sinceMs). Both are cached to
+    // avoid re-preparing on every 1s poll. The calling method selects the
+    // correct statement based on whether sinceMs is defined.
+    this.sumGlobalStmt = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(input_tokens), 0)                 AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)                AS output_tokens,
+        COALESCE(SUM(cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
+        COALESCE(SUM(cache_read_input_tokens), 0)      AS cache_read_input_tokens,
+        COALESCE(SUM(total_cost_usd), 0)               AS total_cost_usd
+      FROM task_usage
+    `);
+
+    this.sumGlobalSinceStmt = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(input_tokens), 0)                 AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)                AS output_tokens,
+        COALESCE(SUM(cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
+        COALESCE(SUM(cache_read_input_tokens), 0)      AS cache_read_input_tokens,
+        COALESCE(SUM(total_cost_usd), 0)               AS total_cost_usd
+      FROM task_usage
+      WHERE captured_at >= ?
+    `);
+
+    this.topOrchsByCostStmt = this.db.prepare(`
+      SELECT
+        t.orchestrator_id AS orchestration_id,
+        COALESCE(SUM(u.total_cost_usd), 0) AS total_cost
+      FROM task_usage u
+      JOIN tasks t ON t.id = u.task_id
+      WHERE u.captured_at >= ?
+        AND t.orchestrator_id IS NOT NULL
+      GROUP BY t.orchestrator_id
+      ORDER BY total_cost DESC
+      LIMIT ?
+    `);
   }
 
   async save(usage: TaskUsage): Promise<Result<void>> {
@@ -85,9 +204,9 @@ export class SQLiteUsageRepository implements UsageRepository {
   async get(taskId: TaskId): Promise<Result<TaskUsage | null>> {
     return tryCatchAsync(
       async () => {
-        const row = this.getStmt.get(taskId) as Record<string, unknown> | undefined;
+        const row = this.getStmt.get(taskId);
         if (!row) return null;
-        return this.rowToUsage(row);
+        return this.rowToUsage(TaskUsageRowSchema.parse(row));
       },
       operationErrorHandler('get task usage', { taskId }),
     );
@@ -99,38 +218,13 @@ export class SQLiteUsageRepository implements UsageRepository {
    *
    * ARCHITECTURE: Uses a recursive CTE to walk the retry chain so that
    * each task is counted once, regardless of how many retries it has.
+   * idx_tasks_retry_of (migration v20) covers the recursive JOIN.
    */
   async sumByOrchestrationId(orchId: OrchestratorId): Promise<Result<TaskUsage>> {
     return tryCatchAsync(
       async () => {
-        const stmt = this.db.prepare(`
-          WITH RECURSIVE task_tree(root_id, task_id) AS (
-            -- Base: tasks directly attributed OR via loop iterations
-            SELECT id AS root_id, id AS task_id
-              FROM tasks
-              WHERE orchestrator_id = ?
-                 OR id IN (
-                   SELECT task_id FROM loop_iterations
-                     WHERE loop_id = (SELECT loop_id FROM orchestrations WHERE id = ?)
-                       AND task_id IS NOT NULL
-                 )
-            UNION
-            -- Recurse: retries of tasks already in the tree
-            SELECT tt.root_id, t.id
-              FROM tasks t
-              INNER JOIN task_tree tt ON t.retry_of = tt.task_id
-          )
-          SELECT
-            COALESCE(SUM(u.input_tokens), 0)                 AS input_tokens,
-            COALESCE(SUM(u.output_tokens), 0)                AS output_tokens,
-            COALESCE(SUM(u.cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
-            COALESCE(SUM(u.cache_read_input_tokens), 0)      AS cache_read_input_tokens,
-            COALESCE(SUM(u.total_cost_usd), 0)               AS total_cost_usd
-          FROM task_tree tt
-          LEFT JOIN task_usage u ON u.task_id = tt.task_id
-        `);
-        const row = stmt.get(orchId, orchId) as Record<string, unknown>;
-        return this.aggregateRowToUsage(row);
+        const row = this.sumByOrchestrationStmt.get(orchId, orchId);
+        return this.aggregateRowToUsage(TaskUsageAggregateRowSchema.parse(row));
       },
       operationErrorHandler('sum usage by orchestration', { orchestratorId: orchId }),
     );
@@ -139,19 +233,8 @@ export class SQLiteUsageRepository implements UsageRepository {
   async sumByLoopId(loopId: LoopId): Promise<Result<TaskUsage>> {
     return tryCatchAsync(
       async () => {
-        const stmt = this.db.prepare(`
-          SELECT
-            COALESCE(SUM(u.input_tokens), 0)                 AS input_tokens,
-            COALESCE(SUM(u.output_tokens), 0)                AS output_tokens,
-            COALESCE(SUM(u.cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
-            COALESCE(SUM(u.cache_read_input_tokens), 0)      AS cache_read_input_tokens,
-            COALESCE(SUM(u.total_cost_usd), 0)               AS total_cost_usd
-          FROM loop_iterations li
-          LEFT JOIN task_usage u ON u.task_id = li.task_id
-          WHERE li.loop_id = ?
-        `);
-        const row = stmt.get(loopId) as Record<string, unknown>;
-        return this.aggregateRowToUsage(row);
+        const row = this.sumByLoopStmt.get(loopId);
+        return this.aggregateRowToUsage(TaskUsageAggregateRowSchema.parse(row));
       },
       operationErrorHandler('sum usage by loop', { loopId }),
     );
@@ -159,33 +242,10 @@ export class SQLiteUsageRepository implements UsageRepository {
 
   async sumGlobal(sinceMs?: number): Promise<Result<TaskUsage>> {
     return tryCatchAsync(async () => {
-      const stmt =
-        sinceMs !== undefined
-          ? this.db.prepare(`
-                SELECT
-                  COALESCE(SUM(input_tokens), 0)                 AS input_tokens,
-                  COALESCE(SUM(output_tokens), 0)                AS output_tokens,
-                  COALESCE(SUM(cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
-                  COALESCE(SUM(cache_read_input_tokens), 0)      AS cache_read_input_tokens,
-                  COALESCE(SUM(total_cost_usd), 0)               AS total_cost_usd
-                FROM task_usage
-                WHERE captured_at >= ?
-              `)
-          : this.db.prepare(`
-                SELECT
-                  COALESCE(SUM(input_tokens), 0)                 AS input_tokens,
-                  COALESCE(SUM(output_tokens), 0)                AS output_tokens,
-                  COALESCE(SUM(cache_creation_input_tokens), 0)  AS cache_creation_input_tokens,
-                  COALESCE(SUM(cache_read_input_tokens), 0)      AS cache_read_input_tokens,
-                  COALESCE(SUM(total_cost_usd), 0)               AS total_cost_usd
-                FROM task_usage
-              `);
-
-      const row =
-        sinceMs !== undefined
-          ? (stmt.get(sinceMs) as Record<string, unknown>)
-          : (stmt.get() as Record<string, unknown>);
-      return this.aggregateRowToUsage(row);
+      // Two cached statements: one with WHERE captured_at >= ?, one without.
+      // Dynamic SQL (optional WHERE) prevents a single cached statement here.
+      const row = sinceMs !== undefined ? this.sumGlobalSinceStmt.get(sinceMs) : this.sumGlobalStmt.get();
+      return this.aggregateRowToUsage(TaskUsageAggregateRowSchema.parse(row));
     }, operationErrorHandler('sum global usage'));
   }
 
@@ -194,23 +254,18 @@ export class SQLiteUsageRepository implements UsageRepository {
     limit: number,
   ): Promise<Result<readonly { orchestrationId: OrchestratorId; totalCost: number }[]>> {
     return tryCatchAsync(async () => {
-      const stmt = this.db.prepare(`
-          SELECT
-            t.orchestrator_id AS orchestration_id,
-            COALESCE(SUM(u.total_cost_usd), 0) AS total_cost
-          FROM task_usage u
-          JOIN tasks t ON t.id = u.task_id
-          WHERE u.captured_at >= ?
-            AND t.orchestrator_id IS NOT NULL
-          GROUP BY t.orchestrator_id
-          ORDER BY total_cost DESC
-          LIMIT ?
-        `);
-      const rows = stmt.all(sinceMs, limit) as Array<{ orchestration_id: string; total_cost: number }>;
-      return rows.map((r) => ({
-        orchestrationId: r.orchestration_id as OrchestratorId,
-        totalCost: r.total_cost,
-      }));
+      const TopRowSchema = z.object({
+        orchestration_id: z.string().min(1),
+        total_cost: z.number(),
+      });
+      const rows = this.topOrchsByCostStmt.all(sinceMs, limit) as unknown[];
+      return rows.map((r) => {
+        const parsed = TopRowSchema.parse(r);
+        return {
+          orchestrationId: parsed.orchestration_id as OrchestratorId,
+          totalCost: parsed.total_cost,
+        };
+      });
     }, operationErrorHandler('top orchestrations by cost'));
   }
 
@@ -218,28 +273,27 @@ export class SQLiteUsageRepository implements UsageRepository {
   // Private helpers
   // ============================================================================
 
-  private rowToUsage(row: Record<string, unknown>): TaskUsage {
+  private rowToUsage(row: z.infer<typeof TaskUsageRowSchema>): TaskUsage {
     return {
       taskId: row.task_id as TaskId,
-      inputTokens: (row.input_tokens as number) ?? 0,
-      outputTokens: (row.output_tokens as number) ?? 0,
-      cacheCreationInputTokens: (row.cache_creation_input_tokens as number) ?? 0,
-      cacheReadInputTokens: (row.cache_read_input_tokens as number) ?? 0,
-      totalCostUsd: (row.total_cost_usd as number) ?? 0,
-      model: (row.model as string | null) ?? undefined,
-      capturedAt: row.captured_at as number,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      cacheCreationInputTokens: row.cache_creation_input_tokens,
+      cacheReadInputTokens: row.cache_read_input_tokens,
+      totalCostUsd: row.total_cost_usd,
+      model: row.model ?? undefined,
+      capturedAt: row.captured_at,
     };
   }
 
-  private aggregateRowToUsage(row: Record<string, unknown> | null | undefined): TaskUsage {
-    if (!row) return ZERO_USAGE();
+  private aggregateRowToUsage(row: z.infer<typeof TaskUsageAggregateRowSchema>): TaskUsage {
     return {
       taskId: TaskId(''),
-      inputTokens: (row.input_tokens as number) ?? 0,
-      outputTokens: (row.output_tokens as number) ?? 0,
-      cacheCreationInputTokens: (row.cache_creation_input_tokens as number) ?? 0,
-      cacheReadInputTokens: (row.cache_read_input_tokens as number) ?? 0,
-      totalCostUsd: (row.total_cost_usd as number) ?? 0,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      cacheCreationInputTokens: row.cache_creation_input_tokens,
+      cacheReadInputTokens: row.cache_read_input_tokens,
+      totalCostUsd: row.total_cost_usd,
       capturedAt: 0,
     };
   }

@@ -47,6 +47,22 @@ const OrchestrationRowSchema = z.object({
   completed_at: z.number().nullable(),
 });
 
+/**
+ * Schema for rows returned by getOrchestratorChildren CTE (v1.3.0).
+ * Validates kind and status enum values at the database boundary so callers
+ * never receive unchecked string-to-enum casts.
+ */
+const OrchestratorChildRowSchema = z.object({
+  kind: z.enum(['direct', 'iteration']),
+  task_id: z.string().min(1),
+  iteration_id: z.number().nullable(),
+  status: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']),
+  created_at: z.number(),
+  prompt: z.string(),
+  agent: z.string().nullable(),
+  updated_at: z.number(),
+});
+
 // ============================================================================
 // Row types for type-safe database interaction
 // ============================================================================
@@ -83,6 +99,10 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
   private readonly deleteStmt: SQLite.Statement;
   private readonly cleanupStmt: SQLite.Statement;
   private readonly countByStatusStmt: SQLite.Statement;
+  // v1.3.0 additions — cached to avoid re-prepare on every 1s dashboard poll
+  private readonly getOrchestratorChildrenStmt: SQLite.Statement;
+  private readonly countOrchestratorChildrenStmt: SQLite.Statement;
+  private readonly findUpdatedSinceStmt: SQLite.Statement;
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -161,6 +181,66 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
 
     this.countByStatusStmt = this.db.prepare(`
       SELECT status, COUNT(*) as count FROM orchestrations GROUP BY status
+    `);
+
+    // ARCHITECTURE: getOrchestratorChildren uses a CTE with ROW_NUMBER() to
+    // deduplicate tasks that appear in both direct attribution and loop-iteration
+    // chains. The ORDER BY uses COALESCE(completed_at, started_at, created_at)
+    // which cannot be indexed (expression index is on the tasks table, not on
+    // the CTE result set). This forces an in-memory sort after the CTE
+    // materialises. Indexing the underlying tasks columns would not help here
+    // because the COALESCE is applied to the CTE output, not directly to the
+    // table. Noted as a deferred tech-debt item — would require persisting a
+    // real updated_at column on tasks to resolve.
+    this.getOrchestratorChildrenStmt = this.db.prepare(`
+      WITH all_attributed AS (
+        SELECT 'direct' AS kind, t.id AS task_id, NULL AS iteration_id,
+               t.status, t.created_at, t.prompt, t.agent,
+               COALESCE(t.completed_at, t.started_at, t.created_at) AS updated_at,
+               1 AS kind_priority
+        FROM tasks t
+        WHERE t.orchestrator_id = :orchId
+        UNION ALL
+        SELECT 'iteration' AS kind, t.id AS task_id, li.id AS iteration_id,
+               t.status, t.created_at, t.prompt, t.agent,
+               COALESCE(t.completed_at, t.started_at, t.created_at) AS updated_at,
+               0 AS kind_priority
+        FROM loop_iterations li
+        JOIN tasks t ON t.id = li.task_id
+        WHERE li.loop_id = (SELECT loop_id FROM orchestrations WHERE id = :orchId)
+      ),
+      deduped AS (
+        SELECT kind, task_id, iteration_id, status, created_at, prompt, agent, updated_at,
+               ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY kind_priority ASC) AS rn
+        FROM all_attributed
+      )
+      SELECT kind, task_id, iteration_id, status, created_at, prompt, agent, updated_at
+      FROM deduped
+      WHERE rn = 1
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT :limit OFFSET :offset
+    `);
+
+    this.countOrchestratorChildrenStmt = this.db.prepare(`
+      WITH all_attributed AS (
+        SELECT t.id AS task_id
+        FROM tasks t
+        WHERE t.orchestrator_id = :orchId
+        UNION ALL
+        SELECT t.id AS task_id
+        FROM loop_iterations li
+        JOIN tasks t ON t.id = li.task_id
+        WHERE li.loop_id = (SELECT loop_id FROM orchestrations WHERE id = :orchId)
+      )
+      SELECT COUNT(DISTINCT task_id) AS cnt FROM all_attributed
+    `);
+
+    // idx_orchestrations_updated_at (migration v20) covers WHERE + ORDER BY.
+    this.findUpdatedSinceStmt = this.db.prepare(`
+      SELECT * FROM orchestrations
+      WHERE updated_at >= ?
+      ORDER BY updated_at DESC
+      LIMIT ?
     `);
   }
 
@@ -424,56 +504,21 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       async () => {
         // CRITICAL: Dedup must happen INSIDE the CTE via ROW_NUMBER, not after LIMIT/OFFSET.
         // Using priority: 0 for iteration, 1 for direct — ROW_NUMBER picks the best row per task.
-        const stmt = this.db.prepare(`
-          WITH all_attributed AS (
-            SELECT 'direct' AS kind, t.id AS task_id, NULL AS iteration_id,
-                   t.status, t.created_at, t.prompt, t.agent,
-                   COALESCE(t.completed_at, t.started_at, t.created_at) AS updated_at,
-                   1 AS kind_priority
-            FROM tasks t
-            WHERE t.orchestrator_id = :orchId
-            UNION ALL
-            SELECT 'iteration' AS kind, t.id AS task_id, li.id AS iteration_id,
-                   t.status, t.created_at, t.prompt, t.agent,
-                   COALESCE(t.completed_at, t.started_at, t.created_at) AS updated_at,
-                   0 AS kind_priority
-            FROM loop_iterations li
-            JOIN tasks t ON t.id = li.task_id
-            WHERE li.loop_id = (SELECT loop_id FROM orchestrations WHERE id = :orchId)
-          ),
-          deduped AS (
-            SELECT kind, task_id, iteration_id, status, created_at, prompt, agent, updated_at,
-                   ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY kind_priority ASC) AS rn
-            FROM all_attributed
-          )
-          SELECT kind, task_id, iteration_id, status, created_at, prompt, agent, updated_at
-          FROM deduped
-          WHERE rn = 1
-          ORDER BY updated_at DESC, created_at DESC
-          LIMIT :limit OFFSET :offset
-        `);
+        const rows = this.getOrchestratorChildrenStmt.all({ orchId: orchestrationId, limit, offset }) as unknown[];
 
-        const rows = stmt.all({ orchId: orchestrationId, limit, offset }) as Array<{
-          kind: string;
-          task_id: string;
-          iteration_id: number | null;
-          status: string;
-          created_at: number;
-          prompt: string;
-          agent: string | null;
-          updated_at: number;
-        }>;
-
-        return rows.map((row) => ({
-          taskId: row.task_id as TaskId,
-          kind: row.kind as 'direct' | 'iteration',
-          iterationId: row.iteration_id ?? undefined,
-          status: row.status as TaskStatus,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-          prompt: row.prompt,
-          agent: row.agent as OrchestratorChild['agent'],
-        }));
+        return rows.map((rawRow) => {
+          const row = OrchestratorChildRowSchema.parse(rawRow);
+          return {
+            taskId: row.task_id as TaskId,
+            kind: row.kind,
+            iterationId: row.iteration_id ?? undefined,
+            status: row.status as TaskStatus,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            prompt: row.prompt,
+            agent: row.agent as OrchestratorChild['agent'],
+          };
+        });
       },
       operationErrorHandler('get orchestrator children', { orchestratorId: orchestrationId }),
     );
@@ -487,21 +532,7 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
   async countOrchestratorChildren(orchestrationId: OrchestratorId): Promise<Result<number>> {
     return tryCatchAsync(
       async () => {
-        const stmt = this.db.prepare(`
-          WITH all_attributed AS (
-            SELECT t.id AS task_id
-            FROM tasks t
-            WHERE t.orchestrator_id = :orchId
-            UNION ALL
-            SELECT t.id AS task_id
-            FROM loop_iterations li
-            JOIN tasks t ON t.id = li.task_id
-            WHERE li.loop_id = (SELECT loop_id FROM orchestrations WHERE id = :orchId)
-          )
-          SELECT COUNT(DISTINCT task_id) AS cnt FROM all_attributed
-        `);
-
-        const row = stmt.get({ orchId: orchestrationId }) as { cnt: number } | undefined;
+        const row = this.countOrchestratorChildrenStmt.get({ orchId: orchestrationId }) as { cnt: number } | undefined;
         return row?.cnt ?? 0;
       },
       operationErrorHandler('count orchestrator children', { orchestratorId: orchestrationId }),
@@ -511,14 +542,8 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
   async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Orchestration[]>> {
     return tryCatchAsync(
       async () => {
-        const stmt = this.db.prepare(`
-          SELECT * FROM orchestrations
-          WHERE updated_at >= ?
-          ORDER BY updated_at DESC
-          LIMIT ?
-        `);
-        const rows = stmt.all(sinceMs, limit) as OrchestrationRow[];
-        return rows.map((row) => this.rowToOrchestration(row));
+        const rows = this.findUpdatedSinceStmt.all(sinceMs, limit) as OrchestrationRow[];
+        return rows.map((row) => this.rowToOrchestration(OrchestrationRowSchema.parse(row)));
       },
       operationErrorHandler('find orchestrations updated since', { sinceMs }),
     );
