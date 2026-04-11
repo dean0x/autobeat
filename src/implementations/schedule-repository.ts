@@ -702,4 +702,24 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
         throw new Error(`Unknown schedule status: ${value} - possible data corruption`);
     }
   }
+
+  // ============================================================================
+  // v1.3.0 additions
+  // ============================================================================
+
+  async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Schedule[]>> {
+    return tryCatchAsync(
+      async () => {
+        const stmt = this.db.prepare(`
+          SELECT * FROM schedules
+          WHERE updated_at >= ?
+          ORDER BY updated_at DESC
+          LIMIT ?
+        `);
+        const rows = stmt.all(sinceMs, limit) as ScheduleRow[];
+        return rows.map((row) => this.rowToSchedule(row));
+      },
+      operationErrorHandler('find schedules updated since', { sinceMs }),
+    );
+  }
 }

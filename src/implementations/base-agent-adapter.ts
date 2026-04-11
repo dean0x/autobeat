@@ -131,6 +131,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     workingDirectory: string,
     taskId?: string,
     model?: string,
+    orchestratorId?: string,
   ): Result<{ process: ChildProcess; pid: number }> {
     try {
       // Pre-spawn: verify CLI binary exists before anything else
@@ -162,6 +163,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         ),
       );
       const baseUrlEnv = this.resolveBaseUrl(agentConfig);
+      // NOTE: AUTOBEAT_ prefix is NOT in envPrefixesToStrip — it is preserved in cleanEnv.
+      // We explicitly set AUTOBEAT_WORKER and AUTOBEAT_TASK_ID here, and optionally
+      // AUTOBEAT_ORCHESTRATOR_ID so sub-tasks spawned by this agent are attributed to
+      // the parent orchestration (v1.3.0).
       const env = {
         ...this.additionalEnv,
         ...cleanEnv,
@@ -169,6 +174,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         ...baseUrlEnv,
         AUTOBEAT_WORKER: 'true',
         ...(taskId && { AUTOBEAT_TASK_ID: taskId }),
+        ...(orchestratorId && { AUTOBEAT_ORCHESTRATOR_ID: orchestratorId }),
       };
 
       const child = spawn(this.command, [...args], {

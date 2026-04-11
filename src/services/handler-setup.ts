@@ -26,6 +26,7 @@ import {
   TaskQueue,
   TaskRepository,
   TransactionRunner,
+  UsageRepository,
   WorkerPool,
 } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
@@ -39,6 +40,7 @@ import { OrchestrationHandler } from './handlers/orchestration-handler.js';
 import { PersistenceHandler } from './handlers/persistence-handler.js';
 import { QueueHandler } from './handlers/queue-handler.js';
 import { ScheduleHandler } from './handlers/schedule-handler.js';
+import { UsageCaptureHandler } from './handlers/usage-capture-handler.js';
 import { WorkerHandler } from './handlers/worker-handler.js';
 
 /**
@@ -62,6 +64,7 @@ export interface HandlerDependencies {
   readonly loopRepository: LoopRepository & SyncLoopOperations;
   readonly loopService?: LoopService;
   readonly orchestrationRepository?: SyncOrchestrationOperations;
+  readonly usageRepository?: UsageRepository;
 }
 
 /**
@@ -79,6 +82,8 @@ export interface HandlerSetupResult {
   readonly loopHandler: LoopHandler;
   /** OrchestrationHandler uses factory pattern, returned separately for unified lifecycle */
   readonly orchestrationHandler?: OrchestrationHandler;
+  /** UsageCaptureHandler uses factory pattern, returned separately for unified lifecycle */
+  readonly usageCaptureHandler?: UsageCaptureHandler;
 }
 
 /**
@@ -172,6 +177,10 @@ export function extractHandlerDependencies(container: Container): Result<Handler
   const orchestrationRepoResult = getDependency<SyncOrchestrationOperations>(container, 'orchestrationRepository');
   const orchestrationRepository = orchestrationRepoResult.ok ? orchestrationRepoResult.value : undefined;
 
+  // Optional: UsageRepository for UsageCaptureHandler (graceful if not registered)
+  const usageRepositoryResult = getDependency<UsageRepository>(container, 'usageRepository');
+  const usageRepository = usageRepositoryResult.ok ? usageRepositoryResult.value : undefined;
+
   return ok({
     config: configResult.value,
     logger: loggerResult.value,
@@ -189,6 +198,7 @@ export function extractHandlerDependencies(container: Container): Result<Handler
     loopRepository: loopRepositoryResult.value,
     loopService,
     orchestrationRepository,
+    usageRepository,
   });
 }
 
@@ -393,10 +403,40 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     }
   }
 
+  // 9. Usage Capture Handler - captures Claude token/cost usage at TaskCompleted (v1.3.0)
+  // ARCHITECTURE: Optional — only created if usageRepository is registered.
+  // Best-effort: failures are logged but never block other handlers.
+  let usageCaptureHandler: UsageCaptureHandler | undefined;
+  if (deps.usageRepository) {
+    const usageCaptureHandlerResult = await UsageCaptureHandler.create({
+      usageRepository: deps.usageRepository,
+      outputRepository: deps.outputRepository,
+      taskRepository: deps.taskRepository,
+      eventBus,
+      logger: childLogger('UsageCaptureHandler'),
+    });
+    if (!usageCaptureHandlerResult.ok) {
+      // Non-fatal: log warning but continue without usage capture
+      setupLogger.warn('Failed to create UsageCaptureHandler', {
+        error: usageCaptureHandlerResult.error.message,
+      });
+    } else {
+      usageCaptureHandler = usageCaptureHandlerResult.value;
+    }
+  }
+
   setupLogger.info('Event handlers initialized successfully', {
     standardHandlers: standardHandlers.length,
-    totalHandlers: standardHandlers.length + 4 + (orchestrationHandler ? 1 : 0),
+    totalHandlers: standardHandlers.length + 4 + (orchestrationHandler ? 1 : 0) + (usageCaptureHandler ? 1 : 0),
   });
 
-  return ok({ registry, dependencyHandler, scheduleHandler, checkpointHandler, loopHandler, orchestrationHandler });
+  return ok({
+    registry,
+    dependencyHandler,
+    scheduleHandler,
+    checkpointHandler,
+    loopHandler,
+    orchestrationHandler,
+    usageCaptureHandler,
+  });
 }

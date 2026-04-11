@@ -767,6 +767,39 @@ export class Database implements TransactionRunner {
           db.exec('ALTER TABLE orchestrations ADD COLUMN model TEXT');
         },
       },
+      {
+        version: 18,
+        description: 'Add orchestrator_id to tasks for sub-task attribution (v1.3.0)',
+        up: (db) => {
+          // ARCHITECTURE: Nullable FK to orchestrations; ON DELETE SET NULL preserves task history
+          // if the orchestration row is removed. Partial index for efficient sub-task lookups.
+          db.exec(`ALTER TABLE tasks ADD COLUMN orchestrator_id TEXT REFERENCES orchestrations(id) ON DELETE SET NULL`);
+          db.exec(
+            `CREATE INDEX IF NOT EXISTS idx_tasks_orchestrator_id ON tasks(orchestrator_id) WHERE orchestrator_id IS NOT NULL`,
+          );
+        },
+      },
+      {
+        version: 19,
+        description: 'Add task_usage table for token/cost tracking (v1.3.0)',
+        up: (db) => {
+          // ARCHITECTURE: task_id is PK and FK — one usage row per task, cascade-deleted with task.
+          // captured_at index allows efficient time-window aggregates (rolling 24h, etc.)
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS task_usage (
+              task_id                      TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+              input_tokens                 INTEGER NOT NULL DEFAULT 0,
+              output_tokens                INTEGER NOT NULL DEFAULT 0,
+              cache_creation_input_tokens  INTEGER NOT NULL DEFAULT 0,
+              cache_read_input_tokens      INTEGER NOT NULL DEFAULT 0,
+              total_cost_usd               REAL    NOT NULL DEFAULT 0,
+              model                        TEXT,
+              captured_at                  INTEGER NOT NULL
+            )
+          `);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_task_usage_captured_at ON task_usage(captured_at)`);
+        },
+      },
     ];
   }
 

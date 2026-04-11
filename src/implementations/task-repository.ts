@@ -6,7 +6,7 @@
 import SQLite from 'better-sqlite3';
 import { z } from 'zod';
 import { AGENT_PROVIDERS_TUPLE, AgentProvider } from '../core/agents.js';
-import { Priority, Task, TaskId, TaskStatus, WorkerId } from '../core/domain.js';
+import { OrchestratorId, Priority, Task, TaskId, TaskStatus, WorkerId } from '../core/domain.js';
 import { AutobeatError, ErrorCode, operationErrorHandler } from '../core/errors.js';
 import { SyncTaskOperations, TaskRepository } from '../core/interfaces.js';
 import { err, ok, Result, tryCatchAsync } from '../core/result.js';
@@ -36,6 +36,7 @@ const TaskRowSchema = z.object({
   continue_from: z.string().nullable(),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).nullable(),
   model: z.string().nullable(),
+  orchestrator_id: z.string().nullable().optional(),
 });
 
 /**
@@ -62,6 +63,7 @@ interface TaskRow {
   readonly continue_from: string | null;
   readonly agent: string | null;
   readonly model: string | null;
+  readonly orchestrator_id?: string | null;
 }
 
 export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations {
@@ -76,6 +78,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
   private readonly countStmt: SQLite.Statement;
   private readonly countByStatusStmt: SQLite.Statement;
   private readonly findAllPaginatedStmt: SQLite.Statement;
+  private readonly findUpdatedSinceStmt: SQLite.Statement;
 
   /** Default pagination limit for findAll() */
   private static readonly DEFAULT_LIMIT = 100;
@@ -89,12 +92,12 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
         id, prompt, status, priority, working_directory,
         timeout, max_output_buffer,
         created_at, started_at, completed_at, worker_id, exit_code, dependencies,
-        parent_task_id, retry_count, retry_of, continue_from, agent, model
+        parent_task_id, retry_count, retry_of, continue_from, agent, model, orchestrator_id
       ) VALUES (
         @id, @prompt, @status, @priority, @workingDirectory,
         @timeout, @maxOutputBuffer,
         @createdAt, @startedAt, @completedAt, @workerId, @exitCode, @dependencies,
-        @parentTaskId, @retryCount, @retryOf, @continueFrom, @agent, @model
+        @parentTaskId, @retryCount, @retryOf, @continueFrom, @agent, @model, @orchestratorId
       )
     `);
 
@@ -118,7 +121,8 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
         retry_of = @retryOf,
         continue_from = @continueFrom,
         agent = @agent,
-        model = @model
+        model = @model,
+        orchestrator_id = @orchestratorId
       WHERE id = @id
     `);
 
@@ -126,7 +130,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model
+             dependencies, continue_from, agent, model, orchestrator_id
       FROM tasks WHERE id = ?
     `);
 
@@ -134,7 +138,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model
+             dependencies, continue_from, agent, model, orchestrator_id
       FROM tasks ORDER BY created_at DESC
     `);
 
@@ -142,7 +146,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model
+             dependencies, continue_from, agent, model, orchestrator_id
       FROM tasks WHERE status = ? ORDER BY created_at DESC
     `);
 
@@ -158,8 +162,20 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       SELECT id, prompt, status, priority, working_directory,
              timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
              created_at, started_at, completed_at, worker_id, exit_code,
-             dependencies, continue_from, agent, model
+             dependencies, continue_from, agent, model, orchestrator_id
       FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?
+    `);
+
+    // NOTE: tasks table has no updated_at column — use completed_at (transition time) or created_at
+    this.findUpdatedSinceStmt = this.db.prepare(`
+      SELECT id, prompt, status, priority, working_directory,
+             timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
+             created_at, started_at, completed_at, worker_id, exit_code,
+             dependencies, continue_from, agent, model, orchestrator_id
+      FROM tasks
+      WHERE COALESCE(completed_at, started_at, created_at) >= ?
+      ORDER BY COALESCE(completed_at, started_at, created_at) DESC
+      LIMIT ?
     `);
 
     this.deleteStmt = this.db.prepare(`
@@ -199,6 +215,7 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       continueFrom: task.continueFrom || null,
       agent: task.agent || null,
       model: task.model || null,
+      orchestratorId: task.orchestratorId ?? null,
     };
   }
 
@@ -355,11 +372,106 @@ export class SQLiteTaskRepository implements TaskRepository, SyncTaskOperations 
       continueFrom: data.continue_from ? (data.continue_from as TaskId) : undefined,
       agent: data.agent ?? undefined,
       model: data.model ?? undefined,
+      orchestratorId: data.orchestrator_id ? (data.orchestrator_id as OrchestratorId) : undefined,
       createdAt: data.created_at,
       startedAt: data.started_at || undefined,
       completedAt: data.completed_at || undefined,
       workerId: data.worker_id ? (data.worker_id as WorkerId) : undefined,
       exitCode: data.exit_code ?? undefined,
     };
+  }
+
+  async findByOrchestratorId(
+    orchId: OrchestratorId,
+    opts?: { statuses?: readonly string[] },
+  ): Promise<Result<readonly Task[]>> {
+    return tryCatchAsync(
+      async () => {
+        if (opts?.statuses && opts.statuses.length > 0) {
+          // Dynamic query with status filter — build in-list at runtime
+          const placeholders = opts.statuses.map(() => '?').join(', ');
+          const stmt = this.db.prepare(`
+            SELECT id, prompt, status, priority, working_directory,
+                   timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
+                   created_at, started_at, completed_at, worker_id, exit_code,
+                   dependencies, continue_from, agent, model, orchestrator_id
+            FROM tasks
+            WHERE orchestrator_id = ? AND status IN (${placeholders})
+            ORDER BY created_at DESC
+          `);
+          const rows = stmt.all(orchId, ...opts.statuses) as TaskRow[];
+          return rows.map((row) => this.rowToTask(row));
+        }
+
+        const stmt = this.db.prepare(`
+          SELECT id, prompt, status, priority, working_directory,
+                 timeout, max_output_buffer, parent_task_id, retry_count, retry_of,
+                 created_at, started_at, completed_at, worker_id, exit_code,
+                 dependencies, continue_from, agent, model, orchestrator_id
+          FROM tasks
+          WHERE orchestrator_id = ?
+          ORDER BY created_at DESC
+        `);
+        const rows = stmt.all(orchId) as TaskRow[];
+        return rows.map((row) => this.rowToTask(row));
+      },
+      operationErrorHandler('find tasks by orchestrator', { orchestratorId: orchId }),
+    );
+  }
+
+  async getThroughputStats(
+    windowMs: number,
+  ): Promise<Result<{ tasksPerHour: number; loopsPerHour: number; successRate: number; avgDurationMs: number }>> {
+    return tryCatchAsync(async () => {
+      const since = Date.now() - windowMs;
+      const windowHours = windowMs / 3_600_000;
+
+      // Count completed/failed tasks in window
+      const taskStatsStmt = this.db.prepare(`
+          SELECT
+            COUNT(*)                                             AS total,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+            AVG(CASE WHEN completed_at IS NOT NULL AND started_at IS NOT NULL
+                     THEN completed_at - started_at END)         AS avg_duration_ms
+          FROM tasks
+          WHERE COALESCE(completed_at, created_at) >= ?
+            AND status IN ('completed', 'failed', 'cancelled')
+        `);
+      const taskStats = taskStatsStmt.get(since) as {
+        total: number;
+        completed: number;
+        avg_duration_ms: number | null;
+      };
+
+      // Count completed/failed loops in window
+      const loopStmt = this.db.prepare(`
+          SELECT COUNT(*) AS total
+          FROM loops
+          WHERE COALESCE(completed_at, created_at) >= ?
+            AND status IN ('completed', 'failed', 'cancelled')
+        `);
+      const loopStats = loopStmt.get(since) as { total: number };
+
+      const total = taskStats.total ?? 0;
+      const completed = taskStats.completed ?? 0;
+      const loopsTotal = loopStats.total ?? 0;
+
+      return {
+        tasksPerHour: windowHours > 0 ? total / windowHours : 0,
+        loopsPerHour: windowHours > 0 ? loopsTotal / windowHours : 0,
+        successRate: total > 0 ? completed / total : 0,
+        avgDurationMs: taskStats.avg_duration_ms ?? 0,
+      };
+    }, operationErrorHandler('get throughput stats'));
+  }
+
+  async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Task[]>> {
+    return tryCatchAsync(
+      async () => {
+        const rows = this.findUpdatedSinceStmt.all(sinceMs, limit) as TaskRow[];
+        return rows.map((row) => this.rowToTask(row));
+      },
+      operationErrorHandler('find tasks updated since', { sinceMs }),
+    );
   }
 }

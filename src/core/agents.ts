@@ -241,6 +241,7 @@ export interface AgentAdapter {
    * @param workingDirectory - Directory to run in
    * @param taskId - Optional task ID for identification
    * @param model - Optional model override (per-task model overrides agent config model)
+   * @param orchestratorId - Optional orchestration ID for sub-task attribution (v1.3.0)
    * @returns Process handle with PID, or error
    */
   spawn(
@@ -248,6 +249,7 @@ export interface AgentAdapter {
     workingDirectory: string,
     taskId?: string,
     model?: string,
+    orchestratorId?: string,
   ): Result<{ process: ChildProcess; pid: number }>;
 
   /**

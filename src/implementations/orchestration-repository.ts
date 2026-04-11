@@ -11,7 +11,15 @@ import os from 'os';
 import path from 'path';
 import { z } from 'zod';
 import { type AgentProvider, isAgentProvider } from '../core/agents.js';
-import { LoopId, Orchestration, OrchestratorId, OrchestratorStatus } from '../core/domain.js';
+import {
+  LoopId,
+  Orchestration,
+  OrchestratorChild,
+  OrchestratorId,
+  OrchestratorStatus,
+  TaskId,
+  TaskStatus,
+} from '../core/domain.js';
 import { operationErrorHandler } from '../core/errors.js';
 import { OrchestrationRepository, SyncOrchestrationOperations } from '../core/interfaces.js';
 import { type Result, tryCatchAsync } from '../core/result.js';
@@ -391,5 +399,95 @@ export class SQLiteOrchestrationRepository implements OrchestrationRepository, S
       throw new Error(`Unknown agent provider: ${value} - possible data corruption`);
     }
     return value;
+  }
+
+  // ============================================================================
+  // v1.3.0 additions
+  // ============================================================================
+
+  /**
+   * Get all tasks attributed to an orchestration.
+   * Unions direct attribution (tasks.orchestrator_id) and loop iteration chain.
+   * Application-layer deduplication: iteration kind preferred when both match.
+   * Ordered by updated_at DESC, created_at DESC (newest activity first).
+   */
+  async getOrchestratorChildren(
+    orchestrationId: OrchestratorId,
+    limit: number,
+  ): Promise<Result<readonly OrchestratorChild[]>> {
+    return tryCatchAsync(
+      async () => {
+        const stmt = this.db.prepare(`
+          WITH direct_attribution AS (
+            SELECT 'direct' AS kind, t.id, NULL AS iteration_id,
+                   t.status, t.created_at, t.prompt, t.agent,
+                   COALESCE(t.completed_at, t.started_at, t.created_at) AS updated_at
+            FROM tasks t
+            WHERE t.orchestrator_id = :orchId
+          ),
+          loop_chain AS (
+            SELECT 'iteration' AS kind, t.id, li.id AS iteration_id,
+                   t.status, t.created_at, t.prompt, t.agent,
+                   COALESCE(t.completed_at, t.started_at, t.created_at) AS updated_at
+            FROM loop_iterations li
+            JOIN tasks t ON t.id = li.task_id
+            WHERE li.loop_id = (SELECT loop_id FROM orchestrations WHERE id = :orchId)
+          )
+          SELECT * FROM direct_attribution
+          UNION
+          SELECT * FROM loop_chain
+          ORDER BY updated_at DESC, created_at DESC
+          LIMIT :limit
+        `);
+
+        const rows = stmt.all({ orchId: orchestrationId, limit }) as Array<{
+          kind: string;
+          id: string;
+          iteration_id: number | null;
+          status: string;
+          created_at: number;
+          prompt: string;
+          agent: string | null;
+          updated_at: number;
+        }>;
+
+        // Application-layer dedup: prefer 'iteration' over 'direct' for same task_id
+        const seen = new Map<string, OrchestratorChild>();
+        for (const row of rows) {
+          const existing = seen.get(row.id);
+          const child: OrchestratorChild = {
+            taskId: row.id as TaskId,
+            kind: row.kind as 'direct' | 'iteration',
+            iterationId: row.iteration_id ?? undefined,
+            status: row.status as TaskStatus,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            prompt: row.prompt,
+            agent: row.agent as OrchestratorChild['agent'],
+          };
+          if (!existing || child.kind === 'iteration') {
+            seen.set(row.id, child);
+          }
+        }
+        return Array.from(seen.values());
+      },
+      operationErrorHandler('get orchestrator children', { orchestratorId: orchestrationId }),
+    );
+  }
+
+  async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Orchestration[]>> {
+    return tryCatchAsync(
+      async () => {
+        const stmt = this.db.prepare(`
+          SELECT * FROM orchestrations
+          WHERE updated_at >= ?
+          ORDER BY updated_at DESC
+          LIMIT ?
+        `);
+        const rows = stmt.all(sinceMs, limit) as OrchestrationRow[];
+        return rows.map((row) => this.rowToOrchestration(row));
+      },
+      operationErrorHandler('find orchestrations updated since', { sinceMs }),
+    );
   }
 }

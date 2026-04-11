@@ -2,7 +2,7 @@ import { bootstrap } from '../../bootstrap.js';
 import type { AgentProvider } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
 import type { TaskRequest } from '../../core/domain.js';
-import { Priority, TaskId } from '../../core/domain.js';
+import { OrchestratorId, Priority, TaskId } from '../../core/domain.js';
 import type { EventBus } from '../../core/events/event-bus.js';
 import type {
   OutputCapturedEvent,
@@ -11,7 +11,7 @@ import type {
   TaskFailedEvent,
   TaskTimeoutEvent,
 } from '../../core/events/events.js';
-import type { TaskManager } from '../../core/interfaces.js';
+import type { OrchestrationRepository, TaskManager } from '../../core/interfaces.js';
 import { createDetachLogDir, createDetachLogFile, pollLogFileForId, spawnDetachedProcess } from '../detach-helpers.js';
 import { errorMessage } from '../services.js';
 import * as ui from '../ui.js';
@@ -176,6 +176,25 @@ export async function runTask(
       if (params.length > 0) ui.info(params.join(' | '));
     }
 
+    // v1.3.0: Read orchestrator attribution env var (set by BaseAgentAdapter when running inside
+    // an orchestration). Validated against DB — dropped silently if orchestration not found.
+    // SECURITY: Only trust env vars from our own process (AUTOBEAT_WORKER gate above ensures
+    // this runs as a spawned worker, not an arbitrary shell invocation).
+    let orchestratorId: OrchestratorId | undefined;
+    const envOrchId = process.env.AUTOBEAT_ORCHESTRATOR_ID;
+    if (envOrchId) {
+      const orchRepoResult = container.get<OrchestrationRepository>('orchestrationRepository');
+      if (orchRepoResult.ok) {
+        const orchResult = await orchRepoResult.value.findById(OrchestratorId(envOrchId));
+        if (orchResult.ok && orchResult.value) {
+          orchestratorId = OrchestratorId(envOrchId);
+        } else {
+          // Stale env var from a prior shell / process — drop silently
+          process.stderr.write(`[autobeat] AUTOBEAT_ORCHESTRATOR_ID '${envOrchId}' not found in DB, ignoring\n`);
+        }
+      }
+    }
+
     const request: TaskRequest = {
       prompt,
       ...options,
@@ -184,6 +203,7 @@ export async function runTask(
       continueFrom: options?.continueFrom ? TaskId(options.continueFrom) : undefined,
       agent: options?.agent as AgentProvider | undefined,
       model: options?.model,
+      orchestratorId,
     };
 
     const result = await taskManager.delegate(request);

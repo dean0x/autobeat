@@ -27,6 +27,7 @@ import {
   TaskQueue,
   TaskRepository,
   TransactionRunner,
+  UsageRepository,
   WorkerPool,
   WorkerRepository,
 } from './core/interfaces.js';
@@ -97,6 +98,7 @@ import { SystemResourceMonitor } from './implementations/resource-monitor.js';
 import { SQLiteScheduleRepository } from './implementations/schedule-repository.js';
 import { PriorityTaskQueue } from './implementations/task-queue.js';
 import { SQLiteTaskRepository } from './implementations/task-repository.js';
+import { SQLiteUsageRepository } from './implementations/usage-repository.js';
 import { SQLiteWorkerRepository } from './implementations/worker-repository.js';
 
 // Services
@@ -286,6 +288,13 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
     const dbResult = container.get<Database>('database');
     if (!dbResult.ok) throw new Error('Failed to get database for OrchestrationRepository');
     return new SQLiteOrchestrationRepository(dbResult.value);
+  });
+
+  // Register UsageRepository for token/cost tracking (v1.3.0)
+  container.registerSingleton('usageRepository', () => {
+    const dbResult = container.get<Database>('database');
+    if (!dbResult.ok) throw new Error('Failed to get database for UsageRepository');
+    return new SQLiteUsageRepository(dbResult.value);
   });
 
   // Register ScheduleService for schedule management (v0.4.0)

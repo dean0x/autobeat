@@ -68,6 +68,21 @@ const DelegateTaskSchema = z.object({
     .max(200)
     .optional()
     .describe('Model override for this task (overrides agent-config default)'),
+  /**
+   * v1.3.0: Orchestration attribution metadata.
+   * IMPORTANT (Risk #8): This is intentionally per-request metadata, NOT an env var.
+   * The MCP server is long-lived and shared across orchestrators; reading an env var
+   * here would mix attribution across concurrent orchestrations.
+   */
+  metadata: z
+    .object({
+      orchestratorId: z
+        .string()
+        .regex(/^orchestrator-/)
+        .optional(),
+    })
+    .optional()
+    .describe('Optional per-request metadata for orchestration attribution'),
 });
 
 const TaskStatusSchema = z.object({
@@ -1491,6 +1506,22 @@ export class MCPAdapter {
       validatedWorkingDirectory = pathValidation.value;
     }
 
+    // v1.3.0: Validate orchestratorId from per-request metadata against DB.
+    // IMPORTANT: Do NOT use an env var here — the MCP server is long-lived and shared
+    // across orchestrators. Per-request metadata is the only safe mechanism (Risk #8).
+    let orchestratorId: OrchestratorId | undefined;
+    if (data.metadata?.orchestratorId && this.orchestrationService) {
+      const orchResult = await this.orchestrationService.getOrchestration(OrchestratorId(data.metadata.orchestratorId));
+      if (orchResult.ok) {
+        orchestratorId = OrchestratorId(data.metadata.orchestratorId);
+      } else {
+        // Drop silently — stale or unknown orchestratorId should not block task delegation
+        this.logger.warn('DelegateTask: metadata.orchestratorId not found in DB, ignoring', {
+          orchestratorId: data.metadata.orchestratorId,
+        });
+      }
+    }
+
     // Create request with validated paths
     const request: TaskRequest = {
       prompt: data.prompt,
@@ -1502,6 +1533,7 @@ export class MCPAdapter {
       continueFrom: data.continueFrom ? TaskId(data.continueFrom) : undefined,
       agent: data.agent as AgentProvider | undefined,
       model: data.model,
+      orchestratorId,
     };
 
     // Delegate task using our new architecture

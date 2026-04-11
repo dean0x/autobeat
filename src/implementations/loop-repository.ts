@@ -734,4 +734,24 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
         throw new Error(`Unknown optimize direction: ${value} - possible data corruption`);
     }
   }
+
+  // ============================================================================
+  // v1.3.0 additions
+  // ============================================================================
+
+  async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Loop[]>> {
+    return tryCatchAsync(
+      async () => {
+        const stmt = this.db.prepare(`
+          SELECT * FROM loops
+          WHERE updated_at >= ?
+          ORDER BY updated_at DESC
+          LIMIT ?
+        `);
+        const rows = stmt.all(sinceMs, limit) as LoopRow[];
+        return rows.map((row) => this.rowToLoop(row));
+      },
+      operationErrorHandler('find loops updated since', { sinceMs }),
+    );
+  }
 }
