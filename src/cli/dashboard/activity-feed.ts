@@ -89,7 +89,7 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
 
   for (const task of tasks) {
     entries.push({
-      timestamp: new Date(task.updatedAt ?? task.createdAt ?? 0),
+      timestamp: task.updatedAt ?? task.createdAt ?? 0,
       kind: 'task',
       entityId: task.id,
       status: task.status,
@@ -99,7 +99,7 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
 
   for (const loop of loops) {
     entries.push({
-      timestamp: new Date(loop.updatedAt ?? loop.createdAt ?? 0),
+      timestamp: loop.updatedAt ?? loop.createdAt ?? 0,
       kind: 'loop',
       entityId: loop.id,
       status: loop.status,
@@ -109,7 +109,7 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
 
   for (const orch of orchestrations) {
     entries.push({
-      timestamp: new Date(orch.updatedAt ?? orch.createdAt ?? 0),
+      timestamp: orch.updatedAt ?? orch.createdAt ?? 0,
       kind: 'orchestration',
       entityId: orch.id,
       status: orch.status,
@@ -119,7 +119,7 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
 
   for (const sched of schedules) {
     entries.push({
-      timestamp: new Date(sched.updatedAt ?? sched.createdAt ?? 0),
+      timestamp: sched.updatedAt ?? sched.createdAt ?? 0,
       kind: 'schedule',
       entityId: sched.id,
       status: sched.status,
@@ -127,8 +127,8 @@ export function buildActivityFeed(args: BuildActivityFeedArgs): readonly Activit
     });
   }
 
-  // Sort descending by timestamp
-  entries.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  // Sort descending by timestamp (epoch ms — plain numeric comparison)
+  entries.sort((a, b) => b.timestamp - a.timestamp);
 
   // Apply limit
   return entries.slice(0, limit);

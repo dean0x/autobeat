@@ -823,9 +823,10 @@ export interface OrchestratorChild {
  * A single entry in the activity feed — time-sorted merge of recent state
  * changes across tasks, loops, orchestrations, and schedules.
  * ARCHITECTURE: Read-only value object for dashboard display.
+ * timestamp is epoch ms (number) — matches all other domain time fields.
  */
 export interface ActivityEntry {
-  readonly timestamp: Date;
+  readonly timestamp: number;
   readonly kind: 'task' | 'loop' | 'orchestration' | 'schedule';
   readonly entityId: string;
   readonly status: string;

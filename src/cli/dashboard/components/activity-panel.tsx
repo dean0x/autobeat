@@ -21,9 +21,10 @@ interface ActivityPanelProps {
   readonly onSelect: (entry: ActivityEntry) => void;
 }
 
-function formatTime(date: Date): string {
-  const h = date.getHours().toString().padStart(2, '0');
-  const m = date.getMinutes().toString().padStart(2, '0');
+function formatTime(epochMs: number): string {
+  const d = new Date(epochMs);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
   return `${h}:${m}`;
 }
 
