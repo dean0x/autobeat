@@ -17,12 +17,19 @@ import { checkOrchestrationLiveness, type Liveness } from '../../services/orches
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { buildActivityFeed } from './activity-feed.js';
 import type { DashboardData, DetailExtra, EntityCounts, ViewState } from './types.js';
+import { ORCHESTRATION_CHILDREN_PAGE_SIZE } from './views/orchestration-detail.js';
 
 export interface UseDashboardDataResult {
   readonly data: DashboardData | null;
   readonly error: string | null;
   readonly refreshedAt: Date | null;
   readonly refreshNow: () => void;
+}
+
+/** Page tracking for orchestration detail pagination (D3 drill-through) */
+export interface OrchestratorPageState {
+  /** 0-based page number for orchestration detail children */
+  readonly orchestrationChildPage: number;
 }
 
 // ============================================================================
@@ -77,8 +84,13 @@ function unwrapOrErr<T>(label: string, result: Result<T, Error>): Result<T, stri
  * Fetch all dashboard data in parallel.
  * Returns a Result<DashboardData> — on any repository error, returns the error message.
  * For detail extras (iterations, executions), errors are handled gracefully (undefined).
+ * @param childPage - 0-based page number for orchestration detail children (default: 0)
  */
-export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): Promise<Result<DashboardData, string>> {
+export async function fetchAllData(
+  ctx: ReadOnlyContext,
+  viewState: ViewState,
+  childPage = 0,
+): Promise<Result<DashboardData, string>> {
   const { taskRepository, loopRepository, scheduleRepository, orchestrationRepository, workerRepository } = ctx;
 
   // Parallel fetch: entity lists + status counts
@@ -121,7 +133,7 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
   if (!orchestrationCounts.ok) return err(orchestrationCounts.error);
 
   // Fetch detail extras if in detail view (best-effort — errors yield undefined)
-  const detailExtra: DetailExtra = viewState.kind === 'detail' ? await fetchDetailExtra(ctx, viewState) : {};
+  const detailExtra: DetailExtra = viewState.kind === 'detail' ? await fetchDetailExtra(ctx, viewState, childPage) : {};
 
   // Compute liveness for RUNNING orchestrations (best-effort — errors yield 'unknown')
   const orchestrationLiveness: Record<string, Liveness> = {};
@@ -300,12 +312,14 @@ async function fetchWorkspaceExtras(
 /**
  * Fetch detail-view extras (iterations for loops, execution history for schedules).
  * Phase E adds orchestration-specific extras: children list + cost aggregate.
+ * D3 drill-through (v1.3.0): accepts childPage for paginated orchestration children.
  * Accepts the narrowed detail variant so branded IDs flow without unsafe casts.
  * Returns empty DetailExtra on any error — dashboard degrades gracefully.
  */
 async function fetchDetailExtra(
   ctx: ReadOnlyContext,
   detail: Extract<ViewState, { readonly kind: 'detail' }>,
+  childPage = 0,
 ): Promise<DetailExtra> {
   if (detail.entityType === 'loops') {
     const result = await ctx.loopRepository.getIterations(detail.entityId, 50);
@@ -318,13 +332,19 @@ async function fetchDetailExtra(
   }
 
   if (detail.entityType === 'orchestrations') {
-    // Phase E: fetch children (up to 50) and cost aggregate in parallel
-    const [childrenResult, costResult] = await Promise.all([
-      ctx.orchestrationRepository.getOrchestratorChildren(detail.entityId, 50),
+    // D3 drill-through: paginated fetch + count + cost aggregate in parallel
+    const [childrenResult, countResult, costResult] = await Promise.all([
+      ctx.orchestrationRepository.getOrchestratorChildren(
+        detail.entityId,
+        ORCHESTRATION_CHILDREN_PAGE_SIZE,
+        childPage * ORCHESTRATION_CHILDREN_PAGE_SIZE,
+      ),
+      ctx.orchestrationRepository.countOrchestratorChildren(detail.entityId),
       ctx.usageRepository.sumByOrchestrationId(detail.entityId),
     ]);
     return {
       orchestrationChildren: childrenResult.ok ? childrenResult.value : undefined,
+      orchestrationChildrenTotal: countResult.ok ? countResult.value : undefined,
       orchestrationCostAggregate: costResult.ok ? costResult.value : undefined,
     };
   }
@@ -348,8 +368,13 @@ async function fetchDetailExtra(
  * still in flight when the next interval fires, the new call is skipped.
  * The `viewStateRef` captures the latest viewState without being a dep of
  * doFetch — this keeps the polling interval stable across navigations.
+ * The `childPageRef` captures the latest orchestrationChildPage in the same way.
  */
-export function useDashboardData(ctx: ReadOnlyContext, viewState: ViewState): UseDashboardDataResult {
+export function useDashboardData(
+  ctx: ReadOnlyContext,
+  viewState: ViewState,
+  orchestrationChildPage = 0,
+): UseDashboardDataResult {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
@@ -361,15 +386,19 @@ export function useDashboardData(ctx: ReadOnlyContext, viewState: ViewState): Us
   const viewStateRef = useRef(viewState);
   viewStateRef.current = viewState;
 
+  // Always holds the latest child page — updated synchronously before each render
+  const childPageRef = useRef(orchestrationChildPage);
+  childPageRef.current = orchestrationChildPage;
+
   // Guard against overlapping in-flight fetches caused by slow SQLite under load
   const fetching = useRef(false);
 
-  // Stable fetch function — ctx is the only dep; viewState is read via ref
+  // Stable fetch function — ctx is the only dep; viewState and childPage are read via refs
   const doFetch = useCallback(async (): Promise<void> => {
     if (fetching.current) return;
     fetching.current = true;
     try {
-      const result = await fetchAllData(ctx, viewStateRef.current);
+      const result = await fetchAllData(ctx, viewStateRef.current, childPageRef.current);
 
       if (closing.current) return;
 

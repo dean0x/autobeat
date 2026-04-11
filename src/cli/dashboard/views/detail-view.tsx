@@ -18,6 +18,12 @@ interface DetailViewProps {
   readonly data: DashboardData | null;
   readonly scrollOffset: number;
   readonly animFrame: number;
+  /** D3 drill-through: taskId of the highlighted child row in orchestration detail */
+  readonly orchestrationChildSelectedTaskId?: string | null;
+  /** D3 drill-through: 0-based page number within orchestration detail children */
+  readonly orchestrationChildPage?: number;
+  /** D3 drill-through: total count of children for pagination footer */
+  readonly orchestrationChildrenTotal?: number;
 }
 
 const NotFound: React.FC<{ entityType: PanelId; entityId: string }> = ({ entityType, entityId }) => (
@@ -27,7 +33,16 @@ const NotFound: React.FC<{ entityType: PanelId; entityId: string }> = ({ entityT
 );
 
 export const DetailView: React.FC<DetailViewProps> = React.memo(
-  ({ entityType, entityId, data, scrollOffset, animFrame }) => {
+  ({
+    entityType,
+    entityId,
+    data,
+    scrollOffset,
+    animFrame,
+    orchestrationChildSelectedTaskId,
+    orchestrationChildPage = 0,
+    orchestrationChildrenTotal,
+  }) => {
     switch (entityType) {
       case 'loops': {
         const loop = data?.loops.find((l) => l.id === entityId);
@@ -62,6 +77,9 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
             animFrame={animFrame}
             children={data?.orchestrationChildren ?? []}
             costAggregate={data?.orchestrationCostAggregate}
+            childSelectedTaskId={orchestrationChildSelectedTaskId ?? null}
+            currentPage={orchestrationChildPage}
+            childrenTotal={orchestrationChildrenTotal}
           />
         );
       }

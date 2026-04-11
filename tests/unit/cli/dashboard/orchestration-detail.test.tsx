@@ -221,3 +221,69 @@ describe('OrchestrationDetail — cost aggregate section', () => {
     expect(frame).toContain('750');
   });
 });
+
+// ============================================================================
+// D3 drill-through: selection highlighting + pagination footer (v1.3.0)
+// ============================================================================
+
+describe('OrchestrationDetail — D3 selection and pagination', () => {
+  it('highlights the selected child row', () => {
+    const orch = makeOrchestration();
+    const children = [makeChild('task-sel-001'), makeChild('task-sel-002'), makeChild('task-sel-003')];
+    const { lastFrame } = render(
+      <OrchestrationDetail orchestration={orch} animFrame={0} children={children} childSelectedTaskId="task-sel-002" />,
+    );
+    // The selected row should be present in the output
+    expect(lastFrame()).toContain('task-sel-0');
+  });
+
+  it('renders pagination footer when childrenTotal > children.length', () => {
+    const orch = makeOrchestration();
+    // 5 children on current page but 30 total
+    const children = Array.from({ length: 5 }, (_, i) => makeChild(`task-page-${String(i).padStart(3, '0')}`));
+    const { lastFrame } = render(
+      <OrchestrationDetail orchestration={orch} animFrame={0} children={children} childrenTotal={30} currentPage={0} />,
+    );
+    const frame = lastFrame() ?? '';
+    // Should show page info
+    expect(frame).toContain('Page 1');
+    expect(frame).toContain('30 total');
+  });
+
+  it('does NOT render pagination footer when all children fit on one page', () => {
+    const orch = makeOrchestration();
+    const children = [makeChild('task-single-001'), makeChild('task-single-002')];
+    const { lastFrame } = render(
+      <OrchestrationDetail orchestration={orch} animFrame={0} children={children} childrenTotal={2} currentPage={0} />,
+    );
+    const frame = lastFrame() ?? '';
+    // Should not show "Page N of M" — single-page hint instead
+    expect(frame).not.toContain('PgUp/PgDn');
+    expect(frame).toContain('Enter to drill');
+  });
+
+  it('shows correct page number in pagination footer', () => {
+    const orch = makeOrchestration();
+    const children = Array.from({ length: 5 }, (_, i) => makeChild(`task-page2-${String(i).padStart(3, '0')}`));
+    const { lastFrame } = render(
+      <OrchestrationDetail
+        orchestration={orch}
+        animFrame={0}
+        children={children}
+        childrenTotal={30}
+        currentPage={1} // page 2 (0-indexed)
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Page 2');
+  });
+
+  it('renders single-page drill hint when no pagination needed', () => {
+    const orch = makeOrchestration();
+    const children = [makeChild('task-hint-001')];
+    const { lastFrame } = render(
+      <OrchestrationDetail orchestration={orch} animFrame={0} children={children} childrenTotal={1} currentPage={0} />,
+    );
+    expect(lastFrame()).toContain('Enter to drill into child task detail');
+  });
+});

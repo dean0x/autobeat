@@ -51,12 +51,32 @@ export interface DashboardMutationContext {
 export type PanelId = 'loops' | 'tasks' | 'schedules' | 'orchestrations';
 
 /**
+ * Return target for task detail view.
+ * Plain strings: return to main or workspace views.
+ * Object variant: return to a specific orchestration detail (for D3 drill-through).
+ *
+ * D3 drill-through: Enter on a child row in orchestration detail opens the child's
+ * task detail with returnTo = { kind: 'orchestrations', entityId, originalReturnTo }.
+ * Esc from that task detail returns to the same orchestration detail, which in turn
+ * returns to main or workspace per originalReturnTo.
+ */
+export type DetailReturnTarget =
+  | 'main'
+  | 'workspace'
+  | {
+      readonly kind: 'orchestrations';
+      readonly entityId: OrchestratorId;
+      readonly originalReturnTo: 'main' | 'workspace';
+    };
+
+/**
  * Top-level view state — main overview, workspace, or entity detail drill-down.
  * Each detail variant carries the branded ID for its entity type, making
  * illegal cross-type ID usage unrepresentable at compile time.
  *
  * returnTo field on detail: Esc returns to the correct view.
  * Defaults to 'main' for callers that don't pass it (backward compat).
+ * Tasks variant uses DetailReturnTarget to support D3 drill-through.
  */
 export type ViewState =
   | { readonly kind: 'main' }
@@ -71,7 +91,7 @@ export type ViewState =
       readonly kind: 'detail';
       readonly entityType: 'tasks';
       readonly entityId: TaskId;
-      readonly returnTo: 'main' | 'workspace';
+      readonly returnTo: DetailReturnTarget;
     }
   | {
       readonly kind: 'detail';
@@ -91,7 +111,7 @@ export type ViewState =
  * Defaults to 'main' so callers that don't have a workspace context still work.
  */
 export function openDetail(entityType: 'loops', entityId: LoopId, returnTo?: 'main' | 'workspace'): ViewState;
-export function openDetail(entityType: 'tasks', entityId: TaskId, returnTo?: 'main' | 'workspace'): ViewState;
+export function openDetail(entityType: 'tasks', entityId: TaskId, returnTo?: DetailReturnTarget): ViewState;
 export function openDetail(entityType: 'schedules', entityId: ScheduleId, returnTo?: 'main' | 'workspace'): ViewState;
 export function openDetail(
   entityType: 'orchestrations',
@@ -101,7 +121,7 @@ export function openDetail(
 export function openDetail(
   entityType: 'loops' | 'tasks' | 'schedules' | 'orchestrations',
   entityId: LoopId | TaskId | ScheduleId | OrchestratorId,
-  returnTo: 'main' | 'workspace' = 'main',
+  returnTo: DetailReturnTarget = 'main',
 ): ViewState {
   return {
     kind: 'detail',
@@ -119,6 +139,11 @@ export function openDetail(
  * Tab cycles: panel grid → activity → panel grid (wraps at 'orchestrations').
  * When activityFocused is true, ↑/↓ move activitySelectedIndex and Enter opens
  * the selected entry's detail view; Esc returns to panel focus.
+ *
+ * v1.3.0 (D3 drill-through): orchestrationChildSelectedTaskId and
+ * orchestrationChildPage track which child row is highlighted when viewing
+ * an orchestration detail, and which page of children is shown.
+ * Selection is by taskId (stable across refetches).
  */
 export interface NavState {
   readonly focusedPanel: PanelId;
@@ -129,6 +154,10 @@ export interface NavState {
   readonly activityFocused: boolean;
   /** Which row in the activity feed is currently selected (0-based) */
   readonly activitySelectedIndex: number;
+  /** TaskId of the currently highlighted child row in orchestration detail (null = first row) */
+  readonly orchestrationChildSelectedTaskId: string | null;
+  /** 0-based page number within the orchestration detail children list */
+  readonly orchestrationChildPage: number;
 }
 
 /**
@@ -174,6 +203,8 @@ export interface DashboardData {
   readonly orchestrationChildren?: readonly OrchestratorChild[];
   /** Aggregated cost/token usage for the viewed orchestration (Phase E — only in orchestration detail view) */
   readonly orchestrationCostAggregate?: TaskUsage;
+  /** Total count of children for pagination (D3 drill-through — only in orchestration detail view) */
+  readonly orchestrationChildrenTotal?: number;
 
   // Metrics view extras (v1.3.0)
   readonly costRollup24h?: TaskUsage;
@@ -210,4 +241,6 @@ export interface DetailExtra {
   readonly orchestrationChildren?: readonly OrchestratorChild[];
   /** Aggregated cost/token usage for the viewed orchestration (Phase E) */
   readonly orchestrationCostAggregate?: TaskUsage;
+  /** Total count of children for pagination (D3 drill-through) */
+  readonly orchestrationChildrenTotal?: number;
 }

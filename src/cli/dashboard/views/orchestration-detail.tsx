@@ -4,50 +4,57 @@
  * Pattern: Functional core, no side effects
  *
  * Phase E additions:
- *  - Children list: up to 50 tasks attributed to this orchestration
+ *  - Children list: paginated tasks attributed to this orchestration
  *  - Cost aggregate: total cost/tokens; hidden when all zero (fresh orch)
+ *
+ * D3 drill-through (v1.3.0):
+ *  - ScrollableList with selection highlighting
+ *  - Pagination footer when total > page size
+ *  - Enter on selected row → navigate to task detail
  */
 
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { Orchestration, OrchestratorChild, TaskUsage } from '../../../core/domain.js';
 import { Field, LongField, StatusField } from '../components/field.js';
+import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
 import { relativeTime, truncateCell } from '../format.js';
+
+/** Page size for the children list — matches ORCHESTRATION_CHILDREN_PAGE_SIZE in use-dashboard-data */
+export const ORCHESTRATION_CHILDREN_PAGE_SIZE = 15;
 
 interface OrchestrationDetailProps {
   readonly orchestration: Orchestration;
   readonly animFrame?: number;
-  /** Children tasks attributed to this orchestration (empty list = no children section). Default: [] */
+  /** Children tasks attributed to this orchestration (current page). Default: [] */
   readonly children?: readonly OrchestratorChild[];
   /** Aggregated cost/token usage; undefined or all-zero = hidden */
   readonly costAggregate?: TaskUsage;
+  /** TaskId of the currently highlighted child row (null or undefined = highlight first) */
+  readonly childSelectedTaskId?: string | null;
+  /** 0-based page number for pagination footer */
+  readonly currentPage?: number;
+  /** Total count of all children (across all pages) for pagination footer */
+  readonly childrenTotal?: number;
 }
 
 /**
- * Render a single child row: short ID · kind · status · agent · prompt preview.
+ * Render a single child row with optional selection highlight.
  */
-function renderChildRow(child: OrchestratorChild): React.ReactNode {
+function renderChildRow(child: OrchestratorChild, _index: number, isSelected: boolean): React.ReactNode {
   const shortId = child.taskId.slice(0, 12);
   const kind = child.kind === 'direct' ? 'direct' : 'iter  ';
   const status = child.status.toString().slice(0, 10).padEnd(10);
   const agent = (child.agent ?? '—').slice(0, 8).padEnd(8);
   const promptPreview = child.prompt.slice(0, 40).replace(/\n/g, ' ');
 
+  const line = `${shortId}  ${kind}  ${status}  ${agent}  ${promptPreview}`;
+
   return (
-    <Box key={child.taskId} flexDirection="row">
-      <Text dimColor>
-        {shortId}
-        {'  '}
-        {kind}
-        {'  '}
-        {status}
-        {'  '}
-        {agent}
-        {'  '}
-        {promptPreview}
-      </Text>
-    </Box>
+    <Text color={isSelected ? 'blue' : undefined} inverse={isSelected} dimColor={!isSelected}>
+      {line}
+    </Text>
   );
 }
 
@@ -75,7 +82,25 @@ function CostSection({ costAggregate }: { readonly costAggregate: TaskUsage | un
 }
 
 export const OrchestrationDetail: React.FC<OrchestrationDetailProps> = React.memo(
-  ({ orchestration, animFrame = 0, children = [], costAggregate }) => {
+  ({
+    orchestration,
+    animFrame = 0,
+    children = [],
+    costAggregate,
+    childSelectedTaskId,
+    currentPage = 0,
+    childrenTotal,
+  }) => {
+    // Compute selected index: by taskId for stability across refetches; fallback to 0.
+    const selectedIndex = React.useMemo(() => {
+      if (!childSelectedTaskId || children.length === 0) return 0;
+      const idx = children.findIndex((c) => c.taskId === childSelectedTaskId);
+      return idx >= 0 ? idx : 0;
+    }, [children, childSelectedTaskId]);
+
+    const showPaginationFooter = childrenTotal !== undefined && childrenTotal > children.length && children.length > 0;
+    const totalPages = childrenTotal !== undefined ? Math.ceil(childrenTotal / ORCHESTRATION_CHILDREN_PAGE_SIZE) : 1;
+
     return (
       <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
         {/* Header */}
@@ -112,9 +137,30 @@ export const OrchestrationDetail: React.FC<OrchestrationDetailProps> = React.mem
         {children.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             <Text bold dimColor>
-              {`Children (${children.length})`}
+              {`Children (${childrenTotal ?? children.length})`}
             </Text>
-            {children.map((child) => renderChildRow(child))}
+            <ScrollableList
+              items={children}
+              selectedIndex={selectedIndex}
+              scrollOffset={0}
+              viewportHeight={ORCHESTRATION_CHILDREN_PAGE_SIZE}
+              renderItem={renderChildRow}
+              keyExtractor={(child) => child.taskId}
+            />
+            {/* Pagination footer — only shown when multiple pages exist */}
+            {showPaginationFooter && (
+              <Box marginTop={1}>
+                <Text dimColor>
+                  {`Page ${currentPage + 1} of ${totalPages} · PgUp/PgDn to navigate · ${childrenTotal} total · Enter to drill in`}
+                </Text>
+              </Box>
+            )}
+            {/* Drill hint on single page */}
+            {!showPaginationFooter && children.length > 0 && (
+              <Box marginTop={1}>
+                <Text dimColor>Enter to drill into child task detail</Text>
+              </Box>
+            )}
           </Box>
         )}
       </Box>

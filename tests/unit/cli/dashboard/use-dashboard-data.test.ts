@@ -49,6 +49,8 @@ function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
   const orchestrationRepo = {
     ...makeMockRepo(),
     findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+    getOrchestratorChildren: vi.fn().mockResolvedValue(ok([])),
+    countOrchestratorChildren: vi.fn().mockResolvedValue(ok(0)),
   };
   const usageRepo = {
     sumGlobal: vi.fn().mockResolvedValue(
@@ -289,5 +291,70 @@ describe('fetchAllData', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.iterations).toBeUndefined();
+  });
+
+  it('fetches orchestration children with correct childPage offset when in orchestration detail view', async () => {
+    const orchestrationRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+      getOrchestratorChildren: vi.fn().mockResolvedValue(ok([])),
+      countOrchestratorChildren: vi.fn().mockResolvedValue(ok(0)),
+    };
+    const ctx = makeCtx({
+      orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    });
+
+    const detailView: ViewState = { kind: 'detail', entityType: 'orchestrations', entityId: 'orch-abc' };
+    await fetchAllData(ctx, detailView, 2); // childPage = 2
+
+    // Should pass offset = 2 * PAGE_SIZE to getOrchestratorChildren
+    expect(orchestrationRepo.getOrchestratorChildren).toHaveBeenCalledWith(
+      'orch-abc',
+      expect.any(Number), // PAGE_SIZE
+      expect.any(Number), // offset = 2 * PAGE_SIZE
+    );
+    const [, , offset] = orchestrationRepo.getOrchestratorChildren.mock.calls[0];
+    expect(offset).toBeGreaterThan(0); // non-zero for page 2
+  });
+
+  it('fetches orchestration children with offset 0 on first page', async () => {
+    const orchestrationRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+      getOrchestratorChildren: vi.fn().mockResolvedValue(ok([])),
+      countOrchestratorChildren: vi.fn().mockResolvedValue(ok(0)),
+    };
+    const ctx = makeCtx({
+      orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    });
+
+    const detailView: ViewState = { kind: 'detail', entityType: 'orchestrations', entityId: 'orch-p0' };
+    await fetchAllData(ctx, detailView, 0); // default page 0
+
+    const [, , offset] = orchestrationRepo.getOrchestratorChildren.mock.calls[0];
+    expect(offset).toBe(0);
+  });
+
+  it('also calls countOrchestratorChildren in orchestration detail view', async () => {
+    const orchestrationRepo = {
+      findAll: vi.fn().mockResolvedValue(ok([])),
+      countByStatus: vi.fn().mockResolvedValue(ok({})),
+      findUpdatedSince: vi.fn().mockResolvedValue(ok([])),
+      getOrchestratorChildren: vi.fn().mockResolvedValue(ok([])),
+      countOrchestratorChildren: vi.fn().mockResolvedValue(ok(42)),
+    };
+    const ctx = makeCtx({
+      orchestrationRepository: orchestrationRepo as unknown as ReadOnlyContext['orchestrationRepository'],
+    });
+
+    const detailView: ViewState = { kind: 'detail', entityType: 'orchestrations', entityId: 'orch-cnt' };
+    const result = await fetchAllData(ctx, detailView);
+
+    expect(orchestrationRepo.countOrchestratorChildren).toHaveBeenCalledWith('orch-cnt');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.orchestrationChildrenTotal).toBe(42);
   });
 });

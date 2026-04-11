@@ -10,6 +10,7 @@ import { useRef } from 'react';
 import type { ActivityEntry, LoopId, OrchestratorId, ScheduleId, TaskId } from '../../core/domain.js';
 import { LoopStatus, OrchestratorStatus, ScheduleStatus, TaskStatus } from '../../core/domain.js';
 import type { DashboardData, DashboardMutationContext, NavState, PanelId, ViewState } from './types.js';
+import { ORCHESTRATION_CHILDREN_PAGE_SIZE } from './views/orchestration-detail.js';
 import type { WorkspaceNavState } from './workspace-types.js';
 
 /**
@@ -150,19 +151,35 @@ function clamp(value: number, min: number, max: number): number {
 /**
  * Handle key input while in the detail view.
  * Returns true if the key was consumed.
+ *
+ * D3 drill-through (v1.3.0):
+ *  - Orchestration detail: ↑/↓/j/k move child row selection (by taskId)
+ *  - Enter: drill into selected child's task detail (returnTo = orchestration object)
+ *  - PgUp/PgDn: navigate pages of children (resets selection to first row on page)
+ *  - Esc/Backspace: returns to the view encoded in returnTo (main, workspace, or orchestration)
+ *
+ * For non-orchestration detail views, ↑/↓ scroll the detail content as before.
  */
 function handleDetailKeys(
   input: string,
   key: Parameters<Parameters<typeof useInput>[0]>[1],
   params: KeyHandlerParams,
 ): boolean {
-  const { view, setView, setNav, detailContentLength } = params;
+  const { view, nav, setView, setNav, detailContentLength, refreshNow } = params;
   if (view.kind !== 'detail') return false;
 
   if (key.escape || key.backspace) {
     // Return to the view that opened this detail (returnTo defaults to 'main')
     const returnTo = view.returnTo ?? 'main';
-    if (returnTo === 'workspace') {
+    if (typeof returnTo === 'object' && returnTo.kind === 'orchestrations') {
+      // D3 drill-through Esc: return to the parent orchestration detail
+      setView({
+        kind: 'detail',
+        entityType: 'orchestrations',
+        entityId: returnTo.entityId,
+        returnTo: returnTo.originalReturnTo,
+      });
+    } else if (returnTo === 'workspace') {
       setView({ kind: 'workspace' });
     } else {
       setView({ kind: 'main' });
@@ -170,6 +187,84 @@ function handleDetailKeys(
     return true;
   }
 
+  // D3 orchestration detail: child row navigation + drill-through
+  if (view.entityType === 'orchestrations') {
+    const children = params.dataRef.current?.orchestrationChildren ?? [];
+    const childrenTotal = params.dataRef.current?.orchestrationChildrenTotal;
+
+    if (key.upArrow || input === 'k') {
+      if (children.length === 0) return true;
+      setNav((prev) => {
+        const currentId = prev.orchestrationChildSelectedTaskId;
+        const currentIdx = currentId ? children.findIndex((c) => c.taskId === currentId) : 0;
+        const effectiveIdx = currentIdx < 0 ? 0 : currentIdx;
+        const nextIdx = Math.max(0, effectiveIdx - 1);
+        return { ...prev, orchestrationChildSelectedTaskId: children[nextIdx]?.taskId ?? null };
+      });
+      return true;
+    }
+
+    if (key.downArrow || input === 'j') {
+      if (children.length === 0) return true;
+      setNav((prev) => {
+        const currentId = prev.orchestrationChildSelectedTaskId;
+        const currentIdx = currentId ? children.findIndex((c) => c.taskId === currentId) : 0;
+        const effectiveIdx = currentIdx < 0 ? 0 : currentIdx;
+        const nextIdx = Math.min(children.length - 1, effectiveIdx + 1);
+        return { ...prev, orchestrationChildSelectedTaskId: children[nextIdx]?.taskId ?? null };
+      });
+      return true;
+    }
+
+    if (key.return) {
+      // Enter: drill into the selected child task detail
+      if (children.length === 0) return true;
+      const currentId = nav.orchestrationChildSelectedTaskId;
+      const currentIdx = currentId ? children.findIndex((c) => c.taskId === currentId) : 0;
+      const effectiveIdx = currentIdx < 0 ? 0 : currentIdx;
+      const child = children[effectiveIdx];
+      if (!child) return true;
+      const originalReturnTo: 'main' | 'workspace' = view.returnTo === 'workspace' ? 'workspace' : 'main';
+      setView({
+        kind: 'detail',
+        entityType: 'tasks',
+        entityId: child.taskId as import('../../core/domain.js').TaskId,
+        returnTo: {
+          kind: 'orchestrations',
+          entityId: view.entityId,
+          originalReturnTo,
+        },
+      });
+      return true;
+    }
+
+    if (key.pageUp) {
+      setNav((prev) => {
+        const newPage = Math.max(0, prev.orchestrationChildPage - 1);
+        if (newPage === prev.orchestrationChildPage) return prev;
+        return { ...prev, orchestrationChildPage: newPage, orchestrationChildSelectedTaskId: null };
+      });
+      // Force a refresh so the new page data is fetched immediately
+      refreshNow();
+      return true;
+    }
+
+    if (key.pageDown) {
+      const totalPages = childrenTotal !== undefined ? Math.ceil(childrenTotal / ORCHESTRATION_CHILDREN_PAGE_SIZE) : 1;
+      setNav((prev) => {
+        const newPage = Math.min(totalPages - 1, prev.orchestrationChildPage + 1);
+        if (newPage === prev.orchestrationChildPage) return prev;
+        return { ...prev, orchestrationChildPage: newPage, orchestrationChildSelectedTaskId: null };
+      });
+      refreshNow();
+      return true;
+    }
+
+    // Any other key in orchestration detail is swallowed
+    return true;
+  }
+
+  // Non-orchestration detail: ↑/↓ scroll the content
   if (key.upArrow || input === 'k') {
     setNav((prev) => ({
       ...prev,

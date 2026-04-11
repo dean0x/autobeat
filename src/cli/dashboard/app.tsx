@@ -53,6 +53,8 @@ const INITIAL_NAV: NavState = {
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
   activityFocused: false,
   activitySelectedIndex: 0,
+  orchestrationChildSelectedTaskId: null,
+  orchestrationChildPage: 0,
 };
 
 /**
@@ -82,7 +84,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
   // Resource metrics polling (2s interval)
   const { resources: resourceMetrics, error: resourceError } = useResourceMetrics(resourceMonitor);
 
-  const { data, error, refreshedAt, refreshNow } = useDashboardData(ctx, view);
+  const { data, error, refreshedAt, refreshNow } = useDashboardData(ctx, view, nav.orchestrationChildPage);
 
   // Workspace layout — computed from children count when in workspace view
   const childCount = data?.workspaceData?.children.length ?? 0;
@@ -172,6 +174,9 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
           data={data}
           scrollOffset={nav.scrollOffsets[view.entityType]}
           animFrame={animFrame}
+          orchestrationChildSelectedTaskId={nav.orchestrationChildSelectedTaskId}
+          orchestrationChildPage={nav.orchestrationChildPage}
+          orchestrationChildrenTotal={data?.orchestrationChildrenTotal}
         />
       );
     }

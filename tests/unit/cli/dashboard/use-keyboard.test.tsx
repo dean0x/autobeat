@@ -34,6 +34,7 @@ import type {
   Loop,
   LoopId,
   Orchestration,
+  OrchestratorChild,
   OrchestratorId,
   Schedule,
   ScheduleId,
@@ -78,6 +79,18 @@ function makeSchedule(id: string, status: ScheduleStatus = ScheduleStatus.ACTIVE
     createdAt: Date.now(),
     updatedAt: Date.now(),
   } as Schedule;
+}
+
+function makeOrchestratorChild(taskId: string, status: TaskStatus = TaskStatus.RUNNING): OrchestratorChild {
+  return {
+    taskId: taskId as TaskId,
+    kind: 'direct',
+    status,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    prompt: `Prompt for ${taskId}`,
+    agent: 'claude',
+  };
 }
 
 function makeOrchestration(id: string, status: OrchestratorStatus = OrchestratorStatus.RUNNING): Orchestration {
@@ -138,6 +151,8 @@ const INITIAL_NAV: NavState = {
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
   activityFocused: false,
   activitySelectedIndex: 0,
+  orchestrationChildSelectedTaskId: null,
+  orchestrationChildPage: 0,
 };
 
 // ============================================================================
@@ -191,6 +206,8 @@ function KeyboardWrapper({
       <Text>filter-loops:{nav.filters.loops ?? 'null'}</Text>
       <Text>filter-tasks:{nav.filters.tasks ?? 'null'}</Text>
       <Text>scroll-loops:{nav.scrollOffsets.loops}</Text>
+      <Text>orch-child-sel:{nav.orchestrationChildSelectedTaskId ?? 'null'}</Text>
+      <Text>orch-child-page:{nav.orchestrationChildPage}</Text>
     </Box>
   );
 }
@@ -1054,5 +1071,261 @@ describe('useKeyboard — activity-row cancel/delete (D2)', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
     expect(deleteTask).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// D3 — orchestration detail drill-through keyboard navigation (v1.3.0)
+// ============================================================================
+
+describe('useKeyboard — D3 orchestration detail child navigation', () => {
+  /** Build a detail view state for an orchestration */
+  function orchDetailView(orchId: string, returnTo: 'main' | 'workspace' = 'main') {
+    return {
+      kind: 'detail' as const,
+      entityType: 'orchestrations' as const,
+      entityId: orchId as OrchestratorId,
+      returnTo,
+    };
+  }
+
+  it('↓ moves orchestrationChildSelectedTaskId to next child', async () => {
+    const children = [
+      makeOrchestratorChild('task-child-001'),
+      makeOrchestratorChild('task-child-002'),
+      makeOrchestratorChild('task-child-003'),
+    ];
+    const orch = makeOrchestration('orch-abc');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildSelectedTaskId: 'task-child-001',
+    };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={orchDetailView('orch-abc')} />,
+    );
+    expect(lastFrame()).toContain('orch-child-sel:task-child-001');
+    await press(stdin, '\x1B[B'); // down arrow
+    expect(lastFrame()).toContain('orch-child-sel:task-child-002');
+  });
+
+  it('↑ moves orchestrationChildSelectedTaskId to previous child', async () => {
+    const children = [makeOrchestratorChild('task-child-001'), makeOrchestratorChild('task-child-002')];
+    const orch = makeOrchestration('orch-abc');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildSelectedTaskId: 'task-child-002',
+    };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={orchDetailView('orch-abc')} />,
+    );
+    expect(lastFrame()).toContain('orch-child-sel:task-child-002');
+    await press(stdin, '\x1B[A'); // up arrow
+    expect(lastFrame()).toContain('orch-child-sel:task-child-001');
+  });
+
+  it('↓ does not go past last child', async () => {
+    const children = [makeOrchestratorChild('task-child-001'), makeOrchestratorChild('task-child-002')];
+    const orch = makeOrchestration('orch-abc');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildSelectedTaskId: 'task-child-002',
+    };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={orchDetailView('orch-abc')} />,
+    );
+    await press(stdin, '\x1B[B'); // down — already at last
+    expect(lastFrame()).toContain('orch-child-sel:task-child-002');
+  });
+
+  it('↑ does not go above first child', async () => {
+    const children = [makeOrchestratorChild('task-child-001'), makeOrchestratorChild('task-child-002')];
+    const orch = makeOrchestration('orch-abc');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildSelectedTaskId: 'task-child-001',
+    };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={orchDetailView('orch-abc')} />,
+    );
+    await press(stdin, '\x1B[A'); // up — already at first
+    expect(lastFrame()).toContain('orch-child-sel:task-child-001');
+  });
+
+  it('Enter on selected child transitions to task detail with orchestration returnTo', async () => {
+    const children = [makeOrchestratorChild('task-child-aaa'), makeOrchestratorChild('task-child-bbb')];
+    const orch = makeOrchestration('orch-drill-123');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildSelectedTaskId: 'task-child-aaa',
+    };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={orchDetailView('orch-drill-123')} />,
+    );
+    await press(stdin, '\r'); // Enter
+    expect(lastFrame()).toContain('view:detail');
+    expect(lastFrame()).toContain('detail-type:tasks');
+    expect(lastFrame()).toContain('detail-id:task-child-aaa');
+  });
+
+  it('Esc from drilled task detail returns to parent orchestration detail', async () => {
+    const children = [makeOrchestratorChild('task-child-esc')];
+    const orch = makeOrchestration('orch-parent');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildSelectedTaskId: 'task-child-esc',
+    };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={orchDetailView('orch-parent')} />,
+    );
+    // Drill into task detail
+    await press(stdin, '\r');
+    expect(lastFrame()).toContain('detail-type:tasks');
+    // Esc returns to orchestration detail
+    await press(stdin, '\x1B');
+    expect(lastFrame()).toContain('detail-type:orchestrations');
+    expect(lastFrame()).toContain('detail-id:orch-parent');
+  });
+
+  it('Esc from orchestration detail (returnTo main) goes to main', async () => {
+    const orch = makeOrchestration('orch-xyz');
+    const data = makeDashboardData({ orchestrations: [orch] });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialView={orchDetailView('orch-xyz', 'main')} />,
+    );
+    expect(lastFrame()).toContain('view:detail');
+    await press(stdin, '\x1B');
+    expect(lastFrame()).toContain('view:main');
+  });
+
+  it('Esc from orchestration detail (returnTo workspace) goes to workspace', async () => {
+    const orch = makeOrchestration('orch-ws');
+    const data = makeDashboardData({ orchestrations: [orch] });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialView={orchDetailView('orch-ws', 'workspace')} />,
+    );
+    expect(lastFrame()).toContain('view:detail');
+    await press(stdin, '\x1B');
+    expect(lastFrame()).toContain('view:workspace');
+  });
+
+  it('PgDn advances orchestrationChildPage and resets selection', async () => {
+    const children = [makeOrchestratorChild('task-p1-001')];
+    const orch = makeOrchestration('orch-page');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+      orchestrationChildrenTotal: 30, // 2 pages with PAGE_SIZE=15
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildSelectedTaskId: 'task-p1-001',
+      orchestrationChildPage: 0,
+    };
+    const onRefresh = vi.fn();
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialNav={nav}
+        initialView={orchDetailView('orch-page')}
+        onRefresh={onRefresh}
+      />,
+    );
+    expect(lastFrame()).toContain('orch-child-page:0');
+    await press(stdin, '\x1B[6~'); // PgDn
+    expect(lastFrame()).toContain('orch-child-page:1');
+    expect(lastFrame()).toContain('orch-child-sel:null'); // selection reset
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('PgUp decrements orchestrationChildPage and resets selection', async () => {
+    const children = [makeOrchestratorChild('task-p2-001')];
+    const orch = makeOrchestration('orch-page2');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+      orchestrationChildrenTotal: 30,
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildSelectedTaskId: 'task-p2-001',
+      orchestrationChildPage: 1,
+    };
+    const onRefresh = vi.fn();
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialNav={nav}
+        initialView={orchDetailView('orch-page2')}
+        onRefresh={onRefresh}
+      />,
+    );
+    expect(lastFrame()).toContain('orch-child-page:1');
+    await press(stdin, '\x1B[5~'); // PgUp
+    expect(lastFrame()).toContain('orch-child-page:0');
+    expect(lastFrame()).toContain('orch-child-sel:null'); // selection reset
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('PgUp at page 0 does not go negative', async () => {
+    const children = [makeOrchestratorChild('task-001')];
+    const orch = makeOrchestration('orch-nonneg');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+      orchestrationChildrenTotal: 5,
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildPage: 0,
+    };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={orchDetailView('orch-nonneg')} />,
+    );
+    await press(stdin, '\x1B[5~'); // PgUp — already at page 0
+    expect(lastFrame()).toContain('orch-child-page:0');
+  });
+
+  it('j/k act like ↓/↑ in orchestration detail', async () => {
+    const children = [makeOrchestratorChild('task-jk-001'), makeOrchestratorChild('task-jk-002')];
+    const orch = makeOrchestration('orch-jk');
+    const data = makeDashboardData({
+      orchestrations: [orch],
+      orchestrationChildren: children,
+    });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      orchestrationChildSelectedTaskId: 'task-jk-001',
+    };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={orchDetailView('orch-jk')} />,
+    );
+    await press(stdin, 'j'); // like down
+    expect(lastFrame()).toContain('orch-child-sel:task-jk-002');
+    await press(stdin, 'k'); // like up
+    expect(lastFrame()).toContain('orch-child-sel:task-jk-001');
   });
 });
