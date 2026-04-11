@@ -187,6 +187,7 @@ export async function startDashboard(): Promise<void> {
       outputRepository={outputRepository.value}
     />,
     {
+      stdin: process.stdin, // Required: Ink needs stdin to establish raw mode + capture keystrokes
       stdout: process.stderr,
       patchConsole: false,
     },
