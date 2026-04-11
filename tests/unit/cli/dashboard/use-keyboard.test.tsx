@@ -136,6 +136,8 @@ const INITIAL_NAV: NavState = {
   selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
   filters: { loops: null, tasks: null, schedules: null, orchestrations: null },
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
+  activityFocused: false,
+  activitySelectedIndex: 0,
 };
 
 // ============================================================================
@@ -182,6 +184,8 @@ function KeyboardWrapper({
         </Text>
       )}
       <Text>panel:{nav.focusedPanel}</Text>
+      <Text>activity-focused:{nav.activityFocused ? 'true' : 'false'}</Text>
+      <Text>activity-sel:{nav.activitySelectedIndex}</Text>
       <Text>sel-loops:{nav.selectedIndices.loops}</Text>
       <Text>sel-tasks:{nav.selectedIndices.tasks}</Text>
       <Text>filter-loops:{nav.filters.loops ?? 'null'}</Text>
@@ -230,21 +234,32 @@ describe('useKeyboard — Tab panel cycling', () => {
     expect(lastFrame()).toContain('panel:tasks');
   });
 
-  it('Tab cycles all the way around: loops → tasks → schedules → orchestrations → loops', async () => {
+  it('Tab cycles all the way around: loops → tasks → schedules → orchestrations → activity → loops', async () => {
     const { lastFrame, stdin } = render(<KeyboardWrapper />);
     await press(stdin, '\t'); // → tasks
     await press(stdin, '\t'); // → schedules
     await press(stdin, '\t'); // → orchestrations
+    await press(stdin, '\t'); // → activity (new stop)
+    expect(lastFrame()).toContain('activity-focused:true');
     await press(stdin, '\t'); // → loops (wrap)
     expect(lastFrame()).toContain('panel:loops');
+    expect(lastFrame()).toContain('activity-focused:false');
   });
 
-  it('Shift+Tab cycles backward from loops → orchestrations', async () => {
+  it('Shift+Tab cycles backward from loops → activity focus', async () => {
     const { lastFrame, stdin } = render(<KeyboardWrapper />);
     expect(lastFrame()).toContain('panel:loops');
     // Shift+Tab is ESC[Z in VT100
     await press(stdin, '\x1B[Z');
+    expect(lastFrame()).toContain('activity-focused:true');
+  });
+
+  it('Shift+Tab from activity focus → orchestrations panel', async () => {
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialNav={{ ...INITIAL_NAV, activityFocused: true }} />);
+    expect(lastFrame()).toContain('activity-focused:true');
+    await press(stdin, '\x1B[Z');
     expect(lastFrame()).toContain('panel:orchestrations');
+    expect(lastFrame()).toContain('activity-focused:false');
   });
 });
 
@@ -743,6 +758,127 @@ describe('useKeyboard — global v/m/w no interference in main', () => {
     const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} />);
     await press(stdin, 'w');
     expect(lastFrame()).toContain('view:workspace');
+  });
+});
+
+// ============================================================================
+// Activity focus mode (v1.3.0 Phase F gap fix)
+// ============================================================================
+
+describe('useKeyboard — activity focus mode', () => {
+  function makeActivityEntry(id: string, kind: 'task' | 'loop' | 'orchestration' | 'schedule') {
+    return {
+      timestamp: new Date(),
+      kind,
+      entityId: id,
+      status: 'completed',
+      action: 'completed',
+    };
+  }
+
+  it('↓ increments activitySelectedIndex when activity is focused', async () => {
+    const feed = [
+      makeActivityEntry('e1', 'task'),
+      makeActivityEntry('e2', 'loop'),
+      makeActivityEntry('e3', 'schedule'),
+    ];
+    const data = makeDashboardData({ activityFeed: feed });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
+    );
+    expect(lastFrame()).toContain('activity-sel:0');
+    await press(stdin, '\x1B[B'); // down arrow
+    expect(lastFrame()).toContain('activity-sel:1');
+  });
+
+  it('↑ decrements activitySelectedIndex but does not go below 0', async () => {
+    const feed = [makeActivityEntry('e1', 'task'), makeActivityEntry('e2', 'loop')];
+    const data = makeDashboardData({ activityFeed: feed });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialNav={{ ...INITIAL_NAV, activityFocused: true, activitySelectedIndex: 1 }}
+      />,
+    );
+    expect(lastFrame()).toContain('activity-sel:1');
+    await press(stdin, '\x1B[A'); // up
+    expect(lastFrame()).toContain('activity-sel:0');
+    await press(stdin, '\x1B[A'); // up again — stays at 0
+    expect(lastFrame()).toContain('activity-sel:0');
+  });
+
+  it('↓ does not exceed activity feed length', async () => {
+    const feed = [makeActivityEntry('only', 'task')];
+    const data = makeDashboardData({ activityFeed: feed });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
+    );
+    await press(stdin, '\x1B[B'); // down — already at last item
+    expect(lastFrame()).toContain('activity-sel:0');
+  });
+
+  it('Enter on task activity row dispatches openDetail with entityType tasks', async () => {
+    const feed = [makeActivityEntry('task-abc', 'task')];
+    const data = makeDashboardData({ activityFeed: feed });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
+    );
+    await press(stdin, '\r'); // Enter
+    expect(lastFrame()).toContain('view:detail');
+    expect(lastFrame()).toContain('detail-type:tasks');
+    expect(lastFrame()).toContain('detail-id:task-abc');
+  });
+
+  it('Enter on loop activity row dispatches openDetail with entityType loops', async () => {
+    const feed = [makeActivityEntry('loop-xyz', 'loop')];
+    const data = makeDashboardData({ activityFeed: feed });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
+    );
+    await press(stdin, '\r');
+    expect(lastFrame()).toContain('detail-type:loops');
+    expect(lastFrame()).toContain('detail-id:loop-xyz');
+  });
+
+  it('Enter on orchestration activity row dispatches openDetail with entityType orchestrations', async () => {
+    const feed = [makeActivityEntry('orch-qrs', 'orchestration')];
+    const data = makeDashboardData({ activityFeed: feed });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
+    );
+    await press(stdin, '\r');
+    expect(lastFrame()).toContain('detail-type:orchestrations');
+    expect(lastFrame()).toContain('detail-id:orch-qrs');
+  });
+
+  it('Enter on schedule activity row dispatches openDetail with entityType schedules', async () => {
+    const feed = [makeActivityEntry('sched-def', 'schedule')];
+    const data = makeDashboardData({ activityFeed: feed });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
+    );
+    await press(stdin, '\r');
+    expect(lastFrame()).toContain('detail-type:schedules');
+    expect(lastFrame()).toContain('detail-id:sched-def');
+  });
+
+  it('Esc from activity focus returns to default panel focus (activityFocused:false)', async () => {
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialNav={{ ...INITIAL_NAV, activityFocused: true }} />);
+    expect(lastFrame()).toContain('activity-focused:true');
+    await press(stdin, '\x1B'); // Esc
+    expect(lastFrame()).toContain('activity-focused:false');
+  });
+
+  it('detail view returnTo is main when opened from activity feed', async () => {
+    const feed = [makeActivityEntry('task-ret', 'task')];
+    const data = makeDashboardData({ activityFeed: feed });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
+    );
+    await press(stdin, '\r');
+    // After drill-in, Esc returns to main view (not workspace)
+    await press(stdin, '\x1B');
+    expect(lastFrame()).toContain('view:main');
   });
 });
 

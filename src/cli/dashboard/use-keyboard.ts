@@ -7,7 +7,7 @@
 import { useInput } from 'ink';
 import type React from 'react';
 import { useRef } from 'react';
-import type { LoopId, OrchestratorId, ScheduleId, TaskId } from '../../core/domain.js';
+import type { ActivityEntry, LoopId, OrchestratorId, ScheduleId, TaskId } from '../../core/domain.js';
 import { LoopStatus, OrchestratorStatus, ScheduleStatus, TaskStatus } from '../../core/domain.js';
 import type { DashboardData, DashboardMutationContext, NavState, PanelId, ViewState } from './types.js';
 import type { WorkspaceNavState } from './workspace-types.js';
@@ -492,8 +492,33 @@ function handleWorkspaceKeys(
 }
 
 /**
+ * Map an ActivityEntry kind to the detail entityType used by openDetail.
+ * Kept as a pure function so tests can assert on dispatched entityType.
+ */
+function activityKindToEntityType(kind: ActivityEntry['kind']): 'tasks' | 'loops' | 'orchestrations' | 'schedules' {
+  switch (kind) {
+    case 'task':
+      return 'tasks';
+    case 'loop':
+      return 'loops';
+    case 'orchestration':
+      return 'orchestrations';
+    case 'schedule':
+      return 'schedules';
+  }
+}
+
+/**
  * Handle key input while in the main panel view.
  * Returns true if the key was consumed.
+ *
+ * Activity focus mode (v1.3.0):
+ *  - Tab from last panel (orchestrations) → activity focus
+ *  - Shift+Tab from first panel (loops) → activity focus
+ *  - Tab / Shift+Tab from activity focus → return to panel grid
+ *  - ↑/↓ when activityFocused → move activitySelectedIndex
+ *  - Enter when activityFocused → openDetail for the selected entry
+ *  - Esc when activityFocused → return to panel focus (loops)
  */
 function handleMainKeys(
   input: string,
@@ -502,11 +527,25 @@ function handleMainKeys(
 ): boolean {
   const { nav, dataRef, setView, setNav } = params;
 
+  // Esc from activity focus — return to default panel focus
+  if ((key.escape || key.backspace) && nav.activityFocused) {
+    setNav((prev) => ({ ...prev, activityFocused: false }));
+    return true;
+  }
+
   // Tab — cycle focus forward
   if (key.tab && !key.shift) {
     setNav((prev) => {
+      // Activity → panel (loops)
+      if (prev.activityFocused) {
+        return { ...prev, activityFocused: false, focusedPanel: 'loops' };
+      }
       const currentIdx = PANEL_ORDER.indexOf(prev.focusedPanel);
-      const nextIdx = (currentIdx + 1) % PANEL_ORDER.length;
+      const nextIdx = currentIdx + 1;
+      // Last panel → activity focus
+      if (nextIdx >= PANEL_ORDER.length) {
+        return { ...prev, activityFocused: true };
+      }
       return { ...prev, focusedPanel: PANEL_ORDER[nextIdx] };
     });
     return true;
@@ -515,17 +554,81 @@ function handleMainKeys(
   // Shift+Tab — cycle focus backward
   if (key.tab && key.shift) {
     setNav((prev) => {
+      // Activity → panel (orchestrations, last in list)
+      if (prev.activityFocused) {
+        return { ...prev, activityFocused: false, focusedPanel: PANEL_ORDER[PANEL_ORDER.length - 1] };
+      }
       const currentIdx = PANEL_ORDER.indexOf(prev.focusedPanel);
-      const prevIdx = (currentIdx - 1 + PANEL_ORDER.length) % PANEL_ORDER.length;
+      const prevIdx = currentIdx - 1;
+      // First panel → activity focus
+      if (prevIdx < 0) {
+        return { ...prev, activityFocused: true };
+      }
       return { ...prev, focusedPanel: PANEL_ORDER[prevIdx] };
     });
     return true;
   }
 
-  // 1-4 — jump to panel by number
+  // 1-4 — jump to panel by number (also exits activity focus)
   if (input in PANEL_JUMP_KEYS) {
-    setNav((prev) => ({ ...prev, focusedPanel: PANEL_JUMP_KEYS[input] }));
+    setNav((prev) => ({ ...prev, activityFocused: false, focusedPanel: PANEL_JUMP_KEYS[input] }));
     return true;
+  }
+
+  // Activity focus: ↑/↓/Enter are routed to the activity feed, not the panel grid
+  if (nav.activityFocused) {
+    if (key.upArrow || input === 'k') {
+      setNav((prev) => ({
+        ...prev,
+        activitySelectedIndex: Math.max(0, prev.activitySelectedIndex - 1),
+      }));
+      return true;
+    }
+    if (key.downArrow || input === 'j') {
+      const feedLength = dataRef.current?.activityFeed?.length ?? 0;
+      setNav((prev) => ({
+        ...prev,
+        activitySelectedIndex: clamp(prev.activitySelectedIndex + 1, 0, Math.max(0, feedLength - 1)),
+      }));
+      return true;
+    }
+    if (key.return) {
+      const feed = dataRef.current?.activityFeed;
+      if (feed && feed.length > 0) {
+        const entry = feed[nav.activitySelectedIndex];
+        if (entry) {
+          const entityType = activityKindToEntityType(entry.kind);
+          // Cast is safe: entityId originates from a domain entity of the matching kind
+          switch (entityType) {
+            case 'tasks':
+              setView({ kind: 'detail', entityType: 'tasks', entityId: entry.entityId as TaskId, returnTo: 'main' });
+              break;
+            case 'loops':
+              setView({ kind: 'detail', entityType: 'loops', entityId: entry.entityId as LoopId, returnTo: 'main' });
+              break;
+            case 'orchestrations':
+              setView({
+                kind: 'detail',
+                entityType: 'orchestrations',
+                entityId: entry.entityId as OrchestratorId,
+                returnTo: 'main',
+              });
+              break;
+            case 'schedules':
+              setView({
+                kind: 'detail',
+                entityType: 'schedules',
+                entityId: entry.entityId as ScheduleId,
+                returnTo: 'main',
+              });
+              break;
+          }
+        }
+      }
+      return true;
+    }
+    // Any other key while activity-focused: consume silently (no fallthrough to panel handlers)
+    return false;
   }
 
   // Up arrow / k — move selection up

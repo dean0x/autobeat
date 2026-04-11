@@ -51,6 +51,8 @@ const INITIAL_NAV: NavState = {
   selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
   filters: { loops: null, tasks: null, schedules: null, orchestrations: null },
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0 },
+  activityFocused: false,
+  activitySelectedIndex: 0,
 };
 
 /**

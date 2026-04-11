@@ -122,9 +122,9 @@ export const MetricsView: React.FC<MetricsViewProps> = React.memo(
         <Box flexDirection="row" flexGrow={1}>
           <ActivityPanel
             activityFeed={activityFeed}
-            selectedIndex={nav.selectedIndices.tasks}
-            scrollOffset={nav.scrollOffsets.tasks}
-            focused={nav.focusedPanel === 'tasks'}
+            selectedIndex={nav.activitySelectedIndex}
+            scrollOffset={nav.activitySelectedIndex >= 10 ? nav.activitySelectedIndex - 9 : 0}
+            focused={nav.activityFocused}
             onSelect={(entry) => onActivitySelect?.(entry)}
           />
           <CountsPanel counts={counts} />
