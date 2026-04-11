@@ -7,6 +7,7 @@
 import { Text } from 'ink';
 import React from 'react';
 import type { AgentProvider } from '../../../core/agents.js';
+import { formatMs } from '../format.js';
 
 interface MetricsBarProps {
   readonly kind: string;
@@ -22,17 +23,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`;
   return `${(bytes / 1024 / 1024).toFixed(1)}M`;
-}
-
-function formatElapsedMs(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const remainMin = minutes % 60;
-  return remainMin > 0 ? `${hours}h ${remainMin}m` : `${hours}h`;
 }
 
 function statusColor(status: string): string {
@@ -56,7 +46,7 @@ export const MetricsBar: React.FC<MetricsBarProps> = React.memo(
   ({ kind, status, elapsedMs, agent, bytes, cost, width }) => {
     const kindPart = kind.toUpperCase().slice(0, 5);
     const statusPart = status;
-    const elapsedPart = formatElapsedMs(elapsedMs);
+    const elapsedPart = formatMs(elapsedMs);
     const bytesPart = formatBytes(bytes);
     const costPart = cost !== null ? `$${cost.toFixed(3)}` : '';
     const agentPart = agent ?? '';

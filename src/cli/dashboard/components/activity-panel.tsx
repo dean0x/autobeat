@@ -7,6 +7,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { ActivityEntry } from '../../../core/domain.js';
+import { shortId } from '../format.js';
 import { ScrollableList } from './scrollable-list.js';
 
 const VIEWPORT_HEIGHT = 10;
@@ -18,11 +19,6 @@ interface ActivityPanelProps {
   readonly focused: boolean;
   /** Called when the user presses Enter on a selected entry */
   readonly onSelect: (entry: ActivityEntry) => void;
-}
-
-function shortId(id: string): string {
-  // Return first 12 chars (enough to identify without being too long)
-  return id.slice(0, 12);
 }
 
 function formatTime(date: Date): string {

@@ -7,6 +7,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { OrchestratorId, TaskUsage } from '../../../core/domain.js';
+import { shortId } from '../format.js';
 
 interface TopEntry {
   readonly orchestrationId: OrchestratorId;
@@ -20,10 +21,6 @@ interface CostTileProps {
 
 function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
-}
-
-function shortId(id: string): string {
-  return id.slice(0, 12);
 }
 
 export const CostTile: React.FC<CostTileProps> = React.memo(({ costRollup24h, top }) => {
