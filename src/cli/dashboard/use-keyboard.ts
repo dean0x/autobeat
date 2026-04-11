@@ -151,7 +151,13 @@ function handleDetailKeys(
   if (view.kind !== 'detail') return false;
 
   if (key.escape || key.backspace) {
-    setView({ kind: 'main' });
+    // Return to the view that opened this detail (returnTo defaults to 'main')
+    const returnTo = view.returnTo ?? 'main';
+    if (returnTo === 'workspace') {
+      setView({ kind: 'workspace' });
+    } else {
+      setView({ kind: 'main' });
+    }
     return true;
   }
 
@@ -277,16 +283,21 @@ function handleMainKeys(
     // The id originates from the domain entity — the cast is safe at this boundary.
     switch (panel) {
       case 'loops':
-        setView({ kind: 'detail', entityType: 'loops', entityId: selectedItem.id as LoopId });
+        setView({ kind: 'detail', entityType: 'loops', entityId: selectedItem.id as LoopId, returnTo: 'main' });
         break;
       case 'tasks':
-        setView({ kind: 'detail', entityType: 'tasks', entityId: selectedItem.id as TaskId });
+        setView({ kind: 'detail', entityType: 'tasks', entityId: selectedItem.id as TaskId, returnTo: 'main' });
         break;
       case 'schedules':
-        setView({ kind: 'detail', entityType: 'schedules', entityId: selectedItem.id as ScheduleId });
+        setView({ kind: 'detail', entityType: 'schedules', entityId: selectedItem.id as ScheduleId, returnTo: 'main' });
         break;
       case 'orchestrations':
-        setView({ kind: 'detail', entityType: 'orchestrations', entityId: selectedItem.id as OrchestratorId });
+        setView({
+          kind: 'detail',
+          entityType: 'orchestrations',
+          entityId: selectedItem.id as OrchestratorId,
+          returnTo: 'main',
+        });
         break;
     }
     return true;

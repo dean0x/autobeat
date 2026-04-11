@@ -178,10 +178,19 @@ export async function startDashboard(): Promise<void> {
     process.exit(1);
   });
 
-  const instance = render(<App ctx={ctx} version={version} mutations={mutations} resourceMonitor={resourceMonitor} />, {
-    stdout: process.stderr,
-    patchConsole: false,
-  });
+  const instance = render(
+    <App
+      ctx={ctx}
+      version={version}
+      mutations={mutations}
+      resourceMonitor={resourceMonitor}
+      outputRepository={outputRepository.value}
+    />,
+    {
+      stdout: process.stderr,
+      patchConsole: false,
+    },
+  );
 
   try {
     await instance.waitUntilExit();

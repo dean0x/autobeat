@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { OrchestratorStatus } from '../../core/domain.js';
+import { OrchestratorStatus, TaskId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import { checkOrchestrationLiveness, type Liveness } from '../../services/orchestration-liveness.js';
@@ -154,6 +154,13 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
     metricsExtras = await fetchMetricsExtras(ctx);
   }
 
+  // Workspace-view extras — fetched when viewing workspace
+  let workspaceExtras: Pick<DashboardData, 'workspaceData'> = {};
+
+  if (viewState.kind === 'workspace') {
+    workspaceExtras = await fetchWorkspaceExtras(ctx, viewState.orchestrationId, orchestrations.value);
+  }
+
   return ok({
     tasks: tasks.value,
     loops: loops.value,
@@ -166,6 +173,7 @@ export async function fetchAllData(ctx: ReadOnlyContext, viewState: ViewState): 
     orchestrationLiveness,
     ...detailExtra,
     ...metricsExtras,
+    ...workspaceExtras,
   });
 }
 
@@ -213,6 +221,80 @@ async function fetchMetricsExtras(
     throughputStats: throughputResult.ok ? throughputResult.value : undefined,
     activityFeed,
   };
+}
+
+/**
+ * Fetch workspace-view extras: children of focused orchestration + cost aggregate.
+ * Best-effort — errors yield undefined for workspaceData.
+ *
+ * Orchestration resolution order:
+ * 1. explicit orchestrationId from view state (if set and found)
+ * 2. first running orchestration by updated_at DESC (already sorted by findAll)
+ */
+async function fetchWorkspaceExtras(
+  ctx: ReadOnlyContext,
+  explicitOrchId: string | undefined,
+  orchestrations: readonly import('../../core/domain.js').Orchestration[],
+): Promise<Pick<DashboardData, 'workspaceData'>> {
+  try {
+    // Resolve focused orchestration
+    let focusedOrchestration: import('../../core/domain.js').Orchestration | undefined;
+
+    if (explicitOrchId) {
+      focusedOrchestration = orchestrations.find((o) => o.id === explicitOrchId);
+    }
+
+    if (!focusedOrchestration) {
+      // Fall back to first running orchestration, then first orchestration
+      focusedOrchestration = orchestrations.find((o) => o.status === OrchestratorStatus.RUNNING) ?? orchestrations[0];
+    }
+
+    if (!focusedOrchestration) {
+      return {}; // No orchestrations — workspaceData undefined
+    }
+
+    const orchId = focusedOrchestration.id;
+
+    // Fetch children and cost aggregate in parallel
+    const [childrenResult, costResult] = await Promise.all([
+      ctx.orchestrationRepository.getOrchestratorChildren(orchId, 20),
+      ctx.usageRepository.sumByOrchestrationId(orchId),
+    ]);
+
+    if (!childrenResult.ok) {
+      return {}; // Degrade gracefully
+    }
+
+    const children = childrenResult.value;
+    const childTaskIds = children.map((c) => c.taskId);
+    const childTaskStatuses = new Map<(typeof children)[number]['taskId'], string>(
+      children.map((c) => [c.taskId, c.status] as [typeof c.taskId, string]),
+    );
+
+    const ZERO_USAGE = {
+      taskId: TaskId(''),
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      totalCostUsd: 0,
+      capturedAt: 0,
+    };
+
+    const costAggregate = costResult.ok ? costResult.value : ZERO_USAGE;
+
+    return {
+      workspaceData: {
+        focusedOrchestration,
+        children,
+        childTaskIds,
+        childTaskStatuses,
+        costAggregate,
+      },
+    };
+  } catch {
+    return {}; // Best-effort — dashboard degrades without crashing
+  }
 }
 
 /**

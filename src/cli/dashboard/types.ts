@@ -10,6 +10,7 @@ import type {
   LoopId,
   LoopIteration,
   Orchestration,
+  OrchestratorChild,
   OrchestratorId,
   Schedule,
   ScheduleId,
@@ -50,16 +51,65 @@ export interface DashboardMutationContext {
 export type PanelId = 'loops' | 'tasks' | 'schedules' | 'orchestrations';
 
 /**
- * Top-level view state — main overview or entity detail drill-down.
+ * Top-level view state — main overview, workspace, or entity detail drill-down.
  * Each detail variant carries the branded ID for its entity type, making
  * illegal cross-type ID usage unrepresentable at compile time.
+ *
+ * returnTo field on detail: Esc returns to the correct view.
+ * Defaults to 'main' for callers that don't pass it (backward compat).
  */
 export type ViewState =
   | { readonly kind: 'main' }
-  | { readonly kind: 'detail'; readonly entityType: 'loops'; readonly entityId: LoopId }
-  | { readonly kind: 'detail'; readonly entityType: 'tasks'; readonly entityId: TaskId }
-  | { readonly kind: 'detail'; readonly entityType: 'schedules'; readonly entityId: ScheduleId }
-  | { readonly kind: 'detail'; readonly entityType: 'orchestrations'; readonly entityId: OrchestratorId };
+  | { readonly kind: 'workspace'; readonly orchestrationId?: OrchestratorId }
+  | {
+      readonly kind: 'detail';
+      readonly entityType: 'loops';
+      readonly entityId: LoopId;
+      readonly returnTo: 'main' | 'workspace';
+    }
+  | {
+      readonly kind: 'detail';
+      readonly entityType: 'tasks';
+      readonly entityId: TaskId;
+      readonly returnTo: 'main' | 'workspace';
+    }
+  | {
+      readonly kind: 'detail';
+      readonly entityType: 'schedules';
+      readonly entityId: ScheduleId;
+      readonly returnTo: 'main' | 'workspace';
+    }
+  | {
+      readonly kind: 'detail';
+      readonly entityType: 'orchestrations';
+      readonly entityId: OrchestratorId;
+      readonly returnTo: 'main' | 'workspace';
+    };
+
+/**
+ * Helper to open a detail view with an explicit returnTo destination.
+ * Defaults to 'main' so callers that don't have a workspace context still work.
+ */
+export function openDetail(entityType: 'loops', entityId: LoopId, returnTo?: 'main' | 'workspace'): ViewState;
+export function openDetail(entityType: 'tasks', entityId: TaskId, returnTo?: 'main' | 'workspace'): ViewState;
+export function openDetail(entityType: 'schedules', entityId: ScheduleId, returnTo?: 'main' | 'workspace'): ViewState;
+export function openDetail(
+  entityType: 'orchestrations',
+  entityId: OrchestratorId,
+  returnTo?: 'main' | 'workspace',
+): ViewState;
+export function openDetail(
+  entityType: 'loops' | 'tasks' | 'schedules' | 'orchestrations',
+  entityId: LoopId | TaskId | ScheduleId | OrchestratorId,
+  returnTo: 'main' | 'workspace' = 'main',
+): ViewState {
+  return {
+    kind: 'detail',
+    entityType,
+    entityId,
+    returnTo,
+  } as ViewState;
+}
 
 /**
  * Navigation state for the main panel grid
@@ -124,6 +174,15 @@ export interface DashboardData {
     readonly avgDurationMs: number;
   };
   readonly activityFeed?: readonly ActivityEntry[];
+
+  // Workspace view data (v1.3.0 Phase D)
+  readonly workspaceData?: {
+    readonly focusedOrchestration: Orchestration;
+    readonly children: readonly OrchestratorChild[];
+    readonly childTaskIds: readonly TaskId[];
+    readonly childTaskStatuses: ReadonlyMap<TaskId, string>;
+    readonly costAggregate: TaskUsage;
+  };
 }
 
 /**
