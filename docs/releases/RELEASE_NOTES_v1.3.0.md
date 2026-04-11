@@ -79,8 +79,10 @@ The workspace view (`w` / `v` from metrics) shows a live task grid for a selecte
 | `Enter` (grid focus) | Drill into child task detail |
 | `f` | Toggle fullscreen for focused task panel |
 | `[` / `]` | Scroll focused task panel up / down |
-| `g` / `G` | Jump to top / re-engage auto-tail |
+| `g` | Jump to top of focused task panel (disables auto-tail) |
+| `G` | Jump to bottom of focused task panel (re-engages auto-tail) |
 | `c` | Cancel orchestration (nav) or child task (grid) |
+| `d` | Delete focused child task (grid focus, terminal status only) |
 | `PgUp` / `PgDn` | Page through task grid |
 | `Esc` | Exit fullscreen → return to Metrics view |
 
@@ -168,9 +170,9 @@ The dashboard detects terminal dimensions from `process.stderr` (columns × rows
 
 | Mode | Condition | Behavior |
 |------|-----------|---------|
-| `full` | ≥ 80 cols × 20 rows | Normal tile + panel layout |
-| `narrow` | < 80 cols | Single-column stack, tiles only |
-| `too-small` | < 60 cols or < 14 rows | Resize prompt |
+| `full` | ≥ 60 cols and ≥ 14 rows | Normal tile + panel layout |
+| `narrow` | < 60 cols and ≥ 14 rows | Single-column stack, tiles only |
+| `too-small` | < 14 rows (regardless of columns) | Resize prompt |
 
 Layout is recomputed whenever the terminal is resized (SIGWINCH).
 
@@ -226,7 +228,7 @@ No user action required. Existing rows are unaffected.
 
 ### Output flush interval default changed
 
-`outputFlushIntervalMs` default changed from 5000ms to 1000ms. This may slightly increase database read pressure on systems with many concurrent tasks. To restore the previous default:
+`outputFlushIntervalMs` default changed from 5000ms to 1000ms. This may slightly increase database write pressure on systems with many concurrent tasks. To restore the previous default:
 
 ```bash
 OUTPUT_FLUSH_INTERVAL_MS=5000 beat dashboard
@@ -248,15 +250,15 @@ OUTPUT_FLUSH_INTERVAL_MS=5000 beat dashboard
 
 ## What's Changed Since v1.2.0
 
-- **feat**: dashboard redesign — metrics view, workspace view, activity feed, cost tracking (#135)
-- **feat**: live agent output streaming in workspace view (#135)
-- **feat**: cost and token tracking for Claude agents (#135)
-- **feat**: orchestrator_id propagation through CLI and MCP spawn paths (#135)
-- **feat**: cancel cascade for orchestrations (#135)
-- **feat**: responsive layout with terminal size detection (#135)
-- **fix**: ActivityPanel Enter dispatch via activity focus mode (#135)
-- **fix**: zombie orchestration recovery via worker liveness detection (#134)
-- **fix**: orchestration creation failure compensating soft-delete (#134)
+- **feat**: dashboard redesign — metrics view, workspace view, activity feed, cost tracking (#133)
+- **feat**: live agent output streaming in workspace view (#133)
+- **feat**: cost and token tracking for Claude agents (#133)
+- **feat**: orchestrator_id propagation through CLI and MCP spawn paths (#133)
+- **feat**: cancel cascade for orchestrations (#133)
+- **feat**: responsive layout with terminal size detection (#133)
+- **fix**: ActivityPanel Enter dispatch via activity focus mode (#133)
+- **fix**: zombie orchestration recovery via worker liveness detection (#133)
+- **fix**: orchestration creation failure compensating soft-delete (#133)
 
 ---
 
