@@ -48,10 +48,14 @@ const originalSetTimeout = global.setTimeout;
 
 if (shouldWrapTimers) {
   global.setTimeout = ((callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
-    const timeoutId = originalSetTimeout((..._: unknown[]) => {
-      activeResources.timeouts.delete(timeoutId);
-      callback(...args);
-    }, ms, ...args);
+    const timeoutId = originalSetTimeout(
+      (..._: unknown[]) => {
+        activeResources.timeouts.delete(timeoutId);
+        callback(...args);
+      },
+      ms,
+      ...args,
+    );
     activeResources.timeouts.add(timeoutId);
     return timeoutId;
   }) as typeof setTimeout;
