@@ -43,7 +43,7 @@ npm run test:coverage       # With coverage
 
 **Memory Management**:
 - All commands use 2GB memory limit (`--max-old-space-size=2048`)
-- Vitest config: `vmMemoryLimit: '1024MB'` restarts workers at 1GB threshold
+- Vitest config: `pool: 'forks'` with `vmMemoryLimit: '1024MB'` — hard-kills forks at 1GB, OS reclaims instantly
 - **Claude Code constraint**: Full suite exhausts system resources even with low limits
 
 
