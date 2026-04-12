@@ -160,7 +160,10 @@ export class LoopHandler extends BaseEventHandler {
   // ============================================================================
 
   /**
-   * Handle loop creation — persist via repo, then start first iteration
+   * Handle loop creation — persist via repo, then start first iteration.
+   * Errors are logged and dropped (matching BaseEventHandler pattern used by all
+   * other handlers). The EventBus never receives thrown exceptions from handlers;
+   * callers rely on handleEvent()'s structured logging for observability.
    */
   private async handleLoopCreated(event: LoopCreatedEvent): Promise<void> {
     await this.handleEvent(event, async (e) => {
@@ -720,14 +723,15 @@ export class LoopHandler extends BaseEventHandler {
     });
 
     // Pre-create ALL task domain objects OUTSIDE transaction (pure computation)
+    // Spread defaults (taskTemplate) so template fields like orchestratorId and model
+    // propagate to every pipeline step — then override the per-step fields.
     const tasks: Task[] = [];
     for (let i = 0; i < steps.length; i++) {
       tasks.push(
         createTask({
+          ...defaults,
           prompt: steps[i],
-          priority: defaults.priority,
           workingDirectory: loop.workingDirectory,
-          agent: defaults.agent,
           dependsOn: i > 0 ? [tasks[i - 1].id] : undefined,
         }),
       );

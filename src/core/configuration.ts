@@ -41,7 +41,7 @@ export const ConfigurationSchema = z.object({
   // Storage configuration
   fileStorageThresholdBytes: z.number().min(1024).max(10485760).default(102400), // Default: 100KB threshold
   // Output flushing configuration
-  outputFlushIntervalMs: z.number().min(500).max(30000).default(5000), // Default: flush output every 5 seconds
+  outputFlushIntervalMs: z.number().min(500).max(30000).default(1000), // Default: flush output every 1 second (v1.3.0: lowered from 5s for dashboard real-time updates)
   // Retry behavior configuration
   retryInitialDelayMs: z.number().min(100).max(10000).default(1000), // Default: 1 second initial delay
   retryMaxDelayMs: z.number().min(5000).max(300000).default(30000), // Default: 30 second max delay
@@ -75,7 +75,7 @@ const DEFAULT_CONFIG: Configuration = {
   // Storage defaults
   fileStorageThresholdBytes: 102400, // Default: 100KB threshold for file storage
   // Output flushing defaults
-  outputFlushIntervalMs: 5000, // Default: flush output every 5 seconds
+  outputFlushIntervalMs: 1000, // Default: flush output every 1 second (v1.3.0: lowered from 5s for dashboard real-time updates)
   // Retry behavior defaults
   retryInitialDelayMs: 1000, // Default: 1 second initial retry delay
   retryMaxDelayMs: 30000, // Default: 30 second maximum retry delay

@@ -97,6 +97,10 @@ const TaskRequestSchema = z.object({
   continueFrom: z.string().optional(),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
   model: z.string().optional(),
+  // v1.3.0: Orchestration attribution — must round-trip through loop.taskTemplate so
+  // iteration tasks (single and pipeline) carry orchestrator_id into cost tracking and
+  // cancel cascade. Without this, Zod strips the field and attribution silently breaks.
+  orchestratorId: z.string().optional(),
 });
 
 /**
@@ -183,6 +187,8 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
   private readonly findRunningIterationsStmt: SQLite.Statement;
   private readonly findByScheduleIdStmt: SQLite.Statement;
   private readonly cleanupOldLoopsStmt: SQLite.Statement;
+  // v1.3.0 addition — cached to avoid re-prepare on every 1s dashboard poll
+  private readonly findUpdatedSinceStmt: SQLite.Statement;
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -308,6 +314,14 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
     // NOTE: Excludes 'paused' loops — paused loops should survive cleanup
     this.cleanupOldLoopsStmt = this.db.prepare(`
       DELETE FROM loops WHERE status IN ('completed', 'failed', 'cancelled') AND completed_at < ?
+    `);
+
+    // idx_loops_updated_at (migration v20) covers WHERE + ORDER BY.
+    this.findUpdatedSinceStmt = this.db.prepare(`
+      SELECT * FROM loops
+      WHERE updated_at >= ?
+      ORDER BY updated_at DESC
+      LIMIT ?
     `);
   }
 
@@ -733,5 +747,19 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       default:
         throw new Error(`Unknown optimize direction: ${value} - possible data corruption`);
     }
+  }
+
+  // ============================================================================
+  // v1.3.0 additions
+  // ============================================================================
+
+  async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Loop[]>> {
+    return tryCatchAsync(
+      async () => {
+        const rows = this.findUpdatedSinceStmt.all(sinceMs, limit) as LoopRow[];
+        return rows.map((row) => this.rowToLoop(row));
+      },
+      operationErrorHandler('find loops updated since', { sinceMs }),
+    );
   }
 }

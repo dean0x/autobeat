@@ -30,10 +30,10 @@ export default defineConfig({
       'dist',
       '.git'
     ],
-    pool: 'threads', // Explicit: v4 defaults to 'forks'
+    pool: 'forks',
     maxWorkers: 1, // CRITICAL: Single worker to prevent resource exhaustion
-    // CRITICAL: Restart workers when they exceed 1GB to prevent memory accumulation
-    // This fixes "Channel closed" errors from worker crashes
+    // Kill and replace worker forks when they exceed 1GB.
+    // With pool: 'forks', this is a hard kill — OS reclaims all memory instantly.
     vmMemoryLimit: '1024MB',
     // CRITICAL: Run ALL tests sequentially to prevent crashes
     sequence: {
@@ -42,8 +42,8 @@ export default defineConfig({
     },
     // CRITICAL: Disable parallel test execution within files
     fileParallelism: false,
-    // Disable isolation for better performance with singleThread
-    // Safe because we're running sequentially in single thread
+    // Module cache shared within each fork's lifetime for performance.
+    // Safe: vmMemoryLimit kills and replaces forks, so accumulation is bounded.
     isolate: false
   },
   resolve: {

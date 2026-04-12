@@ -767,6 +767,76 @@ export class Database implements TransactionRunner {
           db.exec('ALTER TABLE orchestrations ADD COLUMN model TEXT');
         },
       },
+      {
+        version: 18,
+        description: 'Add orchestrator_id to tasks for sub-task attribution (v1.3.0)',
+        up: (db) => {
+          // ARCHITECTURE: Nullable FK to orchestrations; ON DELETE SET NULL preserves task history
+          // if the orchestration row is removed. Partial index for efficient sub-task lookups.
+          db.exec(`ALTER TABLE tasks ADD COLUMN orchestrator_id TEXT REFERENCES orchestrations(id) ON DELETE SET NULL`);
+          db.exec(
+            `CREATE INDEX IF NOT EXISTS idx_tasks_orchestrator_id ON tasks(orchestrator_id) WHERE orchestrator_id IS NOT NULL`,
+          );
+        },
+      },
+      {
+        version: 19,
+        description: 'Add task_usage table for token/cost tracking (v1.3.0)',
+        up: (db) => {
+          // ARCHITECTURE: task_id is PK and FK — one usage row per task, cascade-deleted with task.
+          // captured_at index allows efficient time-window aggregates (rolling 24h, etc.)
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS task_usage (
+              task_id                      TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+              input_tokens                 INTEGER NOT NULL DEFAULT 0,
+              output_tokens                INTEGER NOT NULL DEFAULT 0,
+              cache_creation_input_tokens  INTEGER NOT NULL DEFAULT 0,
+              cache_read_input_tokens      INTEGER NOT NULL DEFAULT 0,
+              total_cost_usd               REAL    NOT NULL DEFAULT 0,
+              model                        TEXT,
+              captured_at                  INTEGER NOT NULL
+            )
+          `);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_task_usage_captured_at ON task_usage(captured_at)`);
+        },
+      },
+      {
+        version: 20,
+        description: 'Add performance indexes for dashboard 1Hz polling (v1.3.0)',
+        up: (db) => {
+          // idx_tasks_retry_of: partial index covering the recursive CTE in
+          // SQLiteUsageRepository.sumByOrchestrationId. Without this, each
+          // recursion step performs a full tasks scan — O(rows * retry_depth)
+          // per 1s poll. Partial (WHERE retry_of IS NOT NULL) keeps the index
+          // small since most tasks are not retries.
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_retry_of ON tasks(retry_of) WHERE retry_of IS NOT NULL`);
+
+          // idx_loops_updated_at: loops table has updated_at (set on every
+          // updateSync call). Covers the WHERE + ORDER BY in
+          // SQLiteLoopRepository.findUpdatedSince called by the activity feed
+          // every 1s.
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_loops_updated_at ON loops(updated_at)`);
+
+          // idx_schedules_updated_at: schedules table has updated_at (set on
+          // save/update). Covers SQLiteScheduleRepository.findUpdatedSince.
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_schedules_updated_at ON schedules(updated_at)`);
+
+          // idx_orchestrations_updated_at: orchestrations table has updated_at.
+          // Covers SQLiteOrchestrationRepository.findUpdatedSince.
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_orchestrations_updated_at ON orchestrations(updated_at)`);
+
+          // idx_tasks_updated_expr: expression index for the COALESCE expression
+          // used in SQLiteTaskRepository.findUpdatedSince and getThroughputStats.
+          // SQLite 3.9+ supports expression indexes; better-sqlite3 bundles SQLite
+          // 3.40+, so this is safe. The query planner uses this index when the
+          // WHERE clause exactly matches COALESCE(completed_at, started_at, created_at).
+          // EXPLAIN QUERY PLAN will show "USING INDEX idx_tasks_updated_expr" instead
+          // of "SCAN TABLE tasks".
+          db.exec(
+            `CREATE INDEX IF NOT EXISTS idx_tasks_updated_expr ON tasks(COALESCE(completed_at, started_at, created_at))`,
+          );
+        },
+      },
     ];
   }
 

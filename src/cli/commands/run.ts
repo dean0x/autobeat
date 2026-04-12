@@ -2,7 +2,7 @@ import { bootstrap } from '../../bootstrap.js';
 import type { AgentProvider } from '../../core/agents.js';
 import type { Container } from '../../core/container.js';
 import type { TaskRequest } from '../../core/domain.js';
-import { Priority, TaskId } from '../../core/domain.js';
+import { OrchestratorId, Priority, TaskId } from '../../core/domain.js';
 import type { EventBus } from '../../core/events/event-bus.js';
 import type {
   OutputCapturedEvent,
@@ -11,7 +11,7 @@ import type {
   TaskFailedEvent,
   TaskTimeoutEvent,
 } from '../../core/events/events.js';
-import type { TaskManager } from '../../core/interfaces.js';
+import type { OrchestrationRepository, TaskManager } from '../../core/interfaces.js';
 import { createDetachLogDir, createDetachLogFile, pollLogFileForId, spawnDetachedProcess } from '../detach-helpers.js';
 import { errorMessage } from '../services.js';
 import * as ui from '../ui.js';
@@ -176,6 +176,32 @@ export async function runTask(
       if (params.length > 0) ui.info(params.join(' | '));
     }
 
+    // v1.3.0: Read orchestrator attribution env var (set by BaseAgentAdapter when running inside
+    // an orchestration). Validated against DB — dropped silently if orchestration not found.
+    // SECURITY: DB lookup is the authoritative check. Stale env leaks from a prior shell or
+    // manual misuse cannot attribute tasks to orchestrations that don't exist in the local DB,
+    // and since the DB is per-user the blast radius is limited to the caller's own orchestrations.
+    let orchestratorId: OrchestratorId | undefined;
+    const envOrchId = process.env.AUTOBEAT_ORCHESTRATOR_ID;
+    if (envOrchId) {
+      const orchRepoResult = container.get<OrchestrationRepository>('orchestrationRepository');
+      if (orchRepoResult.ok) {
+        const orchResult = await orchRepoResult.value.findById(OrchestratorId(envOrchId));
+        if (orchResult.ok && orchResult.value) {
+          orchestratorId = OrchestratorId(envOrchId);
+        } else {
+          // Stale env var from a prior shell / process — drop silently.
+          // SECURITY: Strip control chars (prevents log injection / ANSI escapes) and cap
+          // display length before writing to stderr. The actual env var is not modified.
+          const sanitized = envOrchId.replace(/[\x00-\x1f\x7f]/g, '?').slice(0, 200);
+          const lengthNote = envOrchId.length > 200 ? ` (truncated from ${envOrchId.length} chars)` : '';
+          process.stderr.write(
+            `[autobeat] AUTOBEAT_ORCHESTRATOR_ID '${sanitized}'${lengthNote} not found in DB, ignoring\n`,
+          );
+        }
+      }
+    }
+
     const request: TaskRequest = {
       prompt,
       ...options,
@@ -184,6 +210,7 @@ export async function runTask(
       continueFrom: options?.continueFrom ? TaskId(options.continueFrom) : undefined,
       agent: options?.agent as AgentProvider | undefined,
       model: options?.model,
+      orchestratorId,
     };
 
     const result = await taskManager.delegate(request);

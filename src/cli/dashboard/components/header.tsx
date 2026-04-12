@@ -12,6 +12,11 @@ interface HeaderProps {
   readonly data: DashboardData | null;
   readonly refreshedAt: Date | null;
   readonly error: string | null;
+  /**
+   * Phase E: current view kind — drives the breadcrumb label in the header bar.
+   * Optional for backward compatibility with tests that don't pass it.
+   */
+  readonly viewKind?: 'main' | 'workspace' | 'detail';
 }
 
 /**
@@ -52,9 +57,27 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-export const Header: React.FC<HeaderProps> = React.memo(({ version, data, refreshedAt, error }) => {
+/**
+ * Build breadcrumb text for the current view kind.
+ * Returns a short label that fits in the header row.
+ */
+function buildBreadcrumb(viewKind: 'main' | 'workspace' | 'detail' | undefined): string {
+  switch (viewKind) {
+    case 'main':
+      return '[M] Metrics';
+    case 'workspace':
+      return '[W] Workspace';
+    case 'detail':
+      return '[D] Detail';
+    default:
+      return '';
+  }
+}
+
+export const Header: React.FC<HeaderProps> = React.memo(({ version, data, refreshedAt, error, viewKind }) => {
   const healthSummary = data !== null ? buildHealthSummary(data) : '—';
   const timestamp = refreshedAt !== null ? formatTime(refreshedAt) : '—';
+  const breadcrumb = buildBreadcrumb(viewKind);
 
   return (
     <Box flexDirection="column">
@@ -63,7 +86,10 @@ export const Header: React.FC<HeaderProps> = React.memo(({ version, data, refres
           {'Autobeat v'}
           {version}
         </Text>
-        <Text>{healthSummary}</Text>
+        <Box flexDirection="row" gap={2}>
+          {breadcrumb !== '' && <Text dimColor>{breadcrumb}</Text>}
+          <Text>{healthSummary}</Text>
+        </Box>
         <Box flexDirection="row" gap={2}>
           <Text dimColor>{timestamp}</Text>
           <Text dimColor>q=quit</Text>

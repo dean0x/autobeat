@@ -108,6 +108,11 @@ export interface Task {
   // Resolution order: per-task > agent-config > CLI default
   readonly model?: string;
 
+  // Orchestration attribution (v1.3.0): orchestration that spawned this task
+  // Set when a task is created inside an orchestration context (CLI env var or MCP metadata).
+  // Validated against DB on receipt — dropped silently if orchestration not found.
+  readonly orchestratorId?: OrchestratorId;
+
   // Timestamps and results
   readonly createdAt: number;
   readonly updatedAt?: number;
@@ -187,6 +192,10 @@ export interface TaskRequest {
 
   // Model override (per-task): overrides agent-config default model and CLI default
   readonly model?: string;
+
+  // Orchestration attribution (v1.3.0): orchestration that spawned this task
+  // Passed through CLI env var (AUTOBEAT_ORCHESTRATOR_ID) or MCP metadata field.
+  readonly orchestratorId?: OrchestratorId;
 }
 
 export interface TaskUpdate {
@@ -240,6 +249,9 @@ export const createTask = (request: TaskRequest): Task => {
     // Multi-agent support (v0.5.0)
     agent: request.agent,
     model: request.model,
+
+    // Orchestration attribution (v1.3.0)
+    orchestratorId: request.orchestratorId,
 
     createdAt: now,
     updatedAt: now,
@@ -622,6 +634,7 @@ export interface LoopCreateRequest {
   readonly agent?: AgentProvider;
   readonly model?: string; // Per-loop model override (applied to taskTemplate)
   readonly gitBranch?: string; // Branch name for loop iteration work (v0.8.0)
+  readonly orchestratorId?: OrchestratorId; // Attribute loop tasks to this orchestration (v1.3.0)
 }
 
 /**
@@ -640,6 +653,7 @@ export const createLoop = (request: LoopCreateRequest, workingDirectory: string,
       workingDirectory,
       agent: request.agent,
       model: request.model,
+      orchestratorId: request.orchestratorId,
     },
     pipelineSteps: request.pipelineSteps,
     exitCondition: request.exitCondition ?? '',
@@ -768,3 +782,53 @@ export const updateOrchestration = (orchestration: Orchestration, update: Partia
     updatedAt: Date.now(),
   });
 };
+
+// ============================================================================
+// v1.3.0: Task usage tracking, orchestrator children, activity feed
+// ============================================================================
+
+/**
+ * Token/cost usage record for a completed task.
+ * Captured at task completion from the Claude JSON output.
+ * ARCHITECTURE: Immutable value object — no mutations.
+ */
+export interface TaskUsage {
+  readonly taskId: TaskId;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheCreationInputTokens: number;
+  readonly cacheReadInputTokens: number;
+  readonly totalCostUsd: number;
+  readonly model?: string;
+  readonly capturedAt: number;
+}
+
+/**
+ * A task attributed to an orchestration, discovered via direct attribution
+ * (tasks.orchestrator_id) or the loop iteration chain.
+ * ARCHITECTURE: Read-only projection used by workspace view.
+ */
+export interface OrchestratorChild {
+  readonly taskId: TaskId;
+  readonly kind: 'direct' | 'iteration';
+  readonly iterationId?: number;
+  readonly status: TaskStatus;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly prompt: string;
+  readonly agent?: AgentProvider;
+}
+
+/**
+ * A single entry in the activity feed — time-sorted merge of recent state
+ * changes across tasks, loops, orchestrations, and schedules.
+ * ARCHITECTURE: Read-only value object for dashboard display.
+ * timestamp is epoch ms (number) — matches all other domain time fields.
+ */
+export interface ActivityEntry {
+  readonly timestamp: number;
+  readonly kind: 'task' | 'loop' | 'orchestration' | 'schedule';
+  readonly entityId: string;
+  readonly status: string;
+  readonly action: string; // short verb: 'created', 'completed', 'failed', 'iteration 3'
+}

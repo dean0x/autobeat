@@ -44,7 +44,8 @@ import { validatePath } from '../utils/validation.js';
 import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 
 // Zod schemas for MCP protocol validation
-const DelegateTaskSchema = z.object({
+// Exported for unit-testing schema validation independently of the MCP protocol layer
+export const DelegateTaskSchema = z.object({
   prompt: z.string().min(1).max(4000),
   priority: z.enum(['P0', 'P1', 'P2']).optional(),
   workingDirectory: z.string().optional(),
@@ -68,6 +69,32 @@ const DelegateTaskSchema = z.object({
     .max(200)
     .optional()
     .describe('Model override for this task (overrides agent-config default)'),
+  /**
+   * v1.3.0: Orchestration attribution metadata.
+   * IMPORTANT (Risk #8): This is intentionally per-request metadata, NOT an env var.
+   * The MCP server is long-lived and shared across orchestrators; reading an env var
+   * here would mix attribution across concurrent orchestrations.
+   *
+   * DESIGN NOTE: metadata is a nested object (not a flat field) to namespace future
+   * per-request metadata without polluting the top-level schema. The orchestratorId
+   * field is the first use of this namespace.
+   *
+   * SECURITY: orchestratorId is constrained to the canonical format produced by
+   * crypto.randomUUID() in domain.ts createOrchestration():
+   *   "orchestrator-" (13 chars) + UUID (36 chars) = 49 chars total
+   * Bounds enforce printable ASCII only, preventing log injection via control chars.
+   */
+  metadata: z
+    .object({
+      orchestratorId: z
+        .string()
+        .regex(/^orchestrator-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+        .min(49)
+        .max(49)
+        .optional(),
+    })
+    .optional()
+    .describe('Optional per-request metadata for orchestration attribution'),
 });
 
 const TaskStatusSchema = z.object({
@@ -1491,6 +1518,22 @@ export class MCPAdapter {
       validatedWorkingDirectory = pathValidation.value;
     }
 
+    // v1.3.0: Validate orchestratorId from per-request metadata against DB.
+    // IMPORTANT: Do NOT use an env var here — the MCP server is long-lived and shared
+    // across orchestrators. Per-request metadata is the only safe mechanism (Risk #8).
+    let orchestratorId: OrchestratorId | undefined;
+    if (data.metadata?.orchestratorId && this.orchestrationService) {
+      const orchResult = await this.orchestrationService.getOrchestration(OrchestratorId(data.metadata.orchestratorId));
+      if (orchResult.ok) {
+        orchestratorId = OrchestratorId(data.metadata.orchestratorId);
+      } else {
+        // Drop silently — stale or unknown orchestratorId should not block task delegation
+        this.logger.warn('DelegateTask: metadata.orchestratorId not found in DB, ignoring', {
+          orchestratorId: data.metadata.orchestratorId,
+        });
+      }
+    }
+
     // Create request with validated paths
     const request: TaskRequest = {
       prompt: data.prompt,
@@ -1502,6 +1545,7 @@ export class MCPAdapter {
       continueFrom: data.continueFrom ? TaskId(data.continueFrom) : undefined,
       agent: data.agent as AgentProvider | undefined,
       model: data.model,
+      orchestratorId,
     };
 
     // Delegate task using our new architecture

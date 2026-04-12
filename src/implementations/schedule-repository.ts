@@ -88,6 +88,10 @@ const TaskRequestSchema = z.object({
   continueFrom: z.string().optional(),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional(),
   model: z.string().optional(),
+  // v1.3.0: Orchestration attribution — preserved through DB round-trip for consistency
+  // with loop.taskTemplate. Schedules rarely carry this today, but the field must survive
+  // serialization for parity across the three taskTemplate sinks (tasks, loops, schedules).
+  orchestratorId: z.string().optional(),
 });
 
 /**
@@ -195,6 +199,8 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
   private readonly recordExecutionStmt: SQLite.Statement;
   private readonly getExecutionByIdStmt: SQLite.Statement;
   private readonly getExecutionHistoryStmt: SQLite.Statement;
+  // v1.3.0 addition — cached to avoid re-prepare on every 1s dashboard poll
+  private readonly findUpdatedSinceStmt: SQLite.Statement;
 
   constructor(database: Database) {
     this.db = database.getDatabase();
@@ -283,6 +289,14 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
       SELECT * FROM schedule_executions
       WHERE schedule_id = ?
       ORDER BY scheduled_for DESC
+      LIMIT ?
+    `);
+
+    // idx_schedules_updated_at (migration v20) covers WHERE + ORDER BY.
+    this.findUpdatedSinceStmt = this.db.prepare(`
+      SELECT * FROM schedules
+      WHERE updated_at >= ?
+      ORDER BY updated_at DESC
       LIMIT ?
     `);
   }
@@ -701,5 +715,19 @@ export class SQLiteScheduleRepository implements ScheduleRepository, SyncSchedul
       default:
         throw new Error(`Unknown schedule status: ${value} - possible data corruption`);
     }
+  }
+
+  // ============================================================================
+  // v1.3.0 additions
+  // ============================================================================
+
+  async findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Schedule[]>> {
+    return tryCatchAsync(
+      async () => {
+        const rows = this.findUpdatedSinceStmt.all(sinceMs, limit) as ScheduleRow[];
+        return rows.map((row) => this.rowToSchedule(row));
+      },
+      operationErrorHandler('find schedules updated since', { sinceMs }),
+    );
   }
 }

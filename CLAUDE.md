@@ -43,7 +43,7 @@ npm run test:coverage       # With coverage
 
 **Memory Management**:
 - All commands use 2GB memory limit (`--max-old-space-size=2048`)
-- Vitest config: `vmMemoryLimit: '1024MB'` restarts workers at 1GB threshold
+- Vitest config: `pool: 'forks'` with `vmMemoryLimit: '1024MB'` — hard-kills forks at 1GB, OS reclaims instantly
 - **Claude Code constraint**: Full suite exhausts system resources even with low limits
 
 
@@ -59,6 +59,7 @@ npm run test:coverage       # With coverage
 - `ScheduleHandler` → schedule lifecycle (create, pause, resume, cancel)
 - `ScheduleExecutor` → cron/one-time execution engine (note: has direct repo writes, architectural exception to event-driven pattern)
 - `LoopHandler` → loop iteration engine (retry/optimize strategies, exit condition evaluation)
+- `UsageCaptureHandler` → captures Claude token/cost usage on TaskCompleted, writes to `task_usage` via UsageParser
 
 See `docs/architecture/` for implementation details.
 
@@ -193,8 +194,8 @@ gh run list --workflow=release.yml --limit=1 # must show status: completed/succe
 - **Technical Safeguard**: `npm test` is blocked and prints a warning (prevents accidental crashes)
 - **Use individual groups** from Claude Code: `npm run test:core`, `test:handlers`, etc.
 - **Full suite**: `npm run test:all` (only in local terminal/CI)
-- **ROOT CAUSE of memory exhaustion**: Vitest workers accumulate memory across test files
-- **Solution**: `vmMemoryLimit: '1024MB'` in vitest.config.ts restarts workers at 1GB threshold
+- **Pool strategy**: `pool: 'forks'` — each worker is a separate OS process; `vmMemoryLimit` kills and replaces forks cleanly
+- **Memory limit**: `vmMemoryLimit: '1024MB'` in vitest.config.ts — hard-kills forks at 1GB, OS reclaims instantly
 - **Tests are sequential** via vitest config (`maxWorkers: 1`, `isolate: false`)
 - **All commands use 2GB** memory limit (`--max-old-space-size=2048`)
 - **No real process spawning** - all tests use mocks (MockWorkerPool, MockProcessSpawner)
@@ -209,6 +210,8 @@ gh run list --workflow=release.yml --limit=1 # must show status: completed/succe
 - `schedule_executions` table: execution history and audit trail
 - `loops` table: loop definitions, strategy, exit condition, iteration state (migration v10)
 - `loop_iterations` table: per-iteration execution records with scores and results (migration v10)
+- `tasks.orchestrator_id` column: nullable FK for sub-task attribution to an orchestration (migration v18)
+- `task_usage` table: one row per task with input/output/cache tokens and total_cost_usd (migration v19)
 
 ### Dependencies
 
@@ -220,6 +223,8 @@ When adding task dependencies:
 ### MCP Tools
 
 All tools use PascalCase: `DelegateTask`, `TaskStatus`, `TaskLogs`, `CancelTask`, `RetryTask`, `ResumeTask`, `CreatePipeline`, `CreateLoop`, `LoopStatus`, `ListLoops`, `CancelLoop`, `PauseLoop`, `ResumeLoop`, `ScheduleTask`, `SchedulePipeline`, `ScheduleLoop`, `ListSchedules`, `ScheduleStatus`, `PauseSchedule`, `ResumeSchedule`, `CancelSchedule`, `CreateOrchestrator`, `OrchestratorStatus`, `ListOrchestrators`, `CancelOrchestrator`, `ListAgents`, `ConfigureAgent`
+
+`DelegateTask` accepts an optional `metadata.orchestratorId` field for orchestrator attribution. Long-running MCP servers should pass this so sub-tasks are attributed to the calling orchestration even when the process ID changes across restarts.
 
 ## File Locations
 
@@ -250,6 +255,16 @@ Quick reference for common operations:
 | Composite exit condition evaluator | `src/services/composite-exit-condition-evaluator.ts` |
 | Migrate command | `src/cli/commands/migrate.ts` |
 | Agent skill content | `skills/autobeat/` |
+| Metrics view | `src/cli/dashboard/views/metrics-view.tsx` |
+| Workspace view | `src/cli/dashboard/views/workspace-view.tsx` |
+| Terminal size hook | `src/cli/dashboard/use-terminal-size.ts` |
+| Responsive layout | `src/cli/dashboard/layout.ts` |
+| Output streaming hook | `src/cli/dashboard/use-task-output-stream.ts` |
+| Activity feed helper | `src/cli/dashboard/activity-feed.ts` |
+| Usage repository | `src/implementations/usage-repository.ts` |
+| Usage parser | `src/services/usage-parser.ts` |
+| Usage capture handler | `src/services/handlers/usage-capture-handler.ts` |
+| Keyboard handlers | `src/cli/dashboard/keyboard/` |
 
 ## Documentation Structure
 

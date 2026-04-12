@@ -7,7 +7,7 @@ import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { Header } from '../../../../src/cli/dashboard/components/header.js';
-import type { DashboardData } from '../../../../src/cli/dashboard/types.js';
+import type { DashboardData, ViewState } from '../../../../src/cli/dashboard/types.js';
 
 // ============================================================================
 // Test fixtures
@@ -191,5 +191,43 @@ describe('buildHealthSummary (via Header)', () => {
     const frame = renderSummary(makeData({ taskCounts: { total: 1, byStatus: { running: 1 } } }));
     expect(frame).not.toContain('queue');
     expect(frame).not.toContain('fail');
+  });
+});
+
+// ============================================================================
+// Breadcrumb (viewKind prop) — Phase E
+// ============================================================================
+
+describe('Header — viewKind breadcrumb', () => {
+  it('renders [M] Metrics when viewKind is main', () => {
+    const view: ViewState = { kind: 'main' };
+    const { lastFrame } = render(
+      <Header version="1.0.0" data={null} refreshedAt={null} error={null} viewKind={view.kind} />,
+    );
+    expect(lastFrame()).toContain('[M]');
+    expect(lastFrame()).toContain('Metrics');
+  });
+
+  it('renders [W] Workspace when viewKind is workspace', () => {
+    const view: ViewState = { kind: 'workspace' };
+    const { lastFrame } = render(
+      <Header version="1.0.0" data={null} refreshedAt={null} error={null} viewKind={view.kind} />,
+    );
+    expect(lastFrame()).toContain('[W]');
+    expect(lastFrame()).toContain('Workspace');
+  });
+
+  it('renders [D] Detail when viewKind is detail', () => {
+    const view: ViewState = { kind: 'main' }; // use 'main' but pass 'detail' manually
+    const { lastFrame } = render(
+      <Header version="1.0.0" data={null} refreshedAt={null} error={null} viewKind="detail" />,
+    );
+    expect(lastFrame()).toContain('[D]');
+    expect(lastFrame()).toContain('Detail');
+  });
+
+  it('does not crash when viewKind is not provided (backward compat)', () => {
+    const { lastFrame } = render(<Header version="1.0.0" data={null} refreshedAt={null} error={null} />);
+    expect(lastFrame()).toContain('Autobeat v1.0.0');
   });
 });

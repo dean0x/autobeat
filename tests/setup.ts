@@ -43,25 +43,24 @@ global.__testResources = activeResources;
 // This prevents overhead when measuring performance
 const shouldWrapTimers = process.env.TEST_ENV !== 'performance';
 
-// Override setTimeout to track timeouts
+// Override setTimeout to track pending timeouts.
+// The wrapper auto-removes the id on fire so afterAll does not double-clear
+// timeouts that already completed naturally during the test run.
 const originalSetTimeout = global.setTimeout;
 
 if (shouldWrapTimers) {
   global.setTimeout = ((callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
-    const timeoutId = originalSetTimeout(callback, ms, ...args);
+    const timeoutId = originalSetTimeout(
+      (..._: unknown[]) => {
+        activeResources.timeouts.delete(timeoutId);
+        callback(...args);
+      },
+      ms,
+      ...args,
+    );
     activeResources.timeouts.add(timeoutId);
-
-    // Wrap callback to remove from tracking when executed
-    const wrappedCallback = () => {
-      activeResources.timeouts.delete(timeoutId);
-      callback(...args);
-    };
-
-    return originalSetTimeout(wrappedCallback, ms);
+    return timeoutId;
   }) as typeof setTimeout;
-} else {
-  // In performance mode, keep original implementation
-  global.setTimeout = originalSetTimeout;
 }
 
 // Override setInterval to track intervals
@@ -73,9 +72,6 @@ if (shouldWrapTimers) {
     activeResources.intervals.add(intervalId);
     return intervalId;
   }) as typeof setInterval;
-} else {
-  // In performance mode, keep original implementation
-  global.setInterval = originalSetInterval;
 }
 
 // Override clearTimeout to remove from tracking
@@ -86,8 +82,6 @@ if (shouldWrapTimers) {
     activeResources.timeouts.delete(timeoutId);
     return originalClearTimeout(timeoutId);
   }) as typeof clearTimeout;
-} else {
-  global.clearTimeout = originalClearTimeout;
 }
 
 // Override clearInterval to remove from tracking
@@ -98,8 +92,6 @@ if (shouldWrapTimers) {
     activeResources.intervals.delete(intervalId);
     return originalClearInterval(intervalId);
   }) as typeof clearInterval;
-} else {
-  global.clearInterval = originalClearInterval;
 }
 
 beforeAll(() => {

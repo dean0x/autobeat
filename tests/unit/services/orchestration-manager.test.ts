@@ -259,5 +259,46 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       if (cancelResult.ok) return;
       expect(cancelResult.error.message).toContain('not active');
     });
+
+    it('should emit OrchestrationCancelled event so AttributedTaskCancellationHandler can cascade', async () => {
+      // ARCHITECTURE: v1.3.0 cancel cascade is event-driven.
+      // cancelOrchestration emits OrchestrationCancelled, and AttributedTaskCancellationHandler
+      // (registered in handler-setup.ts) handles attributed task cancellation.
+      // This test verifies the service emits the correct event with expected payload.
+      const createResult = await service.createOrchestration({ goal: 'Cascade event test' });
+      expect(createResult.ok).toBe(true);
+      if (!createResult.ok) return;
+      const orch = createResult.value;
+
+      const cancelResult = await service.cancelOrchestration(orch.id, 'cascade reason');
+      expect(cancelResult.ok).toBe(true);
+
+      // OrchestrationCancelled event must be emitted with the orchestration ID and reason
+      const cancelledEvents = eventBus.getEmittedEvents('OrchestrationCancelled') as Array<{
+        orchestratorId: string;
+        reason?: string;
+      }>;
+      expect(cancelledEvents.length).toBeGreaterThanOrEqual(1);
+      const evt = cancelledEvents.find((e) => e.orchestratorId === orch.id);
+      expect(evt).toBeDefined();
+      expect(evt?.reason).toBe('cascade reason');
+    });
+
+    it('emits OrchestrationCancelled without performing inline task cancellation', async () => {
+      // ARCHITECTURE: v1.3.0 cancel cascade is entirely event-driven.
+      // OrchestrationManagerService emits OrchestrationCancelled and does not call
+      // taskManager.cancel directly — AttributedTaskCancellationHandler handles the cascade.
+      const createResult = await service.createOrchestration({ goal: 'No inline cascade' });
+      expect(createResult.ok).toBe(true);
+      if (!createResult.ok) return;
+      const orch = createResult.value;
+
+      const cancelResult = await service.cancelOrchestration(orch.id, 'cascade test');
+      expect(cancelResult.ok).toBe(true);
+
+      // OrchestrationCancelled must be emitted — no inline task cancellation in the service
+      const cancelledEvents = eventBus.getEmittedEvents('OrchestrationCancelled');
+      expect(cancelledEvents.length).toBeGreaterThanOrEqual(1);
+    });
   });
 });

@@ -2,7 +2,42 @@
 
 This document lists all features that are **currently implemented and working** in Autobeat.
 
-Last Updated: April 2026
+Last Updated: April 2026 (2026-04-11)
+
+## ✅ Dashboard Redesign (v1.3.0)
+
+- **Two-view dashboard**: Metrics view (overview tiles + activity feed) and Workspace view (per-orchestration task grid)
+- **Live agent output streaming**: 1-2s latency via per-task polling with ring buffer; auto-tail follows new output
+- **Cost and token tracking**: Captures input/output/cache tokens and USD cost for Claude agents; stored in `task_usage` table; 24h rolling aggregate in Metrics view
+- **Cancel cascade for orchestrations**: `c` key on an orchestration in the dashboard cancels it and all attributed child tasks in one operation
+- **Responsive layout**: Terminal size detection via stderr; graceful degradation to narrow-mode or too-small message
+- **Orchestrator_id propagation**: Sub-tasks spawned by orchestrators are attributed via `orchestrator_id` column; propagated through both CLI (`AUTOBEAT_ORCHESTRATOR_ID` env var) and MCP (`metadata.orchestratorId`) spawn paths
+
+### New Keyboard Shortcuts (v1.3.0)
+
+| Key | Action |
+|-----|--------|
+| `v` | Toggle between Metrics and Workspace views |
+| `m` | Jump to Metrics view from anywhere |
+| `w` | Jump to Workspace view from anywhere |
+| `↑`/`↓` in Activity panel | Navigate activity feed rows |
+| `Enter` on Activity row | Drill into detail view for that entity |
+| `Tab` (from orchestrations panel) | Cycle focus into Activity feed |
+| `Esc` in Activity focus | Return to panel grid |
+| `Tab` / `Shift+Tab` (Workspace) | Cycle focus: nav ↔ grid panels |
+| `1`–`9` (Workspace grid) | Jump to panel by number |
+| `f` (Workspace grid) | Toggle fullscreen for focused task panel |
+| `[`/`]` | Scroll focused task panel up/down |
+| `g` | Jump to top of focused task panel (disables auto-tail) |
+| `G` | Jump to bottom of focused task panel (re-engages auto-tail) |
+| `c` (Workspace) | Cancel orchestration (nav focus) or child task (grid focus) |
+| `PgUp` / `PgDn` (Workspace) | Page through task grid |
+| `d` (Workspace grid) | Delete focused child task (terminal status only) |
+
+### Database (v1.3.0)
+
+- **Migration 18**: Adds `orchestrator_id` column to `tasks` for sub-task attribution
+- **Migration 19**: Adds `task_usage` table for token/cost tracking per task
 
 ## ✅ Terminal Dashboard & Agent Config (v1.2.0)
 
@@ -161,6 +196,7 @@ Last Updated: April 2026
 - `CPU_THRESHOLD`: CPU usage threshold (default: 80%)
 - `MEMORY_RESERVE`: Memory reserve in bytes (default: 1GB)
 - `LOG_LEVEL`: Logging verbosity (debug/info/warn/error)
+- `OUTPUT_FLUSH_INTERVAL_MS`: Dashboard output polling interval (default: 1000ms; use 5000 to reduce write pressure)
 
 ### Runtime Configuration
 - **Validation**: Zod schema validation with fallbacks

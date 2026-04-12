@@ -23,15 +23,18 @@ import {
   SyncOrchestrationOperations,
   SyncScheduleOperations,
   SyncTaskOperations,
+  TaskManager,
   TaskQueue,
   TaskRepository,
   TransactionRunner,
+  UsageRepository,
   WorkerPool,
 } from '../core/interfaces.js';
 import { err, ok, Result } from '../core/result.js';
 import { AgentExitConditionEvaluator } from './agent-exit-condition-evaluator.js';
 import { CompositeExitConditionEvaluator } from './composite-exit-condition-evaluator.js';
 import { ShellExitConditionEvaluator } from './exit-condition-evaluator.js';
+import { AttributedTaskCancellationHandler } from './handlers/attributed-task-cancellation-handler.js';
 import { CheckpointHandler } from './handlers/checkpoint-handler.js';
 import { DependencyHandler } from './handlers/dependency-handler.js';
 import { LoopHandler } from './handlers/loop-handler.js';
@@ -39,6 +42,7 @@ import { OrchestrationHandler } from './handlers/orchestration-handler.js';
 import { PersistenceHandler } from './handlers/persistence-handler.js';
 import { QueueHandler } from './handlers/queue-handler.js';
 import { ScheduleHandler } from './handlers/schedule-handler.js';
+import { UsageCaptureHandler } from './handlers/usage-capture-handler.js';
 import { WorkerHandler } from './handlers/worker-handler.js';
 
 /**
@@ -62,6 +66,9 @@ export interface HandlerDependencies {
   readonly loopRepository: LoopRepository & SyncLoopOperations;
   readonly loopService?: LoopService;
   readonly orchestrationRepository?: SyncOrchestrationOperations;
+  readonly usageRepository?: UsageRepository;
+  /** Optional — enables cancel cascade for attributed sub-tasks (v1.3.0) */
+  readonly taskManager?: TaskManager;
 }
 
 /**
@@ -79,6 +86,10 @@ export interface HandlerSetupResult {
   readonly loopHandler: LoopHandler;
   /** OrchestrationHandler uses factory pattern, returned separately for unified lifecycle */
   readonly orchestrationHandler?: OrchestrationHandler;
+  /** UsageCaptureHandler uses factory pattern, returned separately for unified lifecycle */
+  readonly usageCaptureHandler?: UsageCaptureHandler;
+  /** AttributedTaskCancellationHandler — cancel cascade on OrchestrationCancelled (v1.3.0) */
+  readonly attributedTaskCancellationHandler?: AttributedTaskCancellationHandler;
 }
 
 /**
@@ -172,6 +183,14 @@ export function extractHandlerDependencies(container: Container): Result<Handler
   const orchestrationRepoResult = getDependency<SyncOrchestrationOperations>(container, 'orchestrationRepository');
   const orchestrationRepository = orchestrationRepoResult.ok ? orchestrationRepoResult.value : undefined;
 
+  // Optional: UsageRepository for UsageCaptureHandler (graceful if not registered)
+  const usageRepositoryResult = getDependency<UsageRepository>(container, 'usageRepository');
+  const usageRepository = usageRepositoryResult.ok ? usageRepositoryResult.value : undefined;
+
+  // Optional: TaskManager for AttributedTaskCancellationHandler (graceful if not registered)
+  const taskManagerResult = getDependency<TaskManager>(container, 'taskManager');
+  const taskManager = taskManagerResult.ok ? taskManagerResult.value : undefined;
+
   return ok({
     config: configResult.value,
     logger: loggerResult.value,
@@ -189,14 +208,17 @@ export function extractHandlerDependencies(container: Container): Result<Handler
     loopRepository: loopRepositoryResult.value,
     loopService,
     orchestrationRepository,
+    usageRepository,
+    taskManager,
   });
 }
 
 /**
  * Create and setup all event handlers
  *
- * Initializes 7 handlers: 3 standard handlers via EventHandlerRegistry,
- * plus DependencyHandler, ScheduleHandler, CheckpointHandler, and LoopHandler via factory pattern.
+ * Initializes up to 10 handlers: 3 standard handlers via EventHandlerRegistry,
+ * plus DependencyHandler, ScheduleHandler, CheckpointHandler, LoopHandler, and 3 optional factory
+ * handlers (OrchestrationHandler, UsageCaptureHandler, AttributedTaskCancellationHandler).
  * On any failure, performs cleanup of already-initialized handlers before returning error.
  *
  * ARCHITECTURE: Standard handlers use setup(eventBus) pattern via registry.
@@ -393,10 +415,68 @@ export async function setupEventHandlers(deps: HandlerDependencies): Promise<Res
     }
   }
 
+  // 9. Usage Capture Handler - captures Claude token/cost usage at TaskCompleted (v1.3.0)
+  // ARCHITECTURE: Optional — only created if usageRepository is registered.
+  // Best-effort: failures are logged but never block other handlers.
+  let usageCaptureHandler: UsageCaptureHandler | undefined;
+  if (deps.usageRepository) {
+    const usageCaptureHandlerResult = await UsageCaptureHandler.create({
+      usageRepository: deps.usageRepository,
+      outputRepository: deps.outputRepository,
+      taskRepository: deps.taskRepository,
+      eventBus,
+      logger: childLogger('UsageCaptureHandler'),
+    });
+    if (!usageCaptureHandlerResult.ok) {
+      // Non-fatal: log warning but continue without usage capture
+      setupLogger.warn('Failed to create UsageCaptureHandler', {
+        error: usageCaptureHandlerResult.error.message,
+      });
+    } else {
+      usageCaptureHandler = usageCaptureHandlerResult.value;
+    }
+  }
+
+  // 10. Attributed Task Cancellation Handler — cancel cascade on OrchestrationCancelled (v1.3.0)
+  // ARCHITECTURE: Optional — only created if both taskRepository and taskManager are registered.
+  // Extracts the cancel cascade logic from OrchestrationManagerService into event-driven pattern.
+  // Best-effort: failures are logged but never block other handlers.
+  let attributedTaskCancellationHandler: AttributedTaskCancellationHandler | undefined;
+  if (deps.taskManager) {
+    const atcHandlerResult = await AttributedTaskCancellationHandler.create({
+      taskRepository: deps.taskRepository,
+      taskManager: deps.taskManager,
+      eventBus,
+      logger: childLogger('AttributedTaskCancellationHandler'),
+    });
+    if (!atcHandlerResult.ok) {
+      // Non-fatal: log warning but continue without attributed task cancellation
+      setupLogger.warn('Failed to create AttributedTaskCancellationHandler', {
+        error: atcHandlerResult.error.message,
+      });
+    } else {
+      attributedTaskCancellationHandler = atcHandlerResult.value;
+    }
+  }
+
   setupLogger.info('Event handlers initialized successfully', {
     standardHandlers: standardHandlers.length,
-    totalHandlers: standardHandlers.length + 4 + (orchestrationHandler ? 1 : 0),
+    totalHandlers:
+      standardHandlers.length +
+      4 +
+      (orchestrationHandler ? 1 : 0) +
+      (usageCaptureHandler ? 1 : 0) +
+      (attributedTaskCancellationHandler ? 1 : 0),
   });
 
-  return ok({ registry, dependencyHandler, scheduleHandler, checkpointHandler, loopHandler, orchestrationHandler });
+  return ok({
+    registry,
+    dependencyHandler,
+    scheduleHandler,
+    checkpointHandler,
+    loopHandler,
+    orchestrationHandler,
+    usageCaptureHandler,
+    attributedTaskCancellationHandler,
+  });
 }

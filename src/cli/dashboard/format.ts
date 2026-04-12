@@ -170,8 +170,11 @@ export function formatRunProgress(current: number, max: number | null | undefine
 /**
  * Format a non-negative millisecond count as a human-readable duration string.
  * Examples: "45s", "2m 30s", "1h 5m"
+ *
+ * Exported for use in components that receive a raw ms duration (e.g. MetricsBar).
+ * Callers with a start timestamp should use formatElapsed instead.
  */
-function formatMs(ms: number): string {
+export function formatMs(ms: number): string {
   const totalSeconds = Math.floor(ms / 1_000);
   const totalMinutes = Math.floor(totalSeconds / 60);
   const totalHours = Math.floor(totalMinutes / 60);
@@ -232,6 +235,18 @@ export function truncationNotice(
   return filterStatus !== null
     ? `showing ${displayedCount} of ${totalCount} ${filterStatus}`
     : `showing ${displayedCount} of ${totalCount}`;
+}
+
+// ============================================================================
+// Short ID
+// ============================================================================
+
+/**
+ * Return the first 12 characters of an entity ID for compact display.
+ * Long enough to identify an entity without consuming too much column space.
+ */
+export function shortId(id: string): string {
+  return id.slice(0, 12);
 }
 
 // ============================================================================

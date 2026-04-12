@@ -5,12 +5,14 @@
 
 import { ChildProcess } from 'child_process';
 import {
+  ActivityEntry,
   Loop,
   LoopCreateRequest,
   LoopId,
   LoopIteration,
   LoopStatus,
   Orchestration,
+  OrchestratorChild,
   OrchestratorCreateRequest,
   OrchestratorId,
   OrchestratorStatus,
@@ -29,6 +31,7 @@ import {
   TaskId,
   TaskOutput,
   TaskRequest,
+  TaskUsage,
   Worker,
   WorkerId,
   WorkerRegistration,
@@ -152,6 +155,36 @@ export interface TaskRepository {
    * @returns Map of status → count for all tasks in the repository
    */
   countByStatus(): Promise<Result<Record<string, number>>>;
+
+  /**
+   * Find tasks attributed to an orchestration (v1.3.0)
+   * @param orchId - Orchestration ID to filter by
+   * @param opts.statuses - Optional status filter (e.g., ['queued', 'running'])
+   */
+  findByOrchestratorId(
+    orchId: OrchestratorId,
+    opts?: { statuses?: readonly string[] },
+  ): Promise<Result<readonly Task[]>>;
+
+  /**
+   * Throughput statistics over a time window (v1.3.0)
+   * @param windowMs - Milliseconds to look back from now
+   */
+  getThroughputStats(windowMs: number): Promise<
+    Result<{
+      tasksPerHour: number;
+      loopsPerHour: number;
+      successRate: number;
+      avgDurationMs: number;
+    }>
+  >;
+
+  /**
+   * Find tasks updated since a given timestamp (v1.3.0)
+   * @param sinceMs - Epoch milliseconds lower bound
+   * @param limit - Maximum results to return
+   */
+  findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Task[]>>;
 }
 
 /**
@@ -346,6 +379,13 @@ export interface ScheduleRepository {
    * @returns Map of status → count for all schedules in the repository
    */
   countByStatus(): Promise<Result<Record<string, number>>>;
+
+  /**
+   * Find schedules updated since a given timestamp (v1.3.0)
+   * @param sinceMs - Epoch milliseconds lower bound
+   * @param limit - Maximum results to return
+   */
+  findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Schedule[]>>;
 
   /**
    * Record a schedule execution attempt
@@ -651,6 +691,13 @@ export interface LoopRepository {
    * ARCHITECTURE: FK cascade (ON DELETE CASCADE) auto-deletes associated iterations
    */
   cleanupOldLoops(olderThanMs: number): Promise<Result<number>>;
+
+  /**
+   * Find loops updated since a given timestamp (v1.3.0)
+   * @param sinceMs - Epoch milliseconds lower bound
+   * @param limit - Maximum results to return
+   */
+  findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Loop[]>>;
 }
 
 /**
@@ -730,6 +777,13 @@ export interface ExitConditionEvaluator {
 export interface OrchestrationRepository {
   save(orchestration: Orchestration): Promise<Result<void>>;
   update(orchestration: Orchestration): Promise<Result<void>>;
+  /**
+   * DECISION (2026-04-10): Conditional UPDATE used by createOrchestration to prevent
+   * a race where dashboard cancellation and the in-flight create flow's
+   * PLANNING→RUNNING transition could clobber each other.
+   * Returns ok(true) if the row was updated, ok(false) if the status no longer matches.
+   */
+  updateIfStatus(orchestration: Orchestration, expectedStatus: OrchestratorStatus): Promise<Result<boolean>>;
   findById(id: OrchestratorId): Promise<Result<Orchestration | null>>;
   findAll(limit?: number, offset?: number): Promise<Result<readonly Orchestration[]>>;
   findByStatus(status: OrchestratorStatus, limit?: number, offset?: number): Promise<Result<readonly Orchestration[]>>;
@@ -742,6 +796,36 @@ export interface OrchestrationRepository {
    * @returns Map of status → count for all orchestrations in the repository
    */
   countByStatus(): Promise<Result<Record<string, number>>>;
+
+  /**
+   * Get child tasks attributed to an orchestration (v1.3.0)
+   * Unions direct attribution (tasks.orchestrator_id) and loop iteration chain.
+   * SQL-level deduplication via ROW_NUMBER inside the UNION CTE — the 'iteration'
+   * kind is preferred when a task appears in both chains. LIMIT/OFFSET is applied
+   * AFTER dedup so pagination is correct even when duplicates cross page boundaries.
+   * @param orchestrationId - Orchestration to query
+   * @param limit - Maximum tasks to return per page, ordered by updated_at DESC
+   * @param offset - Zero-based row offset for pagination (default: 0)
+   */
+  getOrchestratorChildren(
+    orchestrationId: OrchestratorId,
+    limit: number,
+    offset?: number,
+  ): Promise<Result<readonly OrchestratorChild[]>>;
+
+  /**
+   * Count all child tasks attributed to an orchestration (v1.3.0)
+   * Deduped on task_id — same semantics as getOrchestratorChildren.
+   * Used for pagination footer ("Page N of M").
+   */
+  countOrchestratorChildren(orchestrationId: OrchestratorId): Promise<Result<number>>;
+
+  /**
+   * Find orchestrations updated since a given timestamp (v1.3.0)
+   * @param sinceMs - Epoch milliseconds lower bound
+   * @param limit - Maximum results to return
+   */
+  findUpdatedSince(sinceMs: number, limit: number): Promise<Result<readonly Orchestration[]>>;
 }
 
 /**
@@ -769,5 +853,55 @@ export interface OrchestrationService {
     limit?: number,
     offset?: number,
   ): Promise<Result<readonly Orchestration[]>>;
-  cancelOrchestration(id: OrchestratorId, reason?: string): Promise<Result<void>>;
+  /** @param opts.cancelAttributedTasks - default true; cancel queued/running sub-tasks */
+  cancelOrchestration(
+    id: OrchestratorId,
+    reason?: string,
+    opts?: { cancelAttributedTasks?: boolean },
+  ): Promise<Result<void>>;
 }
+
+// ============================================================================
+// v1.3.0: Task usage / cost tracking
+// ARCHITECTURE: Follows OrchestrationRepository conventions (Result pattern, no throws)
+// ============================================================================
+
+/**
+ * Persistence and aggregation interface for task token/cost usage.
+ * ARCHITECTURE: Pure Result pattern, no exceptions.
+ * Pattern: Repository pattern — one usage row per task.
+ */
+export interface UsageRepository {
+  /** UPSERT-safe save — overwrites existing row if present (idempotent for retry replay) */
+  save(usage: TaskUsage): Promise<Result<void>>;
+
+  get(taskId: TaskId): Promise<Result<TaskUsage | null>>;
+
+  /**
+   * Sum token/cost across ALL tasks attributed to the orchestration,
+   * following retry_of chains so retries are rolled up into the root task.
+   */
+  sumByOrchestrationId(orchId: OrchestratorId): Promise<Result<TaskUsage>>;
+
+  /** Sum token/cost across all tasks in a loop's iteration history */
+  sumByLoopId(loopId: LoopId): Promise<Result<TaskUsage>>;
+
+  /**
+   * Global sum across all tracked tasks, optionally filtered to tasks
+   * completed since a given timestamp (epoch ms).
+   */
+  sumGlobal(sinceMs?: number): Promise<Result<TaskUsage>>;
+
+  /**
+   * Top N orchestrations by total cost in the given time window.
+   * @param sinceMs - Include only usage rows with captured_at >= sinceMs
+   * @param limit - Number of orchestrations to return
+   */
+  topOrchestrationsByCost(
+    sinceMs: number,
+    limit: number,
+  ): Promise<Result<readonly { orchestrationId: OrchestratorId; totalCost: number }[]>>;
+}
+
+// Re-export for convenience (consumers can import from interfaces instead of domain)
+export type { ActivityEntry, OrchestratorChild, TaskUsage };
