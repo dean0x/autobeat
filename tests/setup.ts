@@ -48,16 +48,12 @@ const originalSetTimeout = global.setTimeout;
 
 if (shouldWrapTimers) {
   global.setTimeout = ((callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
-    const timeoutId = originalSetTimeout(callback, ms, ...args);
-    activeResources.timeouts.add(timeoutId);
-
-    // Wrap callback to remove from tracking when executed
-    const wrappedCallback = () => {
+    const timeoutId = originalSetTimeout((..._: unknown[]) => {
       activeResources.timeouts.delete(timeoutId);
       callback(...args);
-    };
-
-    return originalSetTimeout(wrappedCallback, ms);
+    }, ms, ...args);
+    activeResources.timeouts.add(timeoutId);
+    return timeoutId;
   }) as typeof setTimeout;
 } else {
   // In performance mode, keep original implementation

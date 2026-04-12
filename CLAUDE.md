@@ -194,8 +194,8 @@ gh run list --workflow=release.yml --limit=1 # must show status: completed/succe
 - **Technical Safeguard**: `npm test` is blocked and prints a warning (prevents accidental crashes)
 - **Use individual groups** from Claude Code: `npm run test:core`, `test:handlers`, etc.
 - **Full suite**: `npm run test:all` (only in local terminal/CI)
-- **ROOT CAUSE of memory exhaustion**: Vitest workers accumulate memory across test files
-- **Solution**: `vmMemoryLimit: '1024MB'` in vitest.config.ts restarts workers at 1GB threshold
+- **Pool strategy**: `pool: 'forks'` — each worker is a separate OS process; `vmMemoryLimit` kills and replaces forks cleanly
+- **Memory limit**: `vmMemoryLimit: '1024MB'` in vitest.config.ts — hard-kills forks at 1GB, OS reclaims instantly
 - **Tests are sequential** via vitest config (`maxWorkers: 1`, `isolate: false`)
 - **All commands use 2GB** memory limit (`--max-old-space-size=2048`)
 - **No real process spawning** - all tests use mocks (MockWorkerPool, MockProcessSpawner)
