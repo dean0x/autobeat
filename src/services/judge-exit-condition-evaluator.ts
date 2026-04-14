@@ -46,8 +46,18 @@ export interface FsAdapter {
   unlink(path: string): Promise<void>;
 }
 
-/** File written by the judge agent in the working directory */
-const JUDGE_DECISION_FILE = '.autobeat-judge';
+/**
+ * Unique decision file path for a judge task, scoped to its task ID.
+ *
+ * DECISION: Per-task filename (.autobeat-judge-{taskId}) instead of a fixed name.
+ * Why: The work agent runs in the same working directory and could inadvertently
+ * write a file named .autobeat-judge before the judge phase completes (TOCTOU).
+ * Using the judgeTaskId makes the filename unguessable by the work agent, which
+ * only knows its own task ID. The judge prompt includes the exact filename.
+ */
+function judgeDecisionFilePath(workingDirectory: string, judgeTaskId: string): string {
+  return path.join(workingDirectory, `.autobeat-judge-${judgeTaskId}`);
+}
 
 const MAX_FEEDBACK_LENGTH = 16_000;
 
@@ -171,20 +181,27 @@ export class JudgeExitConditionEvaluator implements ExitConditionEvaluator {
    */
   private async runJudgeAgent(loop: Loop, findings: string): Promise<{ continue: boolean; reasoning: string }> {
     const judgeAgent = loop.judgeAgent ?? loop.taskTemplate.agent;
-    const judgePromptText = this.buildJudgePrompt(loop, findings);
 
     // Use jsonSchema only for Claude — other agents don't support structured output
     const jsonSchema = judgeAgent === 'claude' ? JUDGE_SCHEMA : undefined;
 
-    const judgeTaskRequest: TaskRequest = {
-      prompt: `[JUDGE] ${judgePromptText}`,
+    // Create task first to get the unique judgeTaskId, then build prompt with the
+    // unique decision filename derived from that ID (TOCTOU fix).
+    const judgeTaskSkeleton = createTask({
+      prompt: '[JUDGE] (building...)',
       priority: loop.taskTemplate.priority,
       workingDirectory: loop.workingDirectory,
       agent: judgeAgent,
       jsonSchema,
-    };
-    const judgeTask = createTask(judgeTaskRequest);
-    const judgeTaskId = judgeTask.id;
+    });
+    const judgeTaskId = judgeTaskSkeleton.id;
+
+    // Unique filename scoped to this judge task — avoids TOCTOU with the work agent
+    const decisionFilePath = judgeDecisionFilePath(loop.workingDirectory, judgeTaskId);
+
+    const judgePromptText = this.buildJudgePrompt(loop, findings, decisionFilePath);
+    // Splice the real prompt in (task is frozen; spread creates a new plain object for the event payload)
+    const judgeTask = { ...judgeTaskSkeleton, prompt: `[JUDGE] ${judgePromptText}` };
 
     this.logger.info('Starting judge decision task (phase 2)', {
       loopId: loop.id,
@@ -192,8 +209,6 @@ export class JudgeExitConditionEvaluator implements ExitConditionEvaluator {
       judgeAgent,
     });
 
-    // Clean up any stale decision file before the judge runs
-    const decisionFilePath = path.join(loop.workingDirectory, JUDGE_DECISION_FILE);
     await this.cleanupDecisionFile(decisionFilePath);
 
     const completionPromise = this.waitForTaskCompletion(judgeTaskId, loop.evalTimeout, loop.id);
@@ -280,12 +295,14 @@ Provide your detailed findings. There is no special format required — write na
   /**
    * Build the judge prompt for phase 2 (decision making).
    *
-   * DECISION: File-based decision mechanism.
+   * DECISION: File-based decision mechanism with per-task unique filename.
    * Why: All coding agents can write files — stdout capture is unreliable across agents.
-   * The file path is fixed (.autobeat-judge) so the judge knows where to write.
+   * The unique decisionFilePath (scoped to judgeTaskId) prevents TOCTOU races with the
+   * work agent, which only knows its own task ID and cannot guess the judge filename.
    */
-  private buildJudgePrompt(loop: Loop, findings: string): string {
+  private buildJudgePrompt(loop: Loop, findings: string, decisionFilePath: string): string {
     const judgeInstructions = loop.judgePrompt ?? 'Based on the findings, should the work continue iterating?';
+    const decisionFileName = path.basename(decisionFilePath);
 
     return `You are evaluating whether a coding task should continue iterating.
 
@@ -298,7 +315,7 @@ ${findings || '(No findings provided)'}
 
 ${judgeInstructions}
 
-IMPORTANT: Write your decision to the file \`.autobeat-judge\` in the working directory (${loop.workingDirectory}/.autobeat-judge).
+IMPORTANT: Write your decision to the file \`${decisionFileName}\` in the working directory (${decisionFilePath}).
 The file must contain valid JSON with exactly this structure:
 {"continue": true, "reasoning": "..."} to continue iterating
 {"continue": false, "reasoning": "..."} to stop

@@ -1489,9 +1489,9 @@ export class LoopHandler extends BaseEventHandler {
         const statusLabel = iter.status.toUpperCase();
         const scoreLabel = iter.score !== undefined ? ` (score: ${iter.score})` : '';
         const entry = `Iteration ${iter.iterationNumber} [${statusLabel}${scoreLabel}]: ${iter.evalFeedback}`;
-        if (totalBytes + entry.length > MAX_FEEDBACK_BYTES) break;
+        if (totalBytes + Buffer.byteLength(entry) > MAX_FEEDBACK_BYTES) break;
         contextParts.push(entry);
-        totalBytes += entry.length;
+        totalBytes += Buffer.byteLength(entry);
       }
       contextParts.push('---');
     }

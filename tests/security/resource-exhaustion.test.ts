@@ -210,7 +210,7 @@ describe('Security: Configuration Schema Attack Prevention', () => {
 
       // loadConfiguration() would return safe defaults via parse({})
       const fallback = ConfigurationSchema.parse({});
-      expect(fallback.timeout).toBe(1800000); // 30 minutes
+      expect(fallback.timeout).toBe(0); // Disabled by default (tasks run 2.5+ hours)
       expect(fallback.cpuCoresReserved).toBe(2);
       expect(fallback.memoryReserve).toBe(2684354560); // 2.5GB
     });

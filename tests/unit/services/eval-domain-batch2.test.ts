@@ -739,9 +739,9 @@ describe('Feedback accumulation cap', () => {
     const padding = 'x'.repeat(150);
     for (let i = 1; i <= 100; i++) {
       const entry = `Iteration ${i} [FAIL]: ${padding} iteration ${i} more text here.`;
-      if (totalBytes + entry.length > MAX_FEEDBACK_BYTES) break;
+      if (totalBytes + Buffer.byteLength(entry) > MAX_FEEDBACK_BYTES) break;
       entries.push(entry);
-      totalBytes += entry.length;
+      totalBytes += Buffer.byteLength(entry);
     }
 
     expect(totalBytes).toBeLessThanOrEqual(MAX_FEEDBACK_BYTES);
@@ -759,9 +759,9 @@ describe('Feedback accumulation cap', () => {
     for (let i = 1; i <= 100; i++) {
       const entry = `Iteration ${i} [FAIL]: Something happened at iteration ${i}.`;
       allEntries.push(entry);
-      if (totalBytes + entry.length <= MAX_FEEDBACK_BYTES) {
+      if (totalBytes + Buffer.byteLength(entry) <= MAX_FEEDBACK_BYTES) {
         includedEntries.push(entry);
-        totalBytes += entry.length;
+        totalBytes += Buffer.byteLength(entry);
       } else {
         break; // Stop including when cap is hit
       }

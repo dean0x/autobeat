@@ -60,9 +60,13 @@ const LoopRowSchema = z.object({
   git_base_branch: z.string().nullable(),
   git_start_commit_sha: z.string().nullable(),
   schedule_id: z.string().nullable(),
-  // Eval redesign fields (v1.4.0) — added by migration v21, nullable for backward compat
-  eval_type: z.string().nullable().optional(),
-  judge_agent: z.string().nullable().optional(),
+  // Eval redesign fields (v1.4.0) — added by migration v21, nullable for backward compat.
+  // Use enum validation for eval_type and judge_agent to reject corrupt DB values at the
+  // boundary rather than silently propagating them as untyped strings.
+  // .optional() is kept because SQLite columns added via ALTER TABLE may be absent in
+  // RowDescription for very old schema versions; .nullable() covers the normal NULL case.
+  eval_type: z.enum(['feedforward', 'judge', 'schema']).nullable().optional(),
+  judge_agent: z.enum(AGENT_PROVIDERS_TUPLE).nullable().optional(),
   judge_prompt: z.string().nullable().optional(),
 });
 
@@ -83,7 +87,9 @@ const LoopIterationRowSchema = z.object({
   git_commit_sha: z.string().nullable(),
   pre_iteration_commit_sha: z.string().nullable(),
   git_diff_summary: z.string().nullable(),
-  // Eval redesign fields (v1.4.0) — added by migration v21, nullable for backward compat
+  // Eval redesign fields (v1.4.0) — added by migration v21, nullable for backward compat.
+  // .optional() kept for same reason as LoopRowSchema: ALTER TABLE columns may be absent
+  // in RowDescription under very old schema; .nullable() covers the normal NULL case.
   eval_response: z.string().nullable().optional(),
 });
 
@@ -108,6 +114,10 @@ const TaskRequestSchema = z.object({
   // iteration tasks (single and pipeline) carry orchestrator_id into cost tracking and
   // cancel cascade. Without this, Zod strips the field and attribution silently breaks.
   orchestratorId: z.string().optional(),
+  // v1.4.0: JSON schema for structured output — must round-trip through loop.taskTemplate
+  // so schema-mode eval loops pass the JSON schema string to iteration tasks.
+  // Without this, Zod strips the field and schema-mode evaluation silently breaks.
+  jsonSchema: z.string().optional(),
 });
 
 /**
@@ -682,9 +692,10 @@ export class SQLiteLoopRepository implements LoopRepository, SyncLoopOperations 
       gitBaseBranch: data.git_base_branch ?? undefined,
       gitStartCommitSha: data.git_start_commit_sha ?? undefined,
       scheduleId: data.schedule_id ? ScheduleId(data.schedule_id) : undefined,
-      // Eval redesign (v1.4.0)
-      evalType: data.eval_type ? (data.eval_type as EvalType) : undefined,
-      judgeAgent: data.judge_agent ? (data.judge_agent as Loop['judgeAgent']) : undefined,
+      // Eval redesign (v1.4.0) — no casts needed: LoopRowSchema validates eval_type and
+      // judge_agent as enums, so TypeScript can trust the narrowed types directly.
+      evalType: data.eval_type ?? undefined,
+      judgeAgent: data.judge_agent ?? undefined,
       judgePrompt: data.judge_prompt ?? undefined,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
