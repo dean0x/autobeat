@@ -1182,7 +1182,7 @@ export class LoopHandler extends BaseEventHandler {
       ...extraUpdate,
     });
     await this.loopRepo.update(updatedLoop);
-    await this.finishLoop(loop, status, reason);
+    await this.finishLoop(updatedLoop, status, reason);
   }
 
   /**

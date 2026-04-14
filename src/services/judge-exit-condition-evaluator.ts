@@ -94,7 +94,7 @@ export class JudgeExitConditionEvaluator implements ExitConditionEvaluator {
    *
    * Phase 1: Eval agent runs evalPrompt → produces findings text.
    * Phase 2: Judge agent reads findings → writes .autobeat-judge with decision.
-   * Decision extraction: file-based first, then structured output (Claude only), then default continue.
+   * Decision extraction: structured output (Claude only), then file-based, then default continue.
    */
   async evaluate(loop: Loop, taskId: TaskId): Promise<EvalResult> {
     // Phase 1: Gather findings via eval agent
