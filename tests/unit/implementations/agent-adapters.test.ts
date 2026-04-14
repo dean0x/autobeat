@@ -640,7 +640,12 @@ describe('model passthrough', () => {
     mockSpawn.mockReturnValue(mockChild);
 
     const adapter = new ClaudeAdapter(testConfig, 'claude');
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1', model: 'claude-opus-4-5' });
+    adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      model: 'claude-opus-4-5',
+    });
 
     const [, args] = mockSpawn.mock.calls[0];
     expect(args).toContain('--model');
@@ -670,7 +675,12 @@ describe('model passthrough', () => {
     saveAgentConfig('claude', 'model', 'claude-sonnet-4-5');
 
     const adapter = new ClaudeAdapter(testConfig, 'claude');
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1', model: 'claude-opus-4-5' });
+    adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      model: 'claude-opus-4-5',
+    });
 
     const [, args] = mockSpawn.mock.calls[0];
     const modelIdx = (args as string[]).indexOf('--model');
@@ -710,7 +720,12 @@ describe('model passthrough', () => {
     mockSpawn.mockReturnValue(mockChild);
 
     const adapter = new GeminiAdapter(testConfig, 'gemini');
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1', model: 'gemini-2.0-flash' });
+    adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      model: 'gemini-2.0-flash',
+    });
 
     const [, args] = mockSpawn.mock.calls[0];
     expect(args).toContain('--model');
@@ -740,7 +755,12 @@ describe('BaseAgentAdapter - orchestratorId env injection', () => {
     mockSpawn.mockReturnValue(mockChild);
 
     const adapter = new ClaudeAdapter(testConfig, 'claude');
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1', orchestratorId: VALID_ORCHESTRATOR_ID });
+    adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      orchestratorId: VALID_ORCHESTRATOR_ID,
+    });
     adapter.dispose();
 
     const spawnOptions = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
@@ -753,7 +773,12 @@ describe('BaseAgentAdapter - orchestratorId env injection', () => {
 
     const adapter = new ClaudeAdapter(testConfig, 'claude');
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1', orchestratorId: 'not-an-orchestrator-id' });
+    adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      orchestratorId: 'not-an-orchestrator-id',
+    });
     consoleSpy.mockRestore();
     adapter.dispose();
 
@@ -767,7 +792,12 @@ describe('BaseAgentAdapter - orchestratorId env injection', () => {
 
     const adapter = new ClaudeAdapter(testConfig, 'claude');
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1', orchestratorId: 'orchestrator-550E8400-E29B-41D4-A716-446655440000' });
+    adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      orchestratorId: 'orchestrator-550E8400-E29B-41D4-A716-446655440000',
+    });
     consoleSpy.mockRestore();
     adapter.dispose();
 
@@ -781,7 +811,12 @@ describe('BaseAgentAdapter - orchestratorId env injection', () => {
 
     const adapter = new ClaudeAdapter(testConfig, 'claude');
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1', orchestratorId: 'orchestrator-\x00injected\nvalue' });
+    adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      orchestratorId: 'orchestrator-\x00injected\nvalue',
+    });
     consoleSpy.mockRestore();
     adapter.dispose();
 
@@ -807,7 +842,12 @@ describe('BaseAgentAdapter - orchestratorId env injection', () => {
 
     const adapter = new ClaudeAdapter(testConfig, 'claude');
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const result = adapter.spawn({ prompt: 'test prompt', workingDirectory: '/workspace', taskId: 'task-1', orchestratorId: 'malformed-id' });
+    const result = adapter.spawn({
+      prompt: 'test prompt',
+      workingDirectory: '/workspace',
+      taskId: 'task-1',
+      orchestratorId: 'malformed-id',
+    });
     consoleSpy.mockRestore();
     adapter.dispose();
 

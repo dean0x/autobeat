@@ -257,9 +257,7 @@ describe('waitForEvalTaskCompletion — loop cancellation propagation', () => {
 
     await context.eventBus.emit('LoopCancelled', { loopId: LOOP_ID });
 
-    expect(
-      context.logger.hasLogContaining('Loop cancelled while eval task running — cancelling eval task'),
-    ).toBe(true);
+    expect(context.logger.hasLogContaining('Loop cancelled while eval task running — cancelling eval task')).toBe(true);
   });
 
   it('ignores LoopCancelled events for other loops', async () => {

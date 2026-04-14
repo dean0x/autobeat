@@ -23,12 +23,12 @@
  *   is the most complete.
  */
 
-import { vi } from 'vitest'
-import type { Loop } from '../../src/core/domain.js'
-import { createLoop, EvalMode, LoopStrategy, TaskId } from '../../src/core/domain.js'
-import type { EvalResult, LoopRepository, OutputRepository } from '../../src/core/interfaces.js'
-import { ok } from '../../src/core/result.js'
-import type { TestEventBus } from './test-doubles.js'
+import { vi } from 'vitest';
+import type { Loop } from '../../src/core/domain.js';
+import { createLoop, EvalMode, LoopStrategy, TaskId } from '../../src/core/domain.js';
+import type { EvalResult, LoopRepository, OutputRepository } from '../../src/core/interfaces.js';
+import { ok } from '../../src/core/result.js';
+import type { TestEventBus } from './test-doubles.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository stubs
@@ -51,7 +51,7 @@ export function createOutputRepo(lines: string[]): OutputRepository {
     save: vi.fn().mockResolvedValue(ok(undefined)),
     delete: vi.fn().mockResolvedValue(ok(undefined)),
     append: vi.fn().mockResolvedValue(ok(undefined)),
-  } as unknown as OutputRepository
+  } as unknown as OutputRepository;
 }
 
 /**
@@ -88,7 +88,7 @@ export function createLoopRepo(preIterationCommitSha?: string): LoopRepository {
     recordIterationSync: vi.fn(),
     findByIdSync: vi.fn().mockReturnValue(null),
     updateIterationSync: vi.fn(),
-  } as unknown as LoopRepository
+  } as unknown as LoopRepository;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ export function createTestLoop(overrides: Partial<Parameters<typeof createLoop>[
       ...overrides,
     },
     '/workspace',
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,29 +141,29 @@ export async function evaluateWithCompletions<
   eventBus: TestEventBus,
   simulateFns: Array<(evalTaskId: string) => Promise<void>>,
 ): Promise<EvalResult> {
-  const capturedTaskIds: string[] = []
-  const origEmit = eventBus.emit.bind(eventBus)
+  const capturedTaskIds: string[] = [];
+  const origEmit = eventBus.emit.bind(eventBus);
   vi.spyOn(eventBus, 'emit').mockImplementation(async (type: string, payload: unknown) => {
     if (type === 'TaskDelegated') {
-      capturedTaskIds.push((payload as { task: { id: string } }).task.id)
+      capturedTaskIds.push((payload as { task: { id: string } }).task.id);
     }
-    return origEmit(type as never, payload as never)
-  })
+    return origEmit(type as never, payload as never);
+  });
 
-  const evalPromise = evaluator.evaluate(loop, taskId)
+  const evalPromise = evaluator.evaluate(loop, taskId);
 
   for (let i = 0; i < simulateFns.length; i++) {
     // Give subscriptions a tick to register before emitting completion
-    await new Promise((r) => setImmediate(r))
-    const taskIdForPhase = capturedTaskIds[i]
+    await new Promise((r) => setImmediate(r));
+    const taskIdForPhase = capturedTaskIds[i];
     if (taskIdForPhase) {
-      await simulateFns[i](taskIdForPhase)
+      await simulateFns[i](taskIdForPhase);
     }
     // Give the evaluator a tick to process the completion event
-    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r));
   }
 
-  return evalPromise
+  return evalPromise;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,7 +177,7 @@ export async function simulateTaskComplete(eventBus: TestEventBus, taskId: strin
   await eventBus.emit('TaskCompleted', {
     taskId: taskId as ReturnType<typeof TaskId>,
     workerId: 'w1' as unknown as never,
-  })
+  });
 }
 
 /**
@@ -192,5 +192,5 @@ export async function simulateTaskFailed(
     taskId: taskId as ReturnType<typeof TaskId>,
     error: new Error(message),
     workerId: 'w1' as unknown as never,
-  })
+  });
 }

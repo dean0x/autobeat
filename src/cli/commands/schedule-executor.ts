@@ -22,8 +22,8 @@ import * as path from 'node:path';
 import { bootstrap } from '../../bootstrap.js';
 import { ScheduleStatus } from '../../core/domain.js';
 import type { ScheduleRepository } from '../../core/interfaces.js';
-import { err, ok } from '../../core/result.js';
 import type { Result } from '../../core/result.js';
+import { err, ok } from '../../core/result.js';
 
 /** Path to the PID file for the background executor process */
 export function getExecutorPidPath(): string {
@@ -74,10 +74,7 @@ export function isProcessAlive(pid: number): boolean {
  * @returns ok('already-running') when another live executor holds the PID file
  * @returns err(Error) on unrecoverable I/O failures
  */
-export function acquirePidFile(
-  pidPath: string,
-  pid: number,
-): Result<'acquired' | 'already-running', Error> {
+export function acquirePidFile(pidPath: string, pid: number): Result<'acquired' | 'already-running', Error> {
   try {
     fs.mkdirSync(path.dirname(pidPath), { recursive: true });
   } catch (mkdirErr) {
@@ -152,9 +149,7 @@ export async function ensureScheduleExecutorRunning(): Promise<void> {
  * no process side-effects. Returns Result so callers can distinguish
  * "no active schedules" from "repo error" (callers stay alive on error).
  */
-export async function checkActiveSchedules(
-  scheduleRepo: ScheduleRepository,
-): Promise<Result<boolean, Error>> {
+export async function checkActiveSchedules(scheduleRepo: ScheduleRepository): Promise<Result<boolean, Error>> {
   try {
     const activeResult = await scheduleRepo.findByStatus(ScheduleStatus.ACTIVE);
     if (!activeResult.ok) {
@@ -173,10 +168,7 @@ export async function checkActiveSchedules(
  * Default to global `process` in production. Tests pass a fake.
  * Avoids spying on globals (cleanup risk between tests).
  */
-export function registerSignalHandlers(
-  cleanup: () => void,
-  proc: Pick<NodeJS.Process, 'on'> = process,
-): void {
+export function registerSignalHandlers(cleanup: () => void, proc: Pick<NodeJS.Process, 'on'> = process): void {
   const exitCleanly = (signal: string): void => {
     process.stderr.write(`Schedule executor: received ${signal}, shutting down\n`);
     cleanup();
@@ -261,7 +253,9 @@ export async function handleScheduleExecutor(): Promise<void> {
   const IDLE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
   const scheduleRepoResult = container.get<ScheduleRepository>('scheduleRepository');
   if (!scheduleRepoResult.ok) {
-    process.stderr.write(`Schedule executor: failed to resolve scheduleRepository: ${scheduleRepoResult.error.message}\n`);
+    process.stderr.write(
+      `Schedule executor: failed to resolve scheduleRepository: ${scheduleRepoResult.error.message}\n`,
+    );
     cleanup();
     process.exit(1);
   }

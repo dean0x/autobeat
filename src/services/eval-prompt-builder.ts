@@ -11,8 +11,8 @@
  * signatures and responsibilities — a shared function is the minimal coupling surface.
  */
 
-import type { Loop, TaskId } from '../core/domain.js'
-import type { LoopRepository } from '../core/interfaces.js'
+import type { Loop, TaskId } from '../core/domain.js';
+import type { LoopRepository } from '../core/interfaces.js';
 
 /**
  * Shared prompt sections built from loop context and iteration git state.
@@ -23,9 +23,9 @@ import type { LoopRepository } from '../core/interfaces.js'
  * - toolInstructions: git diff command + `beat logs <taskId>` (byte-identical across all 3 evaluators)
  */
 export interface EvalPromptBase {
-  readonly contextHeader: string
-  readonly gitDiffInstructions: string
-  readonly toolInstructions: string
+  readonly contextHeader: string;
+  readonly gitDiffInstructions: string;
+  readonly toolInstructions: string;
 }
 
 /**
@@ -44,23 +44,23 @@ export async function buildEvalPromptBase(
   taskId: TaskId,
   loopRepo: LoopRepository,
 ): Promise<EvalPromptBase> {
-  let preIterationCommitSha: string | undefined
-  const iterationResult = await loopRepo.findIterationByTaskId(taskId)
+  let preIterationCommitSha: string | undefined;
+  const iterationResult = await loopRepo.findIterationByTaskId(taskId);
   if (iterationResult.ok && iterationResult.value) {
-    preIterationCommitSha = iterationResult.value.preIterationCommitSha
+    preIterationCommitSha = iterationResult.value.preIterationCommitSha;
   }
 
   const gitDiffInstructions = preIterationCommitSha
     ? `Use \`git diff ${preIterationCommitSha}..HEAD\` to see what changed in this iteration.`
-    : 'Use `git diff HEAD~1..HEAD` to see what changed in this iteration.'
+    : 'Use `git diff HEAD~1..HEAD` to see what changed in this iteration.';
 
-  const toolInstructions = `${gitDiffInstructions} Use \`beat logs ${taskId}\` to read the worker's output.`
+  const toolInstructions = `${gitDiffInstructions} Use \`beat logs ${taskId}\` to read the worker's output.`;
 
   const contextHeader = `IMPORTANT: Do NOT modify any files. You are an evaluator — read and assess only.
 
 Working directory: ${loop.workingDirectory}
 Iteration: ${loop.currentIteration}
-Task ID: ${taskId}`
+Task ID: ${taskId}`;
 
-  return { contextHeader, gitDiffInstructions, toolInstructions }
+  return { contextHeader, gitDiffInstructions, toolInstructions };
 }

@@ -364,7 +364,7 @@ describe('acquirePidFile — atomic O_EXCL locking', () => {
     expect(result.error.message).toMatch(/Failed to create PID directory/);
   });
 
-  it("returns err on path creation failure and does not crash", () => {
+  it('returns err on path creation failure and does not crash', () => {
     // Pass a path we can't write to by choosing root-owned directory
     // This test validates the code path without using ESM module spies.
     // On most systems writing to /proc is not permitted, giving a real ENOENT/EACCES.

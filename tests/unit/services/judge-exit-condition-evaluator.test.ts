@@ -290,9 +290,6 @@ describe('JudgeExitConditionEvaluator', () => {
     expect(judgeEvent!.task.prompt).not.toMatch(/\.autobeat-judge[^-]/);
 
     // readFile must also be called with the unique filename
-    expect(mockFs.readFile).toHaveBeenCalledWith(
-      expect.stringContaining(`.autobeat-judge-${judgeTaskId}`),
-      'utf-8',
-    );
+    expect(mockFs.readFile).toHaveBeenCalledWith(expect.stringContaining(`.autobeat-judge-${judgeTaskId}`), 'utf-8');
   });
 });

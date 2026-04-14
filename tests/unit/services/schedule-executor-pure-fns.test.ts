@@ -11,14 +11,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ScheduleStatus } from '../../../src/core/domain.js';
-import { err, ok } from '../../../src/core/result.js';
 import {
   checkActiveSchedules,
   registerSignalHandlers,
   startIdleCheckLoop,
 } from '../../../src/cli/commands/schedule-executor.js';
+import { ScheduleStatus } from '../../../src/core/domain.js';
 import type { ScheduleRepository } from '../../../src/core/interfaces.js';
+import { err, ok } from '../../../src/core/result.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Minimal ScheduleRepository mock
@@ -42,9 +42,7 @@ function makeScheduleRepo(
 
 describe('checkActiveSchedules', () => {
   it('returns ok(true) when active schedules exist', async () => {
-    const repo = makeScheduleRepo(async () =>
-      ok([{ id: 'sched-1', status: ScheduleStatus.ACTIVE }] as never),
-    );
+    const repo = makeScheduleRepo(async () => ok([{ id: 'sched-1', status: ScheduleStatus.ACTIVE }] as never));
 
     const result = await checkActiveSchedules(repo);
 
@@ -189,9 +187,7 @@ describe('registerSignalHandlers', () => {
     const callOrder: string[] = [];
     const cleanup = vi.fn(() => callOrder.push('cleanup'));
 
-    const exitSpy = vi
-      .spyOn(process, 'exit')
-      .mockImplementation((() => callOrder.push('exit')) as never);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => callOrder.push('exit')) as never);
 
     registerSignalHandlers(cleanup, fakeProc);
     fakeProc.emit('SIGTERM');
@@ -216,7 +212,12 @@ describe('startIdleCheckLoop', () => {
 
   it('returns a timer handle (NodeJS.Timeout)', () => {
     const repo = makeScheduleRepo(async () => ok([]));
-    const timer = startIdleCheckLoop(repo, 1000, () => {}, () => {});
+    const timer = startIdleCheckLoop(
+      repo,
+      1000,
+      () => {},
+      () => {},
+    );
     expect(timer).toBeDefined();
     clearInterval(timer);
   });
@@ -245,9 +246,7 @@ describe('startIdleCheckLoop', () => {
   });
 
   it('does NOT call onIdle when active schedules exist', async () => {
-    const repo = makeScheduleRepo(async () =>
-      ok([{ id: 'sched-1', status: ScheduleStatus.ACTIVE }] as never),
-    );
+    const repo = makeScheduleRepo(async () => ok([{ id: 'sched-1', status: ScheduleStatus.ACTIVE }] as never));
     const onIdle = vi.fn();
 
     const timer = startIdleCheckLoop(repo, 1000, onIdle, () => {});
@@ -270,9 +269,7 @@ describe('startIdleCheckLoop', () => {
   });
 
   it('does NOT call warn when active schedules exist', async () => {
-    const repo = makeScheduleRepo(async () =>
-      ok([{ id: 'sched-1', status: ScheduleStatus.ACTIVE }] as never),
-    );
+    const repo = makeScheduleRepo(async () => ok([{ id: 'sched-1', status: ScheduleStatus.ACTIVE }] as never));
     const warn = vi.fn();
 
     const timer = startIdleCheckLoop(repo, 1000, () => {}, warn);
@@ -303,7 +300,12 @@ describe('startIdleCheckLoop', () => {
       return ok([{ id: 'sched-1' }] as never); // active schedules — won't call onIdle
     });
 
-    const timer = startIdleCheckLoop(repo, 1000, () => {}, () => {});
+    const timer = startIdleCheckLoop(
+      repo,
+      1000,
+      () => {},
+      () => {},
+    );
 
     await vi.advanceTimersByTimeAsync(3000);
     expect(callCount).toBe(3);
