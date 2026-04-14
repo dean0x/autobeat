@@ -6,7 +6,7 @@
  */
 
 import type { Loop, LoopId, TaskId } from '../core/domain.js';
-import { createTask, LoopStrategy } from '../core/domain.js';
+import { createTask, LoopStrategy, TaskRequest } from '../core/domain.js';
 import { EventBus } from '../core/events/event-bus.js';
 import type {
   LoopCancelledEvent,
@@ -31,6 +31,31 @@ type TaskCompletionStatus =
 
 const MAX_FEEDBACK_LENGTH = 16_000;
 
+/**
+ * ARCHITECTURE: --json-schema for Claude eval tasks.
+ * Why: LLMs are non-deterministic; last-line PASS/FAIL parsing is fragile.
+ * Structured output is deterministic when the agent supports it.
+ * Only injected when loop.taskTemplate.agent === 'claude'.
+ */
+const EVAL_RETRY_SCHEMA = JSON.stringify({
+  type: 'object',
+  properties: {
+    decision: { type: 'string', enum: ['pass', 'fail'] },
+    reasoning: { type: 'string' },
+  },
+  required: ['decision', 'reasoning'],
+});
+
+const EVAL_OPTIMIZE_SCHEMA = JSON.stringify({
+  type: 'object',
+  properties: {
+    decision: { type: 'string', enum: ['pass', 'fail'] },
+    score: { type: 'number' },
+    reasoning: { type: 'string' },
+  },
+  required: ['decision', 'score', 'reasoning'],
+});
+
 export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
   constructor(
     private readonly eventBus: EventBus,
@@ -47,12 +72,23 @@ export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
   async evaluate(loop: Loop, taskId: TaskId): Promise<EvalResult> {
     const prompt = await this.buildEvalPrompt(loop, taskId);
 
-    const evalTask = createTask({
+    // Only inject jsonSchema for Claude — other agents do not support structured output.
+    // This enables deterministic structured eval output instead of fragile last-line parsing.
+    const jsonSchema =
+      loop.taskTemplate.agent === 'claude'
+        ? loop.strategy === LoopStrategy.RETRY
+          ? EVAL_RETRY_SCHEMA
+          : EVAL_OPTIMIZE_SCHEMA
+        : undefined;
+
+    const evalTaskRequest: TaskRequest = {
       prompt: `[EVAL] ${prompt}`,
       priority: loop.taskTemplate.priority,
       workingDirectory: loop.workingDirectory,
       agent: loop.taskTemplate.agent,
-    });
+      jsonSchema,
+    };
+    const evalTask = createTask(evalTaskRequest);
 
     const evalTaskId = evalTask.id;
 
@@ -114,14 +150,22 @@ export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
     }
 
     const output = outputResult.value;
-    const lines = [...output.stdout, ...output.stderr];
+    const rawOutput = [...output.stdout, ...output.stderr];
 
-    return this.parseEvalOutput(lines, loop.strategy);
+    // Try structured output parsing first (deterministic, Claude only).
+    // Falls back to text parsing if structured output is unavailable or malformed.
+    const structured = this.tryParseStructuredOutput(output.stdout, loop.strategy);
+    if (structured) {
+      return structured;
+    }
+
+    return this.parseEvalOutput(rawOutput, loop.strategy);
   }
 
   /**
    * Build the evaluation prompt for the agent.
    * Provides git diff commands and instructions without pre-injecting content.
+   * Uses a dual-format directive: structured ("automatic") for Claude, text for others.
    */
   private async buildEvalPrompt(loop: Loop, taskId: TaskId): Promise<string> {
     // Look up preIterationCommitSha from iteration record
@@ -148,9 +192,13 @@ export class AgentExitConditionEvaluator implements ExitConditionEvaluator {
         ? 'Review the code changes. Output PASS if the changes are acceptable, FAIL if not.'
         : 'Score the code change quality 0-100. Provide your analysis.');
 
-    const formatDirective = isRetry
-      ? 'The LAST LINE of your response must be exactly PASS or FAIL.'
-      : 'On the LAST LINE output a single numeric score between 0 and 100.';
+    // Dual format directive: structured output for Claude (schema-validated), text for others.
+    const usesSchema = loop.taskTemplate.agent === 'claude';
+    const formatDirective = usesSchema
+      ? 'Provide your analysis and decision. Your response will be structured automatically.'
+      : isRetry
+        ? 'The LAST LINE of your response must be exactly PASS or FAIL.'
+        : 'On the LAST LINE output a single numeric score between 0 and 100.';
 
     return `${header}
 
@@ -257,6 +305,72 @@ ${formatDirective}`;
       // Don't block process exit
       timer.unref();
     });
+  }
+
+  /**
+   * Attempt to parse structured JSON output from Claude's --json-schema response.
+   * Searches for the last `{"type":"result"` marker in the combined stdout (same
+   * pattern used by UsageParser — see src/services/usage-parser.ts lines 54-56).
+   * Extracts `structured_output` from the result object, then validates fields.
+   *
+   * @returns EvalResult if structured output is found and valid, null otherwise.
+   *          null means the caller should fall back to text parsing.
+   */
+  private tryParseStructuredOutput(stdout: readonly string[], strategy: LoopStrategy): EvalResult | null {
+    if (stdout.length === 0) return null;
+
+    // Join all stdout chunks — Claude emits JSON as a stream of chunks
+    const combined = stdout.join('');
+    if (combined.length === 0) return null;
+
+    // Search backwards for the last {"type":"result" marker (same as UsageParser)
+    const marker = '{"type":"result"';
+    const markerIndex = combined.lastIndexOf(marker);
+    if (markerIndex === -1) return null;
+
+    const suffix = combined.slice(markerIndex);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(suffix);
+    } catch {
+      // Truncated or malformed — fall through to text parsing
+      return null;
+    }
+
+    if (!parsed || typeof parsed !== 'object') return null;
+    const obj = parsed as Record<string, unknown>;
+    if (obj.type !== 'result') return null;
+
+    // Extract structured_output from the result envelope
+    const structuredOutput = obj.structured_output;
+    if (!structuredOutput || typeof structuredOutput !== 'object') return null;
+    const so = structuredOutput as Record<string, unknown>;
+
+    // Validate decision field
+    const decision = so.decision;
+    if (decision !== 'pass' && decision !== 'fail') return null;
+
+    const passed = decision === 'pass';
+    const reasoning = typeof so.reasoning === 'string' ? so.reasoning : undefined;
+
+    if (strategy === LoopStrategy.RETRY) {
+      return {
+        passed,
+        feedback: reasoning,
+        evalResponse: suffix, // raw JSON envelope for audit
+      };
+    }
+
+    // OPTIMIZE: also extract numeric score
+    const scoreRaw = so.score;
+    if (typeof scoreRaw !== 'number' || !Number.isFinite(scoreRaw)) return null;
+
+    return {
+      passed,
+      score: scoreRaw,
+      feedback: reasoning,
+      evalResponse: suffix, // raw JSON envelope for audit
+    };
   }
 
   /**
