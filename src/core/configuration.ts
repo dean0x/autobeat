@@ -55,30 +55,6 @@ export interface TaskConfiguration {
   readonly maxOutputBuffer?: number;
 }
 
-const DEFAULT_CONFIG: Configuration = {
-  timeout: 0, // DECISION: Default timeout 0 (disabled). Why: tasks run 2.5+ hours; timeout was killing them. Safety max 24hr.
-  maxOutputBuffer: 10485760, // 10MB
-  cpuCoresReserved: 2, // Reserve 2 CPU cores for system stability (within 32-core security limit)
-  memoryReserve: 2684354560, // 2.5GB - ensure adequate memory reserve for system stability (within 64GB security limit)
-  logLevel: 'info',
-  maxListenersPerEvent: 100, // Default: prevent memory leaks from excessive listeners
-  maxTotalSubscriptions: 1000, // Default: global limit on subscriptions
-  // Process management defaults
-  killGracePeriodMs: 5000, // Default: 5 seconds grace period for process termination
-  resourceMonitorIntervalMs: 5000, // Default: check resources every 5 seconds
-  minSpawnDelayMs: 10000, // Default: 10s minimum delay between spawns (Claude Code is heavyweight)
-  settlingWindowMs: 15000, // Default: 15s settling window for newly spawned workers
-  // Storage defaults
-  fileStorageThresholdBytes: 102400, // Default: 100KB threshold for file storage
-  // Output flushing defaults
-  outputFlushIntervalMs: 1000, // Default: flush output every 1 second (v1.3.0: lowered from 5s for dashboard real-time updates)
-  // Retry behavior defaults
-  retryInitialDelayMs: 1000, // Default: 1 second initial retry delay
-  retryMaxDelayMs: 30000, // Default: 30 second maximum retry delay
-  // Recovery defaults
-  taskRetentionDays: 7, // Default: keep tasks for 7 days before cleanup
-};
-
 function parseEnvNumber(value: string | undefined, defaultValue: number): number {
   if (!value) return defaultValue;
   const parsed = parseInt(value, 10);

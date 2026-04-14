@@ -15,25 +15,13 @@ import type { Loop, LoopId, TaskId } from '../core/domain.js';
 import { createTask, TaskRequest } from '../core/domain.js';
 import { EventBus } from '../core/events/event-bus.js';
 import type {
-  LoopCancelledEvent,
-  TaskCancelledEvent,
-  TaskCompletedEvent,
-  TaskFailedEvent,
-  TaskTimeoutEvent,
-} from '../core/events/events.js';
-import type {
   EvalResult,
   ExitConditionEvaluator,
   Logger,
   LoopRepository,
   OutputRepository,
 } from '../core/interfaces.js';
-
-type TaskCompletionStatus =
-  | { type: 'completed' }
-  | { type: 'failed'; error?: string }
-  | { type: 'timeout' }
-  | { type: 'cancelled' };
+import { type TaskCompletionStatus, waitForEvalTaskCompletion } from './eval-task-waiter.js';
 
 const MAX_FEEDBACK_LENGTH = 16_000;
 
@@ -82,7 +70,6 @@ export class FeedforwardEvaluator implements ExitConditionEvaluator {
       priority: loop.taskTemplate.priority,
       workingDirectory: loop.workingDirectory,
       agent: loop.taskTemplate.agent,
-      jsonSchema: undefined,
     };
     const evalTask = createTask(evalTaskRequest);
     const evalTaskId = evalTask.id;
@@ -169,88 +156,14 @@ ${criteria}
 Provide your detailed findings. There is no special format required — write naturally.`;
   }
 
-  /**
-   * Wait for eval task to reach a terminal state.
-   * ARCHITECTURE: Same pattern as AgentExitConditionEvaluator.waitForTaskCompletion.
-   * Cancels orphaned eval task if parent loop is cancelled.
-   */
   private waitForTaskCompletion(
     evalTaskId: TaskId,
     evalTimeout: number,
     loopId: LoopId,
   ): Promise<TaskCompletionStatus> {
-    return new Promise((resolve) => {
-      const subscriptionIds: string[] = [];
-      let resolved = false;
-
-      const cleanup = (): void => {
-        for (const subId of subscriptionIds) {
-          this.eventBus.unsubscribe(subId);
-        }
-      };
-
-      const resolveOnce = (result: TaskCompletionStatus): void => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timer);
-        cleanup();
-        resolve(result);
-      };
-
-      const completedSub = this.eventBus.subscribe<TaskCompletedEvent>('TaskCompleted', async (event) => {
-        if (event.taskId === evalTaskId) {
-          resolveOnce({ type: 'completed' });
-        }
-      });
-
-      const failedSub = this.eventBus.subscribe<TaskFailedEvent>('TaskFailed', async (event) => {
-        if (event.taskId === evalTaskId) {
-          resolveOnce({ type: 'failed', error: event.error?.message });
-        }
-      });
-
-      const cancelledSub = this.eventBus.subscribe<TaskCancelledEvent>('TaskCancelled', async (event) => {
-        if (event.taskId === evalTaskId) {
-          resolveOnce({ type: 'cancelled' });
-        }
-      });
-
-      const timeoutSub = this.eventBus.subscribe<TaskTimeoutEvent>('TaskTimeout', async (event) => {
-        if (event.taskId === evalTaskId) {
-          resolveOnce({ type: 'timeout' });
-        }
-      });
-
-      // Cancel the orphaned eval task when the parent loop is cancelled.
-      const loopCancelledSub = this.eventBus.subscribe<LoopCancelledEvent>('LoopCancelled', async (event) => {
-        if (event.loopId !== loopId) return;
-        this.logger.info('Loop cancelled while feedforward eval task running — cancelling eval task', {
-          loopId,
-          evalTaskId,
-        });
-        await this.eventBus.emit('TaskCancellationRequested', {
-          taskId: evalTaskId,
-          reason: `Loop ${loopId} cancelled`,
-        });
-      });
-
-      if (completedSub.ok) subscriptionIds.push(completedSub.value);
-      if (failedSub.ok) subscriptionIds.push(failedSub.value);
-      if (cancelledSub.ok) subscriptionIds.push(cancelledSub.value);
-      if (timeoutSub.ok) subscriptionIds.push(timeoutSub.value);
-      if (loopCancelledSub.ok) subscriptionIds.push(loopCancelledSub.value);
-
-      // Fallback timer: evalTimeout + 5000ms grace period
-      const timer = setTimeout(() => {
-        this.logger.warn('Feedforward eval task completion timed out by fallback timer', {
-          evalTaskId,
-          evalTimeout,
-        });
-        resolveOnce({ type: 'timeout' });
-      }, evalTimeout + 5000);
-
-      // Don't block process exit
-      timer.unref();
+    return waitForEvalTaskCompletion(evalTaskId, evalTimeout, loopId, {
+      eventBus: this.eventBus,
+      logger: this.logger,
     });
   }
 }
