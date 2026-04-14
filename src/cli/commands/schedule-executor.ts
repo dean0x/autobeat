@@ -146,6 +146,71 @@ export async function ensureScheduleExecutorRunning(): Promise<void> {
 }
 
 /**
+ * Check whether any ACTIVE schedules exist in the repository.
+ *
+ * DECISION: Extracted for testability — pure function over a repository,
+ * no process side-effects. Returns Result so callers can distinguish
+ * "no active schedules" from "repo error" (callers stay alive on error).
+ */
+export async function checkActiveSchedules(
+  scheduleRepo: ScheduleRepository,
+): Promise<Result<boolean, Error>> {
+  try {
+    const activeResult = await scheduleRepo.findByStatus(ScheduleStatus.ACTIVE);
+    if (!activeResult.ok) {
+      return err(activeResult.error as Error);
+    }
+    return ok(activeResult.value.length > 0);
+  } catch (e) {
+    return err(e instanceof Error ? e : new Error(String(e)));
+  }
+}
+
+/**
+ * Register SIGTERM and SIGINT handlers that call cleanup and exit.
+ *
+ * DECISION: Inject process abstraction for testability.
+ * Default to global `process` in production. Tests pass a fake.
+ * Avoids spying on globals (cleanup risk between tests).
+ */
+export function registerSignalHandlers(
+  cleanup: () => void,
+  proc: Pick<NodeJS.Process, 'on'> = process,
+): void {
+  const exitCleanly = (signal: string): void => {
+    process.stderr.write(`Schedule executor: received ${signal}, shutting down\n`);
+    cleanup();
+    process.exit(0);
+  };
+  proc.on('SIGTERM', () => exitCleanly('SIGTERM'));
+  proc.on('SIGINT', () => exitCleanly('SIGINT'));
+}
+
+/**
+ * Start the idle-check interval loop.
+ * Calls onIdle() and returns the timer handle when no active schedules remain.
+ * The caller is responsible for clearing the timer (or calling onIdle to exit).
+ *
+ * DECISION: Extracted for testability — works with fake timers in tests.
+ * Returns NodeJS.Timeout so callers can unref() or clearInterval().
+ */
+export function startIdleCheckLoop(
+  scheduleRepo: ScheduleRepository,
+  intervalMs: number,
+  onIdle: () => void,
+  warn: (message: string) => void,
+): NodeJS.Timeout {
+  return setInterval(async () => {
+    const hasActiveResult = await checkActiveSchedules(scheduleRepo);
+    if (hasActiveResult.ok && !hasActiveResult.value) {
+      warn('Schedule executor: no active schedules — exiting');
+      onIdle();
+    }
+    // On error: stay alive (conservative) — do nothing
+  }, intervalMs);
+}
+
+/**
  * Main handler for `beat schedule executor`.
  *
  * Boots the server in 'server' mode (activates ScheduleExecutor, RecoveryManager,
@@ -176,15 +241,8 @@ export async function handleScheduleExecutor(): Promise<void> {
     }
   };
 
-  // Register signal handlers for clean exit
-  const exitCleanly = (signal: string): void => {
-    process.stderr.write(`Schedule executor: received ${signal}, shutting down\n`);
-    cleanup();
-    process.exit(0);
-  };
-
-  process.on('SIGTERM', () => exitCleanly('SIGTERM'));
-  process.on('SIGINT', () => exitCleanly('SIGINT'));
+  // Register signal handlers using extracted helper
+  registerSignalHandlers(cleanup);
 
   // Bootstrap in 'server' mode — activates ScheduleExecutor, RecoveryManager, monitoring
   const bootstrapResult = await bootstrap({ mode: 'server' });
@@ -201,26 +259,16 @@ export async function handleScheduleExecutor(): Promise<void> {
 
   // Every 5 minutes: check if any active schedules exist — exit gracefully if none
   const IDLE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
-  const idleCheckTimer = setInterval(async () => {
-    try {
-      const scheduleRepoResult = container.get<ScheduleRepository>('scheduleRepository');
-      if (!scheduleRepoResult.ok) {
-        // Container doesn't have scheduleRepository — continue running (conservative)
-        return;
-      }
-
-      const scheduleRepo = scheduleRepoResult.value;
-      const activeResult = await scheduleRepo.findByStatus(ScheduleStatus.ACTIVE);
-      if (activeResult.ok && activeResult.value.length === 0) {
-        process.stderr.write('Schedule executor: no active schedules — exiting\n');
-        clearInterval(idleCheckTimer);
-        cleanup();
-        process.exit(0);
-      }
-    } catch {
-      // Error checking schedules — stay alive (conservative)
-    }
-  }, IDLE_CHECK_INTERVAL_MS);
+  const idleCheckTimer = startIdleCheckLoop(
+    container.get<ScheduleRepository>('scheduleRepository').value!,
+    IDLE_CHECK_INTERVAL_MS,
+    () => {
+      clearInterval(idleCheckTimer);
+      cleanup();
+      process.exit(0);
+    },
+    (msg) => process.stderr.write(`${msg}\n`),
+  );
 
   // Allow the process to exit naturally if idle check timer is the only thing keeping it alive
   // (After bootstrap completes, other timers/connections will keep process alive during execution)
