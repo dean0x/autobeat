@@ -863,9 +863,7 @@ export class LoopHandler extends BaseEventHandler {
           gitDiffSummary,
           completedAt: Date.now(),
         });
-        this.loopRepo.updateSync(
-          updateLoop(loop, { status: LoopStatus.COMPLETED, completedAt: Date.now() }),
-        );
+        this.loopRepo.updateSync(updateLoop(loop, { status: LoopStatus.COMPLETED, completedAt: Date.now() }));
       });
       if (!txResult.ok) {
         this.logger.error('Failed to persist stop decision', txResult.error, { loopId: loop.id });
@@ -974,9 +972,7 @@ export class LoopHandler extends BaseEventHandler {
           gitDiffSummary,
           completedAt: Date.now(),
         });
-        this.loopRepo.updateSync(
-          updateLoop(loop, { status: LoopStatus.COMPLETED, completedAt: Date.now() }),
-        );
+        this.loopRepo.updateSync(updateLoop(loop, { status: LoopStatus.COMPLETED, completedAt: Date.now() }));
       });
       if (!txResult.ok) {
         this.logger.error('Failed to persist stop decision', txResult.error, { loopId });
