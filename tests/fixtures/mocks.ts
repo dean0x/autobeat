@@ -117,6 +117,7 @@ export const createMockWorkerRepository = (): WorkerRepository => ({
   findAll: vi.fn().mockReturnValue(ok([])),
   getGlobalCount: vi.fn().mockReturnValue(ok(0)),
   deleteByOwnerPid: vi.fn().mockReturnValue(ok(0)),
+  updateHeartbeat: vi.fn().mockReturnValue(ok(undefined)),
 });
 
 /**

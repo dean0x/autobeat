@@ -185,6 +185,19 @@ export class RecoveryManager {
             taskId: reg.taskId,
           });
         }
+      } else {
+        // PID alive — observability only: warn if heartbeat is stale
+        // DECISION: 90s staleness threshold. Why: 3x the 30s heartbeat interval gives
+        // 2 missed beats before alerting, filtering transient delays. PID check is authoritative.
+        const HEARTBEAT_STALENESS_MS = 90_000;
+        if (reg.lastHeartbeat !== undefined && Date.now() - reg.lastHeartbeat > HEARTBEAT_STALENESS_MS) {
+          this.logger.warn('Worker PID alive but heartbeat stale', {
+            workerId: reg.workerId,
+            taskId: reg.taskId,
+            ownerPid: reg.ownerPid,
+            lastHeartbeatAgeMs: Date.now() - reg.lastHeartbeat,
+          });
+        }
       }
     }
   }

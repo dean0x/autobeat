@@ -27,6 +27,7 @@ interface WorkerState extends Worker {
   process: ChildProcess;
   task: Task;
   timeoutTimer?: NodeJS.Timeout;
+  heartbeatTimer?: NodeJS.Timeout;
 }
 
 export interface EventDrivenWorkerPoolDeps {
@@ -121,6 +122,9 @@ export class EventDrivenWorkerPool implements WorkerPool {
 
     // Set up timeout if task has one
     this.setupTimeoutForWorker(worker);
+
+    // Set up periodic heartbeat to update DB timestamp for stale-worker detection
+    this.setupHeartbeatForWorker(worker);
 
     // Connect process output to OutputCapture
     this.processConnector.connect(childProcess, task.id, (exitCode) => {
@@ -270,6 +274,13 @@ export class EventDrivenWorkerPool implements WorkerPool {
    * and unregister from DB. Shared by kill() and handleWorkerCompletion().
    */
   private cleanupWorkerState(workerId: WorkerId, taskId: TaskId): void {
+    // Clear heartbeat timer before removing from maps (timer holds reference to worker)
+    const worker = this.workers.get(workerId);
+    if (worker?.heartbeatTimer) {
+      clearInterval(worker.heartbeatTimer);
+      worker.heartbeatTimer = undefined;
+    }
+
     this.workers.delete(workerId);
     this.taskToWorker.delete(taskId);
     this.monitor.decrementWorkerCount();
@@ -317,6 +328,26 @@ export class EventDrivenWorkerPool implements WorkerPool {
         workerId: worker.id,
       });
     }
+
+    if (worker.heartbeatTimer) {
+      clearInterval(worker.heartbeatTimer);
+      worker.heartbeatTimer = undefined;
+    }
+  }
+
+  /**
+   * Set up a periodic heartbeat timer to update last_heartbeat in DB.
+   *
+   * DECISION: 30s heartbeat interval, 90s staleness threshold.
+   * Why: balance between write load and detection speed. PID check remains primary.
+   * timer.unref() prevents the timer from keeping the Node.js process alive.
+   */
+  private setupHeartbeatForWorker(worker: WorkerState): void {
+    const timer = setInterval(() => {
+      this.workerRepository.updateHeartbeat(worker.id);
+    }, 30_000);
+    timer.unref();
+    worker.heartbeatTimer = timer;
   }
 
   /**

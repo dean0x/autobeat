@@ -146,6 +146,7 @@ export interface WorkerRegistration {
   readonly ownerPid: number;
   readonly agent: string;
   readonly startedAt: number;
+  readonly lastHeartbeat?: number; // Epoch ms of last heartbeat (undefined = no heartbeat yet)
 }
 
 export interface SystemResources {

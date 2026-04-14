@@ -573,6 +573,12 @@ export interface WorkerRepository {
   findAll(): Result<readonly WorkerRegistration[]>;
   getGlobalCount(): Result<number>;
   deleteByOwnerPid(ownerPid: number): Result<number>;
+  /**
+   * Update the last_heartbeat timestamp for a worker to Date.now().
+   * Called periodically by the worker pool to signal the owning process is alive.
+   * DECISION: 30s write interval — balances DB write load vs. staleness detection speed.
+   */
+  updateHeartbeat(workerId: WorkerId): Result<void>;
 }
 
 // ============================================================================
