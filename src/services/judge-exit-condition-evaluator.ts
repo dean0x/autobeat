@@ -5,10 +5,11 @@
  * Phase 1 — Eval agent: runs with evalPrompt to produce findings.
  * Phase 2 — Judge agent: reads findings and writes a decision file.
  *
- * DECISION: Judge writes decision to .autobeat-judge file.
+ * DECISION: Judge writes decision to a per-evaluation unique file.
  * Why: file creation is the most reliable cross-agent mechanism — all coding agents
  * can write files. stdout parsing is fragile because agents may emit logs, progress
- * messages, or other non-decision output.
+ * messages, or other non-decision output. The filename includes the judgeTaskId to
+ * prevent TOCTOU: the work agent runs in the same directory and cannot guess it.
  *
  * DECISION: Belt-and-suspenders for Claude judge.
  * If judgeAgent is 'claude', also inject --json-schema so structured output is
@@ -363,7 +364,7 @@ Do NOT include any other content in the file. The file will be read programmatic
   }
 
   /**
-   * Read and parse the .autobeat-judge decision file.
+   * Read and parse the decision file.
    * Returns null if file doesn't exist or contains invalid JSON.
    */
   private async readDecisionFile(filePath: string): Promise<{ continue: boolean; reasoning: string } | null> {
@@ -398,7 +399,7 @@ Do NOT include any other content in the file. The file will be read programmatic
   }
 
   /**
-   * Remove the .autobeat-judge file to prevent stale decisions across iterations.
+   * Remove the decision file to prevent stale decisions across iterations.
    * Errors are swallowed — cleanup failure is not fatal.
    */
   private async cleanupDecisionFile(filePath: string): Promise<void> {
