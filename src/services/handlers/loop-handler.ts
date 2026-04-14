@@ -325,8 +325,18 @@ export class LoopHandler extends BaseEventHandler {
     loop: Loop,
     taskId: TaskId,
   ): Promise<{ loop: Loop; iteration: LoopIteration } | null> {
+    // Observability: preserve the original repo-error / null-row diagnostic logs that were
+    // emitted before the helper was extracted (#137). Silently returning null on repo
+    // failure would hide transient DB issues that look like "loop disappeared after eval".
     const freshLoopResult = await this.loopRepo.findById(loop.id);
-    if (!freshLoopResult.ok || !freshLoopResult.value) return null;
+    if (!freshLoopResult.ok || !freshLoopResult.value) {
+      const staleStatus = freshLoopResult.ok ? 'null' : 'error';
+      this.logger.info('Loop no longer running after eval, skipping result processing', {
+        loopId: loop.id,
+        status: staleStatus,
+      });
+      return null;
+    }
     const freshLoop = freshLoopResult.value;
     if (freshLoop.status !== LoopStatus.RUNNING && freshLoop.status !== LoopStatus.PAUSED) {
       this.logger.info('Loop no longer running after eval, skipping result processing', {
@@ -336,7 +346,14 @@ export class LoopHandler extends BaseEventHandler {
       return null;
     }
     const freshIterResult = await this.loopRepo.findIterationByTaskId(taskId);
-    if (!freshIterResult.ok || !freshIterResult.value) return null;
+    if (!freshIterResult.ok || !freshIterResult.value) {
+      const staleIterStatus = freshIterResult.ok ? 'null' : 'error';
+      this.logger.info('Iteration no longer running after eval, skipping result processing', {
+        loopId: loop.id,
+        iterationStatus: staleIterStatus,
+      });
+      return null;
+    }
     if (freshIterResult.value.status !== 'running') {
       this.logger.info('Iteration no longer running after eval, skipping result processing', {
         loopId: loop.id,

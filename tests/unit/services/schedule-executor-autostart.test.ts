@@ -16,7 +16,12 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // We test utility functions that don't spawn real processes
-import { acquirePidFile, getExecutorPidPath, isProcessAlive } from '../../../src/cli/commands/schedule-executor.js';
+import {
+  acquirePidFile,
+  getExecutorPidPath,
+  isProcessAlive,
+  readExecutorPid,
+} from '../../../src/cli/commands/schedule-executor.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getExecutorPidPath
@@ -46,7 +51,6 @@ describe('getExecutorPidPath', () => {
 describe('readExecutorPid — via real PID files', () => {
   let tempDir: string;
   let tempPidPath: string;
-  let originalGetPath: () => string;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autobeat-test-'));
@@ -63,60 +67,48 @@ describe('readExecutorPid — via real PID files', () => {
     vi.restoreAllMocks();
   });
 
-  /**
-   * ARCHITECTURE: We can't spyOn ESM module exports directly.
-   * Instead, we create a local readPidFromFile function to test the logic,
-   * which mirrors readExecutorPid but accepts a path argument.
-   * The real readExecutorPid calls getExecutorPidPath() internally.
-   */
-  function readPidFromFile(pidPath: string): number | null {
-    try {
-      const content = fs.readFileSync(pidPath, 'utf-8').trim();
-      const pid = parseInt(content, 10);
-      return Number.isFinite(pid) && pid > 0 ? pid : null;
-    } catch {
-      return null;
-    }
-  }
+  // Uses the real readExecutorPid(pidPath?) exported from schedule-executor.ts.
+  // The optional pidPath parameter (added in #142) makes DI unnecessary — we just
+  // point the function at a real temp file. No spying or mocking required.
 
   it('returns null when PID file does not exist', () => {
-    const pid = readPidFromFile('/does/not/exist/schedule-executor.pid');
+    const pid = readExecutorPid('/does/not/exist/schedule-executor.pid');
     expect(pid).toBeNull();
   });
 
   it('returns null when PID file contains non-numeric content', () => {
     fs.writeFileSync(tempPidPath, 'not-a-number\n', 'utf-8');
-    const pid = readPidFromFile(tempPidPath);
+    const pid = readExecutorPid(tempPidPath);
     expect(pid).toBeNull();
   });
 
   it('returns null when PID file contains zero', () => {
     fs.writeFileSync(tempPidPath, '0\n', 'utf-8');
-    const pid = readPidFromFile(tempPidPath);
+    const pid = readExecutorPid(tempPidPath);
     expect(pid).toBeNull();
   });
 
   it('returns null when PID file contains negative number', () => {
     fs.writeFileSync(tempPidPath, '-1\n', 'utf-8');
-    const pid = readPidFromFile(tempPidPath);
+    const pid = readExecutorPid(tempPidPath);
     expect(pid).toBeNull();
   });
 
   it('returns parsed PID for valid PID file content', () => {
     fs.writeFileSync(tempPidPath, '12345\n', 'utf-8');
-    const pid = readPidFromFile(tempPidPath);
+    const pid = readExecutorPid(tempPidPath);
     expect(pid).toBe(12345);
   });
 
   it('handles PID file with whitespace trimming', () => {
     fs.writeFileSync(tempPidPath, '  99999  \n', 'utf-8');
-    const pid = readPidFromFile(tempPidPath);
+    const pid = readExecutorPid(tempPidPath);
     expect(pid).toBe(99999);
   });
 
   it('reads actual PID written by current process', () => {
     fs.writeFileSync(tempPidPath, String(process.pid), 'utf-8');
-    const pid = readPidFromFile(tempPidPath);
+    const pid = readExecutorPid(tempPidPath);
     expect(pid).toBe(process.pid);
   });
 });

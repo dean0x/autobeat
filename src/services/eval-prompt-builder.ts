@@ -14,6 +14,9 @@
 import type { Loop, TaskId } from '../core/domain.js';
 import type { LoopRepository } from '../core/interfaces.js';
 
+/** Maximum feedback string length captured from eval agent output across all evaluators. */
+export const MAX_EVAL_FEEDBACK_LENGTH = 16_000;
+
 /**
  * Shared prompt sections built from loop context and iteration git state.
  *

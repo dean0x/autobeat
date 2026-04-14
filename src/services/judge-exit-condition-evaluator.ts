@@ -31,7 +31,7 @@ import type {
   LoopRepository,
   OutputRepository,
 } from '../core/interfaces.js';
-import { buildEvalPromptBase } from './eval-prompt-builder.js';
+import { buildEvalPromptBase, MAX_EVAL_FEEDBACK_LENGTH } from './eval-prompt-builder.js';
 import { type TaskCompletionStatus, waitForEvalTaskCompletion } from './eval-task-waiter.js';
 
 /**
@@ -60,8 +60,6 @@ export interface FsAdapter {
 function judgeDecisionFilePath(workingDirectory: string, judgeTaskId: string): string {
   return path.join(workingDirectory, `.autobeat-judge-${judgeTaskId}`);
 }
-
-const MAX_FEEDBACK_LENGTH = 16_000;
 
 /**
  * JSON schema for Claude judge structured output.
@@ -173,7 +171,7 @@ export class JudgeExitConditionEvaluator implements ExitConditionEvaluator {
     if (allLines.length === 0) return null;
 
     const joined = allLines.join('\n');
-    return joined.length > MAX_FEEDBACK_LENGTH ? joined.slice(0, MAX_FEEDBACK_LENGTH) : joined;
+    return joined.length > MAX_EVAL_FEEDBACK_LENGTH ? joined.slice(0, MAX_EVAL_FEEDBACK_LENGTH) : joined;
   }
 
   /**

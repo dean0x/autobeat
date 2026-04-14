@@ -15,10 +15,8 @@ import type {
   LoopRepository,
   OutputRepository,
 } from '../core/interfaces.js';
-import { buildEvalPromptBase } from './eval-prompt-builder.js';
+import { buildEvalPromptBase, MAX_EVAL_FEEDBACK_LENGTH } from './eval-prompt-builder.js';
 import { type TaskCompletionStatus, waitForEvalTaskCompletion } from './eval-task-waiter.js';
-
-const MAX_FEEDBACK_LENGTH = 16_000;
 
 /**
  * ARCHITECTURE: --json-schema for Claude eval tasks.
@@ -270,7 +268,7 @@ ${formatDirective}`;
    * Parse eval agent output into EvalResult.
    * For retry: last non-empty line must be PASS or FAIL.
    * For optimize: last non-empty line must be a finite number.
-   * Everything before the last line is captured as feedback, capped at MAX_FEEDBACK_LENGTH.
+   * Everything before the last line is captured as feedback, capped at MAX_EVAL_FEEDBACK_LENGTH.
    */
   private parseEvalOutput(rawLines: string[], strategy: LoopStrategy): EvalResult {
     const lines = rawLines.filter((line) => line.trim().length > 0);
@@ -285,7 +283,7 @@ ${formatDirective}`;
     let feedback: string | undefined;
     if (feedbackLines.length > 0) {
       const joined = feedbackLines.join('\n');
-      feedback = joined.length > MAX_FEEDBACK_LENGTH ? joined.slice(0, MAX_FEEDBACK_LENGTH) : joined;
+      feedback = joined.length > MAX_EVAL_FEEDBACK_LENGTH ? joined.slice(0, MAX_EVAL_FEEDBACK_LENGTH) : joined;
     }
 
     if (strategy === LoopStrategy.RETRY) {
