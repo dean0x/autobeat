@@ -327,6 +327,16 @@ describe('CompositeExitConditionEvaluator — evalType routing', () => {
     expect(agentEval.evaluate).not.toHaveBeenCalled();
     expect(judgeEval.evaluate).not.toHaveBeenCalled();
   });
+
+  it('throws on an unknown evalType at runtime (exhaustive switch guard)', async () => {
+    // TypeScript prevents adding new EvalType values without updating the switch,
+    // but we also want a runtime throw rather than a silent feedforward fallback
+    // to surface misconfiguration immediately.
+    const { composite } = makeComposite();
+    const loop = createTestLoop({ evalMode: EvalMode.AGENT, evalType: 'unknown_type' as never });
+
+    await expect(composite.evaluate(loop, taskId)).rejects.toThrow('Unhandled evalType: unknown_type');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

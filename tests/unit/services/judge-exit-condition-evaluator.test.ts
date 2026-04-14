@@ -346,4 +346,40 @@ describe('JudgeExitConditionEvaluator', () => {
 
     expect(result.decision).toBe('stop');
   });
+
+  it('uses a unique per-task decision filename (TOCTOU fix)', async () => {
+    // The judge prompt must instruct the agent to write to a file whose name includes
+    // the judgeTaskId — not the fixed ".autobeat-judge" name.
+    const loop = createTestLoop({ evalPrompt: 'Review', workingDirectory: '/workspace' });
+    const outputRepo = createOutputRepo(['Findings.']);
+    const loopRepo = createLoopRepo();
+    const mockFs = createMockFs();
+    const enoentErr = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    mockFs.readFile.mockRejectedValue(enoentErr);
+    const evaluator = new JudgeExitConditionEvaluator(eventBus, outputRepo, loopRepo, logger, mockFs);
+
+    await evaluateWithCompletions(evaluator, loop, workTaskId, eventBus, [
+      (id) => simulateTaskComplete(eventBus, id),
+      (id) => simulateTaskComplete(eventBus, id),
+    ]);
+
+    const delegatedEvents = eventBus.getEmittedEvents('TaskDelegated') as Array<{
+      task: { prompt: string; id: string };
+    }>;
+    const judgeEvent = delegatedEvents.find((e) => e.task.prompt.startsWith('[JUDGE]'));
+    expect(judgeEvent).toBeDefined();
+
+    // The judge task ID must appear in the prompt's decision filename
+    const judgeTaskId = judgeEvent!.task.id;
+    expect(judgeEvent!.task.prompt).toContain(`.autobeat-judge-${judgeTaskId}`);
+
+    // The fixed .autobeat-judge name must NOT appear in the prompt
+    expect(judgeEvent!.task.prompt).not.toMatch(/\.autobeat-judge[^-]/);
+
+    // readFile must also be called with the unique filename
+    expect(mockFs.readFile).toHaveBeenCalledWith(
+      expect.stringContaining(`.autobeat-judge-${judgeTaskId}`),
+      'utf-8',
+    );
+  });
 });

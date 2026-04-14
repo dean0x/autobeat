@@ -870,7 +870,8 @@ export class LoopHandler extends BaseEventHandler {
         await this.completeLoop(loop, LoopStatus.FAILED, 'Failed to persist stop decision');
         return;
       }
-      await this.completeLoop(loop, LoopStatus.COMPLETED, 'Eval decision: stop');
+      // Status already committed in transaction above — only cleanup needed
+      await this.finishLoop(loop, LoopStatus.COMPLETED, 'Eval decision: stop');
       return;
     }
 
@@ -904,8 +905,8 @@ export class LoopHandler extends BaseEventHandler {
         return;
       }
 
-      // Post-commit: cleanup (timer, event) — double-write on loop row is harmless
-      await this.completeLoop(loop, LoopStatus.COMPLETED, 'Exit condition passed');
+      // Status already committed in transaction above — only cleanup needed
+      await this.finishLoop(loop, LoopStatus.COMPLETED, 'Exit condition passed');
       return;
     }
 
@@ -979,7 +980,8 @@ export class LoopHandler extends BaseEventHandler {
         await this.completeLoop(loop, LoopStatus.FAILED, 'Failed to persist stop decision');
         return;
       }
-      await this.completeLoop(loop, LoopStatus.COMPLETED, 'Eval decision: stop');
+      // Status already committed in transaction above — only cleanup needed
+      await this.finishLoop(loop, LoopStatus.COMPLETED, 'Eval decision: stop');
       return;
     }
 
@@ -1161,7 +1163,12 @@ export class LoopHandler extends BaseEventHandler {
   }
 
   /**
-   * Complete a loop with a final status and reason
+   * Complete a loop with a final status and reason.
+   * Writes the final status to the DB, clears cooldown timer, and emits LoopCompleted.
+   *
+   * Use this when no prior transaction has already written the final status.
+   * When the status was already atomically committed in a transaction, use
+   * finishLoop() instead to skip the redundant DB write.
    */
   private async completeLoop(
     loop: Loop,
@@ -1175,7 +1182,18 @@ export class LoopHandler extends BaseEventHandler {
       ...extraUpdate,
     });
     await this.loopRepo.update(updatedLoop);
+    await this.finishLoop(loop, status, reason);
+  }
 
+  /**
+   * Post-commit cleanup for a loop that was already persisted in a transaction.
+   * Clears cooldown timer, emits LoopCompleted, and logs — no DB write.
+   *
+   * DECISION: Separate from completeLoop to eliminate the redundant DB write that
+   * occurs when a transaction has already set the final status. Calling completeLoop
+   * after a transaction causes a double-write (harmless, but wasteful and misleading).
+   */
+  private async finishLoop(loop: Loop, status: LoopStatus, reason: string): Promise<void> {
     // Clear cooldown timer if exists
     const timer = this.cooldownTimers.get(loop.id);
     if (timer) {

@@ -1879,6 +1879,32 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(loopCompletedFired).toBe(true);
     });
 
+    it('decision: stop — loopRepo.update is NOT called after the commit transaction (no double-write)', async () => {
+      // After decision=stop, the loop status is atomically committed in a transaction.
+      // finishLoop() should be called (not completeLoop()), so loopRepo.update must
+      // not be invoked redundantly on the success path.
+      mockEvaluator.evaluate.mockResolvedValue({
+        passed: false,
+        decision: 'stop',
+        feedback: 'done',
+        exitCode: 0,
+      });
+
+      const loop = await createAndEmitLoop({ strategy: LoopStrategy.RETRY });
+      const updateSpy = vi.spyOn(loopRepo, 'update');
+
+      const taskId = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: taskId!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // loopRepo.update must not have been called (status was committed via sync transaction)
+      expect(updateSpy).not.toHaveBeenCalled();
+
+      // Sanity: loop is still COMPLETED in the DB (from the transaction)
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.COMPLETED);
+    });
+
     it('undefined decision — falls through to normal passed/failed logic (backward compat)', async () => {
       // No decision field set — must behave identically to the pre-v1.4.0 retry path.
       mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1, error: 'test failed' });

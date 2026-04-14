@@ -52,8 +52,8 @@ export class CompositeExitConditionEvaluator implements ExitConditionEvaluator {
       default: {
         // Exhaustiveness guard — new EvalType values will cause a compile error here
         const _exhaustive: never = evalType;
-        // Safe fallback at runtime — feedforward never blocks
-        return this.feedforwardEvaluator.evaluate(loop, taskId);
+        // Throw at runtime — silent fallback masks misconfiguration
+        throw new Error(`Unhandled evalType: ${String(_exhaustive)}`);
       }
     }
   }
