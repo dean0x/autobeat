@@ -233,7 +233,8 @@ export class JudgeExitConditionEvaluator implements ExitConditionEvaluator {
       return { continue: true, reasoning: `Judge task ${completionStatus.type} — defaulting to continue` };
     }
 
-    // Attempt structured output first (Claude + --json-schema belt-and-suspenders)
+    // Secondary path for Claude: structured output (--json-schema, belt-and-suspenders).
+    // For non-Claude agents tryParseStructuredOutput always returns null; file is the only path.
     const outputResult = await this.outputRepo.get(judgeTaskId);
     if (outputResult.ok && outputResult.value) {
       const structured = this.tryParseStructuredOutput(outputResult.value.stdout);
@@ -243,7 +244,7 @@ export class JudgeExitConditionEvaluator implements ExitConditionEvaluator {
       }
     }
 
-    // Primary mechanism: read .autobeat-judge file written by the judge agent
+    // Primary mechanism for all agents: .autobeat-judge file written by the judge agent.
     const fileDecision = await this.readDecisionFile(decisionFilePath);
     if (fileDecision) {
       await this.cleanupDecisionFile(decisionFilePath);

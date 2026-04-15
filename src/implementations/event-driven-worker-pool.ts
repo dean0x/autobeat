@@ -351,7 +351,13 @@ export class EventDrivenWorkerPool implements WorkerPool {
    */
   private setupHeartbeatForWorker(worker: WorkerState): void {
     const timer = setInterval(() => {
-      this.workerRepository.updateHeartbeat(worker.id);
+      const result = this.workerRepository.updateHeartbeat(worker.id);
+      if (!result.ok) {
+        this.logger.warn('Heartbeat update failed', {
+          workerId: worker.id,
+          error: result.error.message,
+        });
+      }
     }, 30_000);
     timer.unref();
     worker.heartbeatTimer = timer;
