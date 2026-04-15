@@ -4,6 +4,7 @@
  */
 
 import { ChildProcess } from 'child_process';
+import { SpawnOptions } from './agents.js';
 import {
   ActivityEntry,
   Loop,
@@ -36,7 +37,6 @@ import {
   WorkerId,
   WorkerRegistration,
 } from './domain.js';
-import { SpawnOptions } from './agents.js';
 import { AutobeatEvent, BaseEvent, EventHandler } from './events/events.js';
 import { Result } from './result.js';
 

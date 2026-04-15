@@ -339,10 +339,10 @@ describe('Network Failure Scenarios', () => {
   });
 
   describe('Edge Cases', () => {
-    it('should handle ECONNRESET errors', async () => {
+    it('should handle ECONNRESET errors', () => {
       processSpawner.setSpawnError(new Error('spawn ECONNRESET'));
 
-      const result = await processSpawner.spawn('claude', ['--task', 'test']);
+      const result = processSpawner.spawn(testSpawnOptions);
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -350,10 +350,10 @@ describe('Network Failure Scenarios', () => {
       }
     });
 
-    it('should handle EPIPE errors', async () => {
+    it('should handle EPIPE errors', () => {
       processSpawner.setSpawnError(new Error('write EPIPE'));
 
-      const result = await processSpawner.spawn('claude', ['--task', 'test']);
+      const result = processSpawner.spawn(testSpawnOptions);
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -361,10 +361,10 @@ describe('Network Failure Scenarios', () => {
       }
     });
 
-    it('should handle DNS resolution failures', async () => {
+    it('should handle DNS resolution failures', () => {
       processSpawner.setSpawnError(new Error('getaddrinfo ENOTFOUND'));
 
-      const result = await processSpawner.spawn('claude', ['--task', 'test']);
+      const result = processSpawner.spawn(testSpawnOptions);
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
