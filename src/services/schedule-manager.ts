@@ -511,6 +511,7 @@ export class ScheduleManagerService implements ScheduleService {
         workingDirectory: request.loopConfig.workingDirectory,
         agent: request.loopConfig.agent,
         model: request.loopConfig.model,
+        systemPrompt: request.loopConfig.systemPrompt,
       },
       scheduleType: request.scheduleType,
       cronExpression: request.cronExpression,

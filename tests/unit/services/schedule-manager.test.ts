@@ -278,6 +278,26 @@ describe('ScheduleManagerService - Unit Tests', () => {
       if (!result.ok) return;
       expect(result.value.taskTemplate.model).toBeUndefined();
     });
+
+    it('should thread systemPrompt into taskTemplate when provided', async () => {
+      const request = cronRequest({ systemPrompt: 'You are a senior engineer.' });
+
+      const result = await service.createSchedule(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.systemPrompt).toBe('You are a senior engineer.');
+    });
+
+    it('should leave systemPrompt undefined in taskTemplate when not provided', async () => {
+      const request = cronRequest();
+
+      const result = await service.createSchedule(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.systemPrompt).toBeUndefined();
+    });
   });
 
   describe('listSchedules()', () => {
@@ -931,6 +951,26 @@ describe('ScheduleManagerService - Unit Tests', () => {
       expect(emittedSchedule.pipelineSteps![1].prompt).toBe('Step two');
       expect(emittedSchedule.pipelineSteps![2].prompt).toBe('Step three');
     });
+
+    it('should thread systemPrompt into taskTemplate when provided', async () => {
+      const request = scheduledPipelineRequest({ systemPrompt: 'You are a pipeline expert.' });
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.systemPrompt).toBe('You are a pipeline expert.');
+    });
+
+    it('should leave systemPrompt undefined in taskTemplate when not provided', async () => {
+      const request = scheduledPipelineRequest();
+
+      const result = await service.createScheduledPipeline(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.systemPrompt).toBeUndefined();
+    });
   });
 
   describe('createScheduledLoop()', () => {
@@ -1186,6 +1226,35 @@ describe('ScheduleManagerService - Unit Tests', () => {
       if (!result.ok) return;
       expect(result.value.taskTemplate.model).toBeUndefined();
       expect(result.value.loopConfig!.model).toBeUndefined();
+    });
+
+    it('should thread systemPrompt into taskTemplate and loopConfig when provided', async () => {
+      const request = scheduledLoopRequest({
+        loopConfig: {
+          prompt: 'Fix failing tests',
+          strategy: LoopStrategy.RETRY,
+          exitCondition: 'npm test',
+          systemPrompt: 'You are a test-fixing expert.',
+        },
+      });
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.systemPrompt).toBe('You are a test-fixing expert.');
+      expect(result.value.loopConfig!.systemPrompt).toBe('You are a test-fixing expert.');
+    });
+
+    it('should leave systemPrompt undefined when not provided in loopConfig', async () => {
+      const request = scheduledLoopRequest();
+
+      const result = await service.createScheduledLoop(request);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.taskTemplate.systemPrompt).toBeUndefined();
+      expect(result.value.loopConfig!.systemPrompt).toBeUndefined();
     });
   });
 });
