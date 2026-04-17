@@ -17,7 +17,7 @@ import { _testSetConfigDir, saveAgentConfig } from '../../../src/core/configurat
 import { ErrorCode } from '../../../src/core/errors';
 import { ClaudeAdapter } from '../../../src/implementations/claude-adapter';
 import { CodexAdapter } from '../../../src/implementations/codex-adapter';
-import { GeminiAdapter } from '../../../src/implementations/gemini-adapter';
+import { GeminiAdapter, GeminiBasePromptCache } from '../../../src/implementations/gemini-adapter';
 
 // Mock child_process.spawn
 vi.mock('child_process', () => ({
@@ -964,16 +964,20 @@ describe('system prompt passthrough', () => {
 
     // No cache file created — fallback path
     const adapter = new GeminiAdapter(testConfig, 'gemini');
-    const result = adapter.spawn({
-      prompt: 'do the work',
-      workingDirectory: '/workspace',
-      taskId: 'task-fallback',
-      systemPrompt: 'Be careful',
-    });
-    consoleSpy.mockRestore();
-    adapter.dispose();
+    let result: ReturnType<typeof adapter.spawn>;
+    try {
+      result = adapter.spawn({
+        prompt: 'do the work',
+        workingDirectory: '/workspace',
+        taskId: 'task-fallback',
+        systemPrompt: 'Be careful',
+      });
+    } finally {
+      consoleSpy.mockRestore();
+      adapter.dispose();
+    }
 
-    expect(result.ok).toBe(true);
+    expect(result!.ok).toBe(true);
     const [, args] = mockSpawn.mock.calls[0];
     // --prompt arg value should contain both systemPrompt and original prompt
     const promptIdx = (args as string[]).indexOf('--prompt');
@@ -1034,5 +1038,149 @@ describe('system prompt passthrough', () => {
     const promptIdx = (args as string[]).indexOf('--prompt');
     const promptValue = (args as string[])[promptIdx + 1];
     expect(promptValue).toBe('do the work');
+  });
+});
+
+// ============================================================================
+// GeminiBasePromptCache Unit Tests
+// ============================================================================
+
+describe('GeminiBasePromptCache', () => {
+  let cacheDir: string;
+  let cache: GeminiBasePromptCache;
+
+  beforeEach(() => {
+    cacheDir = path.join(tmpdir(), `gemini-cache-test-${Date.now()}`);
+    mkdirSync(cacheDir, { recursive: true });
+    cache = new GeminiBasePromptCache(cacheDir);
+  });
+
+  afterEach(() => {
+    rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  it('returns null when no gemini-base.md exists (no cache file)', () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = cache.buildCombinedFile('user system prompt', path.join(cacheDir, 'task-1.md'));
+    consoleSpy.mockRestore();
+    expect(result).toBeNull();
+  });
+
+  it('returns null when gemini-base.md is stale (older than 30 days)', () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
+    writeFileSync(baseCachePath, 'base content', 'utf8');
+
+    // Backdate the file's mtime to 31 days ago
+    const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
+    const { utimesSync } = await import('fs');
+    utimesSync(baseCachePath, thirtyOneDaysAgo, thirtyOneDaysAgo);
+
+    const result = cache.buildCombinedFile('user system prompt', path.join(cacheDir, 'task-stale.md'));
+    consoleSpy.mockRestore();
+    expect(result).toBeNull();
+  });
+
+  it('returns null when combined prompt exceeds 64KB size guard', () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
+    // Write a base prompt that fills most of the 64KB budget
+    const bigBase = 'x'.repeat(60 * 1024);
+    writeFileSync(baseCachePath, bigBase, 'utf8');
+
+    const bigUserPrompt = 'y'.repeat(10 * 1024); // combined exceeds 64KB
+    const result = cache.buildCombinedFile(bigUserPrompt, path.join(cacheDir, 'task-big.md'));
+    consoleSpy.mockRestore();
+    expect(result).toBeNull();
+  });
+
+  it('writes combined file and returns outputPath on cache hit', () => {
+    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
+    writeFileSync(baseCachePath, 'Base instructions', 'utf8');
+
+    const outputPath = path.join(cacheDir, 'task-abc.md');
+    const result = cache.buildCombinedFile('User instructions', outputPath);
+
+    expect(result).toBe(outputPath);
+    const { readFileSync } = await import('fs');
+    const written = readFileSync(outputPath, 'utf8');
+    expect(written).toContain('Base instructions');
+    expect(written).toContain('User instructions');
+  });
+
+  it('returns in-memory cache hit on second call without re-reading disk', () => {
+    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
+    writeFileSync(baseCachePath, 'Base instructions', 'utf8');
+
+    const out1 = path.join(cacheDir, 'task-1.md');
+    const out2 = path.join(cacheDir, 'task-2.md');
+
+    // First call loads from disk
+    cache.buildCombinedFile('prompt', out1);
+
+    // Overwrite disk file — in-memory cache should still be used
+    writeFileSync(baseCachePath, 'CHANGED base', 'utf8');
+
+    // Second call should use cached in-memory value (original "Base instructions")
+    const result2 = cache.buildCombinedFile('prompt', out2);
+    expect(result2).toBe(out2);
+    const { readFileSync } = await import('fs');
+    const written2 = readFileSync(out2, 'utf8');
+    expect(written2).toContain('Base instructions');
+    expect(written2).not.toContain('CHANGED base');
+  });
+
+  it('invalidate() causes next buildCombinedFile to re-read from disk', () => {
+    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
+    writeFileSync(baseCachePath, 'Original base', 'utf8');
+
+    const out1 = path.join(cacheDir, 'task-before.md');
+    cache.buildCombinedFile('prompt', out1);
+
+    // Overwrite disk then invalidate
+    writeFileSync(baseCachePath, 'Updated base', 'utf8');
+    cache.invalidate();
+
+    const out2 = path.join(cacheDir, 'task-after.md');
+    const result2 = cache.buildCombinedFile('prompt', out2);
+    expect(result2).toBe(out2);
+    const { readFileSync } = await import('fs');
+    const written2 = readFileSync(out2, 'utf8');
+    expect(written2).toContain('Updated base');
+  });
+
+  it('cleanupTaskFile removes the task file when it exists', () => {
+    const taskId = 'task-to-delete';
+    const taskFile = path.join(cacheDir, `${taskId}.md`);
+    writeFileSync(taskFile, 'content', 'utf8');
+
+    cache.cleanupTaskFile(taskId);
+
+    const { existsSync } = await import('fs');
+    expect(existsSync(taskFile)).toBe(false);
+  });
+
+  it('cleanupTaskFile is non-fatal when file does not exist (missing file)', () => {
+    expect(() => cache.cleanupTaskFile('nonexistent-task-id')).not.toThrow();
+  });
+
+  it('cleanupTaskFile rejects path traversal attempts', () => {
+    // Create a file outside cacheDir that a traversal would target
+    const outsideDir = path.join(tmpdir(), `outside-${Date.now()}`);
+    mkdirSync(outsideDir, { recursive: true });
+    const outsideFile = path.join(outsideDir, 'sensitive.md');
+    writeFileSync(outsideFile, 'sensitive', 'utf8');
+
+    try {
+      // Attempt traversal: taskId that resolves outside cacheDir
+      const traversalId = `../outside-${Date.now().toString()}/sensitive`;
+      cache.cleanupTaskFile(traversalId);
+
+      // File should still exist — traversal was blocked
+      const { existsSync } = await import('fs');
+      expect(existsSync(outsideFile)).toBe(true);
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 });
