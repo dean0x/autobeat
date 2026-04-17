@@ -15,18 +15,100 @@ import { BaseAgentAdapter } from './base-agent-adapter.js';
 const MAX_COMBINED_PROMPT_BYTES = 64 * 1024; // 64 KB — guard against OOM from corrupt/large cache
 const STALENESS_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-export class GeminiAdapter extends BaseAgentAdapter {
-  readonly provider: AgentProvider = 'gemini';
+/**
+ * DECISION: Extracted from GeminiAdapter so getSystemPromptConfig remains a thin
+ * declarative method like Claude/Codex adapters. This class owns all filesystem
+ * I/O for the Gemini base prompt cache — reading, staleness checks, combining,
+ * writing combined files, and cleanup.
+ */
+export class GeminiBasePromptCache {
+  #cached: string | null = null;
+  readonly #cacheDir: string;
+
+  constructor(cacheDir = path.join(os.homedir(), '.autobeat', 'system-prompts')) {
+    this.#cacheDir = cacheDir;
+  }
 
   /**
-   * In-memory cache for the Gemini base prompt.
-   * Populated on first successful read, cleared only when the cache file is found stale or missing.
-   * This avoids synchronous disk I/O on every spawn (perf-1).
+   * Build a combined system prompt file from the cached base + user system prompt.
+   * Returns the path to write into GEMINI_SYSTEM_MD, or null if fallback-to-prepend
+   * should be used instead.
    */
-  #basePromptCache: string | null = null;
+  buildCombinedFile(systemPrompt: string, outputPath: string): string | null {
+    this.#ensureCacheLoaded();
 
-  constructor(config: Configuration, geminiCommand = 'gemini') {
+    if (this.#cached === null) {
+      this.#warn(
+        'no gemini-base.md cache found, falling back to prompt prepend. Run `beat agents refresh-base-prompt gemini` to enable GEMINI_SYSTEM_MD injection.',
+      );
+      return null;
+    }
+
+    const combined = `${this.#cached}\n\n${systemPrompt}`;
+    const combinedBytes = Buffer.byteLength(combined, 'utf8');
+
+    if (combinedBytes > MAX_COMBINED_PROMPT_BYTES) {
+      this.#warn(`combined prompt exceeds ${MAX_COMBINED_PROMPT_BYTES} bytes, falling back to prompt prepend`, {
+        combinedBytes,
+      });
+      return null;
+    }
+
+    mkdirSync(this.#cacheDir, { recursive: true, mode: 0o700 });
+    writeFileSync(outputPath, combined, { encoding: 'utf8', mode: 0o600 });
+    return outputPath;
+  }
+
+  /** Remove a task-scoped temp file. Non-fatal if the file doesn't exist. */
+  cleanupTaskFile(taskId: string): void {
+    try {
+      unlinkSync(path.join(this.#cacheDir, `${taskId}.md`));
+    } catch {
+      // File may not exist (task had no system prompt, or prependToPrompt fallback was used)
+    }
+  }
+
+  /** Invalidate the in-memory cache so the next buildCombinedFile re-reads from disk. */
+  invalidate(): void {
+    this.#cached = null;
+  }
+
+  #ensureCacheLoaded(): void {
+    if (this.#cached !== null) return;
+
+    const baseCachePath = path.join(this.#cacheDir, 'gemini-base.md');
+    if (!existsSync(baseCachePath)) return;
+
+    try {
+      const stat = statSync(baseCachePath);
+      const ageMs = Date.now() - stat.mtimeMs;
+      if (ageMs > STALENESS_MS) {
+        this.#warn(
+          'gemini-base.md cache is older than 30 days — run `beat agents refresh-base-prompt gemini` to refresh',
+          { ageMs },
+        );
+        // Do not cache stale content — force re-read after user refreshes
+        return;
+      }
+      this.#cached = readFileSync(baseCachePath, 'utf8');
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.#warn('failed to read gemini-base.md cache, falling back to prompt prepend', { error: msg });
+    }
+  }
+
+  #warn(message: string, extra?: Record<string, unknown>): void {
+    console.error(JSON.stringify({ level: 'warn', message: `gemini-adapter: ${message}`, ...extra }));
+  }
+}
+
+export class GeminiAdapter extends BaseAgentAdapter {
+  readonly provider: AgentProvider = 'gemini';
+  readonly #cache: GeminiBasePromptCache;
+
+  constructor(config: Configuration, geminiCommand = 'gemini', cache?: GeminiBasePromptCache) {
     super(config, geminiCommand);
+    this.#cache = cache ?? new GeminiBasePromptCache();
   }
 
   // jsonSchema parameter accepted but ignored — Gemini CLI does not support structured output
@@ -51,101 +133,24 @@ export class GeminiAdapter extends BaseAgentAdapter {
    * DECISION: GEMINI_SYSTEM_MD replaces the entire built-in system prompt.
    * To simulate "append": read the cached base prompt, combine with user's system prompt,
    * write the combined content to systemPromptPath, then set GEMINI_SYSTEM_MD.
-   *
-   * Cache strategy: ~/.autobeat/system-prompts/gemini-base.md populated on first use
-   * via GEMINI_WRITE_SYSTEM_MD env var. Staleness advisory after 30 days.
-   *
-   * Fallback: If the base cache cannot be read or populated, prependToPrompt=true
-   * is returned so the base class prepends the system prompt to the user prompt.
-   * This avoids losing the user's system prompt at the cost of reduced effectiveness.
+   * Fallback: prepend to user prompt if cache unavailable.
    */
   protected getSystemPromptConfig(
     systemPrompt: string,
     systemPromptPath: string,
   ): { args: readonly string[]; env: Record<string, string>; prependToPrompt: boolean } {
-    const cacheDir = path.join(os.homedir(), '.autobeat', 'system-prompts');
-    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
-
-    // Attempt to populate in-memory cache from disk (only if not already loaded)
-    if (this.#basePromptCache === null && existsSync(baseCachePath)) {
-      try {
-        const stat = statSync(baseCachePath);
-        const ageMs = Date.now() - stat.mtimeMs;
-        if (ageMs > STALENESS_MS) {
-          console.error(
-            JSON.stringify({
-              level: 'warn',
-              message:
-                'gemini-adapter: gemini-base.md cache is older than 30 days — run `beat agents refresh-base-prompt gemini` to refresh',
-              ageMs,
-            }),
-          );
-          // Do not cache stale content — force re-read on next spawn after user refreshes
-        } else {
-          this.#basePromptCache = readFileSync(baseCachePath, 'utf8');
-        }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error(
-          JSON.stringify({
-            level: 'warn',
-            message: 'gemini-adapter: failed to read gemini-base.md cache, falling back to prompt prepend',
-            error: msg,
-          }),
-        );
-        return { args: [], env: {}, prependToPrompt: true };
-      }
+    const result = this.#cache.buildCombinedFile(systemPrompt, systemPromptPath);
+    if (result !== null) {
+      return { args: [], env: { GEMINI_SYSTEM_MD: result }, prependToPrompt: false };
     }
-
-    if (this.#basePromptCache !== null) {
-      const combined = `${this.#basePromptCache}\n\n${systemPrompt}`;
-
-      // Guard against OOM: fall back to prompt prepend if combined content exceeds limit
-      const combinedBytes = Buffer.byteLength(combined, 'utf8');
-      if (combinedBytes > MAX_COMBINED_PROMPT_BYTES) {
-        console.error(
-          JSON.stringify({
-            level: 'warn',
-            message: `gemini-adapter: combined prompt exceeds ${MAX_COMBINED_PROMPT_BYTES} bytes, falling back to prompt prepend`,
-            combinedBytes,
-          }),
-        );
-        return { args: [], env: {}, prependToPrompt: true };
-      }
-
-      // Write combined prompt file with secure permissions and inject via GEMINI_SYSTEM_MD
-      mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
-      writeFileSync(systemPromptPath, combined, { encoding: 'utf8', mode: 0o600 });
-
-      return {
-        args: [],
-        env: { GEMINI_SYSTEM_MD: systemPromptPath },
-        prependToPrompt: false,
-      };
-    }
-
-    // No cache — fallback to prompt prepend with warning
-    console.error(
-      JSON.stringify({
-        level: 'warn',
-        message:
-          'gemini-adapter: no gemini-base.md cache found, falling back to prompt prepend. Run `beat agents refresh-base-prompt gemini` to enable GEMINI_SYSTEM_MD injection.',
-      }),
-    );
     return { args: [], env: {}, prependToPrompt: true };
   }
 
   /**
    * Remove the task-scoped temp file written by getSystemPromptConfig.
    * Called by the worker pool after the worker process exits.
-   * Non-fatal: file may not exist if Gemini fell back to prependToPrompt.
    */
   override cleanup(taskId: string): void {
-    const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${taskId}.md`);
-    try {
-      unlinkSync(systemPromptPath);
-    } catch {
-      // File may not exist (task had no system prompt, or prependToPrompt fallback was used)
-    }
+    this.#cache.cleanupTaskFile(taskId);
   }
 }
