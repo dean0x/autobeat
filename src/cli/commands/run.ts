@@ -170,7 +170,11 @@ export async function runTask(
       if (options.workingDirectory) params.push(`Dir: ${options.workingDirectory}`);
       if (options.agent) params.push(`Agent: ${options.agent}`);
       if (options.model) params.push(`Model: ${options.model}`);
-      if (options.systemPrompt) params.push(`SystemPrompt: ${options.systemPrompt.substring(0, 40)}...`);
+      if (options.systemPrompt) {
+        const preview =
+          options.systemPrompt.length > 40 ? `${options.systemPrompt.substring(0, 40)}...` : options.systemPrompt;
+        params.push(`SystemPrompt: ${preview}`);
+      }
       if (options.dependsOn && options.dependsOn.length > 0) params.push(`Deps: ${options.dependsOn.join(', ')}`);
       if (options.continueFrom) params.push(`Continue from: ${options.continueFrom}`);
       if (options.timeout) params.push(`Timeout: ${ui.formatMs(options.timeout)}`);

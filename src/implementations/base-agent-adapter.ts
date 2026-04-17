@@ -13,7 +13,6 @@
  */
 
 import { ChildProcess, spawn } from 'child_process';
-import { mkdirSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import {
@@ -58,11 +57,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Declare how this adapter injects a system prompt into the spawned agent.
    *
    * @design Each agent CLI has a different mechanism for system prompts (inline flag,
-   * config override, env var + file). This pattern lets each adapter declare its needs;
-   * base class handles file lifecycle and prompt prepending.
+   * config override, env var + file). This pattern lets each adapter declare its needs.
+   * Adapters that require a file (e.g. Gemini) must write it inside this method.
+   * The base class handles prompt prepending when prependToPrompt is true.
    *
    * @param systemPrompt - The system prompt text to inject
-   * @param systemPromptPath - Resolved temp file path (use if adapter needs a file)
+   * @param systemPromptPath - Resolved temp file path for adapters that write to disk
    * @returns Injection configuration:
    *   - args: Additional CLI args to append (e.g. ['--append-system-prompt', text])
    *   - env: Additional env vars to inject (e.g. { GEMINI_SYSTEM_MD: path })
@@ -189,9 +189,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       let systemPromptEnv: Record<string, string> = {};
 
       if (systemPrompt) {
-        // Compute temp file path (used by adapters that write to file, e.g. Gemini)
-        const systemPromptDir = path.join(os.homedir(), '.autobeat', 'system-prompts');
-        const systemPromptPath = path.join(systemPromptDir, `${taskId ?? 'unknown'}.md`);
+        // Compute temp file path — passed to adapters that need to write a file (e.g. Gemini)
+        const systemPromptPath = path.join(os.homedir(), '.autobeat', 'system-prompts', `${taskId ?? 'unknown'}.md`);
 
         const config = this.getSystemPromptConfig(systemPrompt, systemPromptPath);
 
@@ -199,11 +198,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           // Adapter cannot inject via CLI args/env — prepend to user prompt as fallback
           effectivePrompt = `${systemPrompt}\n\n${prompt}`;
         } else {
-          // Adapter needs file on disk — write it now
-          if (config.env && Object.values(config.env).some((v) => v === systemPromptPath)) {
-            mkdirSync(systemPromptDir, { recursive: true });
-            writeFileSync(systemPromptPath, systemPrompt, 'utf8');
-          }
+          // Adapter is responsible for any file I/O inside getSystemPromptConfig
           systemPromptArgs = config.args;
           systemPromptEnv = config.env;
         }

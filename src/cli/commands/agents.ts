@@ -241,16 +241,13 @@ export async function refreshBasePrompt(agent?: string): Promise<void> {
 
   mkdirSync(cacheDir, { recursive: true });
 
-  // Determine the Gemini CLI command (respects any config override, falls back to 'gemini')
-  const geminiCommand = 'gemini';
-
   ui.step(`Exporting Gemini base system prompt...`);
   ui.info(`Target: ${baseCachePath}`);
 
   // Spawn gemini with GEMINI_WRITE_SYSTEM_MD to trigger native prompt export.
   // The `-p ""` (empty prompt) or `--prompt ""` plus immediate exit minimises actual work.
   // We use spawnSync so we can inspect the exit code and verify the file was written.
-  const result = spawnSync(geminiCommand, ['--yolo', '--prompt', ''], {
+  const result = spawnSync('gemini', ['--yolo', '--prompt', ''], {
     env: {
       ...process.env,
       GEMINI_WRITE_SYSTEM_MD: baseCachePath,
