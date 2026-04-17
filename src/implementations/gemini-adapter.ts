@@ -13,6 +13,7 @@ import { Configuration } from '../core/configuration.js';
 import { BaseAgentAdapter } from './base-agent-adapter.js';
 
 const MAX_COMBINED_PROMPT_BYTES = 64 * 1024; // 64 KB — guard against OOM from corrupt/large cache
+const STALENESS_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export class GeminiAdapter extends BaseAgentAdapter {
   readonly provider: AgentProvider = 'gemini';
@@ -64,7 +65,6 @@ export class GeminiAdapter extends BaseAgentAdapter {
   ): { args: readonly string[]; env: Record<string, string>; prependToPrompt: boolean } {
     const cacheDir = path.join(os.homedir(), '.autobeat', 'system-prompts');
     const baseCachePath = path.join(cacheDir, 'gemini-base.md');
-    const STALENESS_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
     // Attempt to populate in-memory cache from disk (only if not already loaded)
     if (this.#basePromptCache === null && existsSync(baseCachePath)) {
@@ -101,12 +101,13 @@ export class GeminiAdapter extends BaseAgentAdapter {
       const combined = `${this.#basePromptCache}\n\n${systemPrompt}`;
 
       // Guard against OOM: fall back to prompt prepend if combined content exceeds limit
-      if (Buffer.byteLength(combined, 'utf8') > MAX_COMBINED_PROMPT_BYTES) {
+      const combinedBytes = Buffer.byteLength(combined, 'utf8');
+      if (combinedBytes > MAX_COMBINED_PROMPT_BYTES) {
         console.error(
           JSON.stringify({
             level: 'warn',
             message: `gemini-adapter: combined prompt exceeds ${MAX_COMBINED_PROMPT_BYTES} bytes, falling back to prompt prepend`,
-            combinedBytes: Buffer.byteLength(combined, 'utf8'),
+            combinedBytes,
           }),
         );
         return { args: [], env: {}, prependToPrompt: true };

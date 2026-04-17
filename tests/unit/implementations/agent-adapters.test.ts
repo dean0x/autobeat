@@ -950,7 +950,9 @@ describe('system prompt passthrough', () => {
 
     const [, args] = mockSpawn.mock.calls[0];
     // Verify no developer_instructions entry
-    expect((args as string[]).some((a) => typeof a === 'string' && a.startsWith('developer_instructions='))).toBe(false);
+    expect((args as string[]).some((a) => typeof a === 'string' && a.startsWith('developer_instructions='))).toBe(
+      false,
+    );
   });
 
   // ---- Gemini: no cache (fallback to prependToPrompt) -----------------------

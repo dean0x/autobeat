@@ -434,7 +434,7 @@ export interface ScheduleCreateRequest {
   readonly afterScheduleId?: ScheduleId; // Chain: block until after-schedule's latest task completes
   readonly agent?: AgentProvider; // Multi-agent support (v0.5.0)
   readonly model?: string; // Per-schedule model override
-  readonly systemPrompt?: string; // v1.4.0: system prompt injected into the agent on every scheduled run
+  readonly systemPrompt?: string; // system prompt injected into the agent on every scheduled run
 }
 
 /**
@@ -476,7 +476,7 @@ export interface ScheduledPipelineCreateRequest {
   readonly afterScheduleId?: ScheduleId;
   readonly agent?: AgentProvider; // shared default for all steps
   readonly model?: string; // shared default model for all steps
-  readonly systemPrompt?: string; // v1.4.0: system prompt injected into every step task agent on each trigger
+  readonly systemPrompt?: string; // system prompt injected into every step task agent on each trigger
 }
 
 /**

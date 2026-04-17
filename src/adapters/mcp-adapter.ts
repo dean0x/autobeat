@@ -169,7 +169,7 @@ const ScheduleTaskSchema = z.object({
     .optional()
     .describe('Model override for this task (overrides agent-config default)'),
   /**
-   * v1.4.0: System prompt injected into the agent on every scheduled run.
+   * System prompt injected into the agent on every scheduled run.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
    * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
    */
@@ -274,7 +274,7 @@ const SchedulePipelineSchema = z.object({
     .describe('Default agent for all steps (individual steps can override)'),
   model: z.string().min(1).max(200).optional().describe('Default model for all steps (individual steps can override)'),
   /**
-   * v1.4.0: System prompt injected into every step task agent on each scheduled trigger.
+   * System prompt injected into every step task agent on each scheduled trigger.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
    * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
    */
@@ -494,7 +494,7 @@ const ScheduleLoopSchema = z.object({
   maxRuns: z.number().min(1).optional().describe('Maximum number of loop runs for cron schedules'),
   expiresAt: z.string().optional().describe('ISO 8601 datetime when schedule expires'),
   /**
-   * v1.4.0: System prompt injected into each iteration task agent on every scheduled trigger.
+   * System prompt injected into each iteration task agent on every scheduled trigger.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
    * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
    */
