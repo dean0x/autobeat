@@ -2,9 +2,10 @@
  * Unit tests for orchestrator prompt builder
  * ARCHITECTURE: Tests pure function output for correct content
  *
- * v1.4.0: buildOrchestratorPrompt returns { systemPrompt, userPrompt }.
+ * buildOrchestratorPrompt returns { systemPrompt, userPrompt, operationalContract }.
  * - systemPrompt: role/capability instructions (ROLE through RESILIENCE)
  * - userPrompt: the goal statement
+ * - operationalContract: minimal essentials injected when a custom systemPrompt is used
  */
 
 import { describe, expect, it } from 'vitest';
@@ -148,6 +149,30 @@ describe('buildOrchestratorPrompt - Unit Tests', () => {
       expect(operationalContract).toContain('beat status');
       expect(operationalContract).toContain('beat logs');
       expect(operationalContract).toContain('beat cancel');
+    });
+
+    it('threads --agent and --model flags into delegation command', () => {
+      const { operationalContract } = buildOrchestratorPrompt({
+        ...defaultParams,
+        agent: 'gemini',
+        model: 'gemini-2.5-pro',
+      });
+      expect(operationalContract).toContain('beat run --agent gemini --model gemini-2.5-pro "<prompt>"');
+    });
+
+    it('contains failure signal', () => {
+      const { operationalContract } = buildOrchestratorPrompt(defaultParams);
+      expect(operationalContract).toContain('status: "failed"');
+    });
+
+    it('contains constraints', () => {
+      const { operationalContract } = buildOrchestratorPrompt({
+        ...defaultParams,
+        maxWorkers: 12,
+        maxDepth: 4,
+      });
+      expect(operationalContract).toContain('Max concurrent workers: 12');
+      expect(operationalContract).toContain('Max delegation depth: 4');
     });
   });
 });
