@@ -320,9 +320,7 @@ export class OrchestrationManagerService implements OrchestrationService {
 
     const customSystemPrompt = request.systemPrompt?.trim();
     const finalSystemPrompt = customSystemPrompt ?? orchestratorSystemPrompt;
-    const finalUserPrompt = customSystemPrompt
-      ? `${operationalContract}\n\n${userPrompt}`
-      : userPrompt;
+    const finalUserPrompt = customSystemPrompt ? `${operationalContract}\n\n${userPrompt}` : userPrompt;
 
     return { finalSystemPrompt, finalUserPrompt };
   }

@@ -238,10 +238,7 @@ const CreatePipelineSchema = z.object({
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
   model: z.string().min(1).max(200).optional().describe('Default model for all steps (individual steps can override)'),
-  systemPrompt: z
-    .string()
-    .optional()
-    .describe('Default system prompt for all steps (individual steps can override)'),
+  systemPrompt: z.string().optional().describe('Default system prompt for all steps (individual steps can override)'),
 });
 
 const SchedulePipelineSchema = z.object({
@@ -354,11 +351,7 @@ const CreateLoopSchema = z.object({
     .optional()
     .default(EvalMode.SHELL)
     .describe('Evaluation mode: shell command or agent review'),
-  evalPrompt: z
-    .string()
-    .min(1)
-    .optional()
-    .describe('Custom prompt for agent evaluator (agent eval mode only)'),
+  evalPrompt: z.string().min(1).optional().describe('Custom prompt for agent evaluator (agent eval mode only)'),
   evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
   evalTimeout: z
     .number()
@@ -459,11 +452,7 @@ const ScheduleLoopSchema = z.object({
     .optional()
     .default(EvalMode.SHELL)
     .describe('Evaluation mode: shell command or agent review'),
-  evalPrompt: z
-    .string()
-    .min(1)
-    .optional()
-    .describe('Custom prompt for agent evaluator (agent eval mode only)'),
+  evalPrompt: z.string().min(1).optional().describe('Custom prompt for agent evaluator (agent eval mode only)'),
   evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
   evalTimeout: z.number().min(1000).max(600000).optional().describe('Eval timeout in ms (max: shell=300s, agent=600s)'),
   workingDirectory: z.string().optional().describe('Working directory for task and eval'),

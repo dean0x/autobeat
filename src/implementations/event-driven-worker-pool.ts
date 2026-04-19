@@ -126,9 +126,7 @@ export class EventDrivenWorkerPool implements WorkerPool {
     // Capture adapter cleanup at spawn time so cleanupWorkerState doesn't need
     // a runtime registry lookup (P3: eliminates silent ?? 'claude' fallback and
     // silent failure if registry is disposed after spawn).
-    const cleanupFn = task.systemPrompt
-      ? (taskId: string) => adapter.cleanup(taskId)
-      : undefined;
+    const cleanupFn = task.systemPrompt ? (taskId: string) => adapter.cleanup(taskId) : undefined;
 
     const registerResult = this.registerWorker(task, childProcess, pid, agentProvider, cleanupFn);
     if (!registerResult.ok) {
