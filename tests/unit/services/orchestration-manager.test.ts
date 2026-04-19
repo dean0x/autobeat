@@ -128,12 +128,10 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       expect(result.error.message).toContain('goal is required');
     });
 
-    it('should reject goal exceeding 8000 characters', async () => {
-      const result = await service.createOrchestration({ goal: 'x'.repeat(8001) });
+    it('should accept goals of any length', async () => {
+      const result = await service.createOrchestration({ goal: 'x'.repeat(10000) });
 
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error.message).toContain('8000 characters');
+      expect(result.ok).toBe(true);
     });
 
     it('should use custom maxDepth and maxWorkers', async () => {

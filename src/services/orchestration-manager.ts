@@ -70,17 +70,9 @@ export class OrchestrationManagerService implements OrchestrationService {
     // Input validation
     // ========================================================================
 
-    // Validate goal: 1-8000 chars
+    // Validate goal: non-empty
     if (!request.goal || request.goal.trim().length === 0) {
       return err(new AutobeatError(ErrorCode.INVALID_INPUT, 'goal is required', { field: 'goal' }));
-    }
-    if (request.goal.length > 8000) {
-      return err(
-        new AutobeatError(ErrorCode.INVALID_INPUT, 'goal must not exceed 8000 characters', {
-          field: 'goal',
-          length: request.goal.length,
-        }),
-      );
     }
 
     // Validate working directory

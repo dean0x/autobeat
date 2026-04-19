@@ -46,7 +46,7 @@ import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 // Zod schemas for MCP protocol validation
 // Exported for unit-testing schema validation independently of the MCP protocol layer
 export const DelegateTaskSchema = z.object({
-  prompt: z.string().min(1).max(4000),
+  prompt: z.string().min(1),
   priority: z.enum(['P0', 'P1', 'P2']).optional(),
   workingDirectory: z.string().optional(),
   timeout: z.number().min(1000).max(86400000).optional(), // 1 second to 24 hours
@@ -101,15 +101,14 @@ export const DelegateTaskSchema = z.object({
    * Why: Claude --json-schema enables deterministic structured responses.
    * Max 16000 chars to stay well within typical schema sizes.
    */
-  jsonSchema: z.string().max(16000).optional().describe('JSON schema for structured output (Claude only)'),
+  jsonSchema: z.string().optional().describe('JSON schema for structured output (Claude only)'),
   /**
    * System prompt to inject into the agent.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
+   * Gemini GEMINI_SYSTEM_MD (combined with base).
    */
   systemPrompt: z
     .string()
-    .max(16000)
     .optional()
     .describe(
       'System prompt to inject into the agent (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
@@ -139,12 +138,12 @@ const RetryTaskSchema = z.object({
 
 const ResumeTaskSchema = z.object({
   taskId: z.string().describe('Task ID to resume (must be in terminal state)'),
-  additionalContext: z.string().max(4000).optional().describe('Additional instructions for the resumed task'),
+  additionalContext: z.string().optional().describe('Additional instructions for the resumed task'),
 });
 
 // Schedule-related Zod schemas (v0.4.0 Task Scheduling)
 const ScheduleTaskSchema = z.object({
-  prompt: z.string().min(1).max(4000).describe('Task prompt to execute'),
+  prompt: z.string().min(1).describe('Task prompt to execute'),
   scheduleType: z.enum(['cron', 'one_time']).describe('Schedule type'),
   cronExpression: z.string().optional().describe('Cron expression (5-field) for recurring schedules'),
   scheduledAt: z.string().optional().describe('ISO 8601 datetime for one-time schedules'),
@@ -171,11 +170,10 @@ const ScheduleTaskSchema = z.object({
   /**
    * System prompt injected into the agent on every scheduled run.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
+   * Gemini GEMINI_SYSTEM_MD (combined with base).
    */
   systemPrompt: z
     .string()
-    .max(16000)
     .optional()
     .describe(
       'System prompt to inject into the agent on every scheduled run (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
@@ -216,12 +214,12 @@ const CreatePipelineSchema = z.object({
   steps: z
     .array(
       z.object({
-        prompt: z.string().min(1).max(4000).describe('Task prompt for this step'),
+        prompt: z.string().min(1).describe('Task prompt for this step'),
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
         agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
         model: z.string().min(1).max(200).optional().describe('Model override for this step'),
-        systemPrompt: z.string().max(16000).optional().describe('System prompt override for this step'),
+        systemPrompt: z.string().optional().describe('System prompt override for this step'),
       }),
     )
     .min(2, 'Pipeline requires at least 2 steps')
@@ -242,7 +240,6 @@ const CreatePipelineSchema = z.object({
   model: z.string().min(1).max(200).optional().describe('Default model for all steps (individual steps can override)'),
   systemPrompt: z
     .string()
-    .max(16000)
     .optional()
     .describe('Default system prompt for all steps (individual steps can override)'),
 });
@@ -251,7 +248,7 @@ const SchedulePipelineSchema = z.object({
   steps: z
     .array(
       z.object({
-        prompt: z.string().min(1).max(4000).describe('Task prompt for this step'),
+        prompt: z.string().min(1).describe('Task prompt for this step'),
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
         agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
@@ -282,11 +279,10 @@ const SchedulePipelineSchema = z.object({
   /**
    * System prompt injected into every step task agent on each scheduled trigger.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
+   * Gemini GEMINI_SYSTEM_MD (combined with base).
    */
   systemPrompt: z
     .string()
-    .max(16000)
     .optional()
     .describe(
       'System prompt to inject into every step task agent on each scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
@@ -295,7 +291,7 @@ const SchedulePipelineSchema = z.object({
 
 // Orchestrator-related Zod schemas (v0.9.0 Orchestrator Mode)
 const CreateOrchestratorSchema = z.object({
-  goal: z.string().min(1).max(8000).describe('High-level goal for the orchestrator to achieve'),
+  goal: z.string().min(1).describe('High-level goal for the orchestrator to achieve'),
   workingDirectory: z.string().optional().describe('Working directory for workers (absolute path)'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('AI agent for the orchestrator loop'),
   model: z
@@ -311,11 +307,9 @@ const CreateOrchestratorSchema = z.object({
    * Custom system prompt for the orchestrator agent.
    * DECISION: When provided, replaces the auto-generated role instructions entirely —
    * appending would create confusing duplication (two conflicting ROLE sections).
-   * Max 16000 chars.
    */
   systemPrompt: z
     .string()
-    .max(16000)
     .optional()
     .describe('Custom system prompt for the orchestrator (overrides auto-generated role instructions when provided)'),
 });
@@ -348,12 +342,11 @@ const ConfigureAgentSchema = z.object({
 
 // Loop-related Zod schemas (v0.7.0 Task/Pipeline Loops)
 const CreateLoopSchema = z.object({
-  prompt: z.string().min(1).max(4000).optional().describe('Task prompt for each iteration'),
+  prompt: z.string().min(1).optional().describe('Task prompt for each iteration'),
   strategy: z.enum(['retry', 'optimize']).describe('Loop strategy'),
   exitCondition: z
     .string()
     .min(1)
-    .max(4000)
     .optional()
     .describe('Shell command to evaluate after each iteration (required for shell eval mode)'),
   evalMode: z
@@ -364,7 +357,6 @@ const CreateLoopSchema = z.object({
   evalPrompt: z
     .string()
     .min(1)
-    .max(8000)
     .optional()
     .describe('Custom prompt for agent evaluator (agent eval mode only)'),
   evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
@@ -416,13 +408,13 @@ const CreateLoopSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('Agent for judge decisions (judge evalType only — defaults to loop agent if omitted)'),
-  judgePrompt: z.string().max(8000).optional().describe('Custom judge instructions (judge evalType only)'),
+  judgePrompt: z.string().optional().describe('Custom judge instructions (judge evalType only)'),
   /**
    * System prompt for each iteration task.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
+   * Gemini GEMINI_SYSTEM_MD (combined with base).
    */
-  systemPrompt: z.string().max(16000).optional().describe('System prompt injected into each iteration task agent'),
+  systemPrompt: z.string().optional().describe('System prompt injected into each iteration task agent'),
 });
 
 const LoopStatusSchema = z.object({
@@ -455,12 +447,11 @@ const ResumeLoopSchema = z.object({
 // Scheduled loop schema (v0.8.0)
 const ScheduleLoopSchema = z.object({
   // Loop config fields
-  prompt: z.string().min(1).max(4000).optional().describe('Task prompt for each iteration'),
+  prompt: z.string().min(1).optional().describe('Task prompt for each iteration'),
   strategy: z.enum(['retry', 'optimize']).describe('Loop strategy'),
   exitCondition: z
     .string()
     .min(1)
-    .max(4000)
     .optional()
     .describe('Shell command to evaluate after each iteration (required for shell eval mode)'),
   evalMode: z
@@ -471,7 +462,6 @@ const ScheduleLoopSchema = z.object({
   evalPrompt: z
     .string()
     .min(1)
-    .max(8000)
     .optional()
     .describe('Custom prompt for agent evaluator (agent eval mode only)'),
   evalDirection: z.enum(['minimize', 'maximize']).optional().describe('Score direction for optimize strategy'),
@@ -502,11 +492,10 @@ const ScheduleLoopSchema = z.object({
   /**
    * System prompt injected into each iteration task agent on every scheduled trigger.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Gemini GEMINI_SYSTEM_MD (combined with base). Max 16000 chars.
+   * Gemini GEMINI_SYSTEM_MD (combined with base).
    */
   systemPrompt: z
     .string()
-    .max(16000)
     .optional()
     .describe(
       'System prompt to inject into each iteration task agent on every scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
@@ -693,7 +682,6 @@ export class MCPAdapter {
                     type: 'string',
                     description: 'The task for the AI agent to execute',
                     minLength: 1,
-                    maxLength: 4000,
                   },
                   priority: {
                     type: 'string',
@@ -746,7 +734,6 @@ export class MCPAdapter {
                     type: 'string',
                     description:
                       'System prompt to inject into the agent (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
-                    maxLength: 16000,
                   },
                 },
                 required: ['prompt'],
@@ -842,7 +829,6 @@ export class MCPAdapter {
                   additionalContext: {
                     type: 'string',
                     description: 'Additional instructions or context for the resumed task',
-                    maxLength: 4000,
                   },
                 },
                 required: ['taskId'],
@@ -916,7 +902,6 @@ export class MCPAdapter {
                     type: 'string',
                     description:
                       'System prompt to inject into the agent on every scheduled run (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
-                    maxLength: 16000,
                   },
                 },
                 required: ['prompt', 'scheduleType'],
@@ -1030,7 +1015,6 @@ export class MCPAdapter {
                           type: 'string',
                           description: 'Task prompt for this step',
                           minLength: 1,
-                          maxLength: 4000,
                         },
                         priority: {
                           type: 'string',
@@ -1055,7 +1039,6 @@ export class MCPAdapter {
                         systemPrompt: {
                           type: 'string',
                           description: 'System prompt override for this step',
-                          maxLength: 16000,
                         },
                       },
                       required: ['prompt'],
@@ -1086,7 +1069,6 @@ export class MCPAdapter {
                   systemPrompt: {
                     type: 'string',
                     description: 'Default system prompt for all steps (individual steps can override)',
-                    maxLength: 16000,
                   },
                 },
                 required: ['steps'],
@@ -1110,7 +1092,6 @@ export class MCPAdapter {
                           type: 'string',
                           description: 'Task prompt for this step',
                           minLength: 1,
-                          maxLength: 4000,
                         },
                         priority: {
                           type: 'string',
@@ -1195,7 +1176,6 @@ export class MCPAdapter {
                     type: 'string',
                     description:
                       'System prompt to inject into every step task agent on each scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
-                    maxLength: 16000,
                   },
                 },
                 required: ['steps', 'scheduleType'],
@@ -1213,7 +1193,6 @@ export class MCPAdapter {
                     type: 'string',
                     description: 'Task prompt for each iteration',
                     minLength: 1,
-                    maxLength: 4000,
                   },
                   strategy: {
                     type: 'string',
@@ -1234,7 +1213,6 @@ export class MCPAdapter {
                     type: 'string',
                     description: 'Custom prompt for agent evaluator (agent eval mode only)',
                     minLength: 1,
-                    maxLength: 8000,
                   },
                   evalDirection: {
                     type: 'string',
@@ -1299,8 +1277,7 @@ export class MCPAdapter {
                   },
                   systemPrompt: {
                     type: 'string',
-                    description: 'System prompt injected into each iteration task agent (max 16000 chars)',
-                    maxLength: 16000,
+                    description: 'System prompt injected into each iteration task agent',
                   },
                 },
                 required: ['strategy'],
@@ -1467,7 +1444,6 @@ export class MCPAdapter {
                     type: 'string',
                     description:
                       'System prompt to inject into each iteration task agent on every scheduled trigger (Claude: --append-system-prompt, Codex: developer_instructions, Gemini: combined GEMINI_SYSTEM_MD)',
-                    maxLength: 16000,
                   },
                 },
                 required: ['strategy', 'scheduleType'],
@@ -1493,7 +1469,6 @@ export class MCPAdapter {
                     type: 'string',
                     description: 'High-level goal for the orchestrator to achieve',
                     minLength: 1,
-                    maxLength: 8000,
                   },
                   workingDirectory: {
                     type: 'string',
@@ -1532,7 +1507,6 @@ export class MCPAdapter {
                     type: 'string',
                     description:
                       'Custom system prompt for the orchestrator (overrides auto-generated role instructions when provided)',
-                    maxLength: 16000,
                   },
                 },
                 required: ['goal'],
