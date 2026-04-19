@@ -897,13 +897,9 @@ describe('system prompt passthrough', () => {
 
     expect(result.ok).toBe(true);
     const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--append-system-prompt');
     const idx = (args as string[]).indexOf('--append-system-prompt');
-    expect((args as string[])[idx + 1]).toBe('Always respond in JSON');
-    // --append-system-prompt must appear AFTER '--' separator (it's a system-prompt arg, appended after buildArgs)
-    // Actually it's appended after buildArgs which puts '--' before the prompt.
-    // Verify it appears somewhere in args.
     expect(idx).toBeGreaterThan(-1);
+    expect((args as string[])[idx + 1]).toBe('Always respond in JSON');
   });
 
   it('ClaudeAdapter: no --append-system-prompt when systemPrompt is absent (regression guard)', () => {
@@ -964,21 +960,16 @@ describe('system prompt passthrough', () => {
 
     // No cache file created — fallback path
     const adapter = new GeminiAdapter(testConfig, 'gemini');
-    let result: ReturnType<typeof adapter.spawn> | undefined;
-    try {
-      result = adapter.spawn({
-        prompt: 'do the work',
-        workingDirectory: '/workspace',
-        taskId: 'task-fallback',
-        systemPrompt: 'Be careful',
-      });
-    } finally {
-      consoleSpy.mockRestore();
-      adapter.dispose();
-    }
+    const result = adapter.spawn({
+      prompt: 'do the work',
+      workingDirectory: '/workspace',
+      taskId: 'task-fallback',
+      systemPrompt: 'Be careful',
+    });
+    consoleSpy.mockRestore();
+    adapter.dispose();
 
-    expect(result).toBeDefined();
-    expect(result!.ok).toBe(true);
+    expect(result.ok).toBe(true);
     const [, args] = mockSpawn.mock.calls[0];
     // --prompt arg value should contain both systemPrompt and original prompt
     const promptIdx = (args as string[]).indexOf('--prompt');
@@ -1141,6 +1132,18 @@ describe('GeminiBasePromptCache', () => {
     expect(result2).toBe(out2);
     const written2 = readFileSync(out2, 'utf8');
     expect(written2).toContain('Updated base');
+  });
+
+  it('buildCombinedFile rejects outputPath outside cacheDir (path traversal)', () => {
+    const baseCachePath = path.join(cacheDir, 'gemini-base.md');
+    writeFileSync(baseCachePath, 'Base instructions', 'utf8');
+
+    // Attempt to write outside cacheDir via traversal
+    const outsidePath = path.join(path.dirname(cacheDir), 'escaped.md');
+    const result = cache.buildCombinedFile('User prompt', outsidePath);
+
+    expect(result).toBeNull();
+    expect(existsSync(outsidePath)).toBe(false);
   });
 
   it('cleanupTaskFile removes the task file when it exists', () => {

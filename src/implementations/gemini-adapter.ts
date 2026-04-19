@@ -47,6 +47,14 @@ export class GeminiBasePromptCache {
       return null;
     }
 
+    // Path-traversal guard: reject outputPath outside cacheDir
+    // (pattern reused from cleanupTaskFile above)
+    const resolvedOutput = path.resolve(outputPath);
+    if (!resolvedOutput.startsWith(this.#resolvedCacheDir + path.sep)) {
+      this.#warn('outputPath outside cache directory, falling back to prompt prepend', { outputPath });
+      return null;
+    }
+
     const combined = `${this.#cached}\n\n${systemPrompt}`;
     const combinedBytes = Buffer.byteLength(combined, 'utf8');
 
