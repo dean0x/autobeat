@@ -2505,10 +2505,7 @@ describe('MCPAdapter - Loop Tools', () => {
 
     it('should pass per-step systemPrompt through SchedulePipeline with shared fallback', async () => {
       const result = await adapter.callTool('SchedulePipeline', {
-        steps: [
-          { prompt: 'Lint', systemPrompt: 'Step-specific prompt' },
-          { prompt: 'Test' },
-        ],
+        steps: [{ prompt: 'Lint', systemPrompt: 'Step-specific prompt' }, { prompt: 'Test' }],
         scheduleType: 'cron',
         cronExpression: '0 9 * * *',
         systemPrompt: 'Shared default',
@@ -2532,9 +2529,7 @@ describe('MCPAdapter - Loop Tools', () => {
 
       expect(result.isError).toBeFalsy();
       expect(scheduleService.createScheduledLoopCalls).toHaveLength(1);
-      expect(scheduleService.createScheduledLoopCalls[0].loopConfig.systemPrompt).toBe(
-        'Focus on unit tests only',
-      );
+      expect(scheduleService.createScheduledLoopCalls[0].loopConfig.systemPrompt).toBe('Focus on unit tests only');
     });
   });
 
