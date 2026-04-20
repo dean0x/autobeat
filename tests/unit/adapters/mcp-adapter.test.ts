@@ -2462,9 +2462,12 @@ describe('MCPAdapter - Loop Tools', () => {
   });
 
   describe('Schedule tools systemPrompt passthrough via callTool()', () => {
-    it('should pass systemPrompt through ScheduleTask to service', async () => {
-      const scheduleService = new MockScheduleService();
-      const adapter = new MCPAdapter({
+    let scheduleService: MockScheduleService;
+    let adapter: MCPAdapter;
+
+    beforeEach(() => {
+      scheduleService = new MockScheduleService();
+      adapter = new MCPAdapter({
         taskManager: new MockTaskManager(),
         logger: new MockLogger(),
         scheduleService,
@@ -2472,7 +2475,9 @@ describe('MCPAdapter - Loop Tools', () => {
         agentRegistry: undefined,
         config: testConfig,
       });
+    });
 
+    it('should pass systemPrompt through ScheduleTask to service', async () => {
       const result = await adapter.callTool('ScheduleTask', {
         prompt: 'Run daily check',
         scheduleType: 'cron',
@@ -2486,16 +2491,6 @@ describe('MCPAdapter - Loop Tools', () => {
     });
 
     it('should pass shared systemPrompt through SchedulePipeline to service', async () => {
-      const scheduleService = new MockScheduleService();
-      const adapter = new MCPAdapter({
-        taskManager: new MockTaskManager(),
-        logger: new MockLogger(),
-        scheduleService,
-        loopService: mockLoopService,
-        agentRegistry: undefined,
-        config: testConfig,
-      });
-
       const result = await adapter.callTool('SchedulePipeline', {
         steps: [{ prompt: 'Lint' }, { prompt: 'Test' }],
         scheduleType: 'cron',
@@ -2509,16 +2504,6 @@ describe('MCPAdapter - Loop Tools', () => {
     });
 
     it('should pass per-step systemPrompt through SchedulePipeline with shared fallback', async () => {
-      const scheduleService = new MockScheduleService();
-      const adapter = new MCPAdapter({
-        taskManager: new MockTaskManager(),
-        logger: new MockLogger(),
-        scheduleService,
-        loopService: mockLoopService,
-        agentRegistry: undefined,
-        config: testConfig,
-      });
-
       const result = await adapter.callTool('SchedulePipeline', {
         steps: [
           { prompt: 'Lint', systemPrompt: 'Step-specific prompt' },
@@ -2536,16 +2521,6 @@ describe('MCPAdapter - Loop Tools', () => {
     });
 
     it('should pass systemPrompt through ScheduleLoop to service', async () => {
-      const scheduleService = new MockScheduleService();
-      const adapter = new MCPAdapter({
-        taskManager: new MockTaskManager(),
-        logger: new MockLogger(),
-        scheduleService,
-        loopService: mockLoopService,
-        agentRegistry: undefined,
-        config: testConfig,
-      });
-
       const result = await adapter.callTool('ScheduleLoop', {
         prompt: 'Fix tests',
         strategy: 'retry',
