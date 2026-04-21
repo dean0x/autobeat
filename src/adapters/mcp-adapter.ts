@@ -305,6 +305,7 @@ const CreateOrchestratorSchema = z.object({
    * Custom system prompt for the orchestrator agent.
    * DECISION: When provided, replaces the auto-generated role instructions entirely —
    * appending would create confusing duplication (two conflicting ROLE sections).
+   * See InitCustomOrchestrator for building custom orchestrators from scratch.
    */
   systemPrompt: z
     .string()
