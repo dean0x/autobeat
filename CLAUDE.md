@@ -252,7 +252,7 @@ When adding task dependencies:
 
 ### MCP Tools
 
-All tools use PascalCase: `DelegateTask`, `TaskStatus`, `TaskLogs`, `CancelTask`, `RetryTask`, `ResumeTask`, `CreatePipeline`, `CreateLoop`, `LoopStatus`, `ListLoops`, `CancelLoop`, `PauseLoop`, `ResumeLoop`, `ScheduleTask`, `SchedulePipeline`, `ScheduleLoop`, `ListSchedules`, `ScheduleStatus`, `PauseSchedule`, `ResumeSchedule`, `CancelSchedule`, `CreateOrchestrator`, `OrchestratorStatus`, `ListOrchestrators`, `CancelOrchestrator`, `ListAgents`, `ConfigureAgent`
+All tools use PascalCase: `DelegateTask`, `TaskStatus`, `TaskLogs`, `CancelTask`, `RetryTask`, `ResumeTask`, `CreatePipeline`, `CreateLoop`, `LoopStatus`, `ListLoops`, `CancelLoop`, `PauseLoop`, `ResumeLoop`, `ScheduleTask`, `SchedulePipeline`, `ScheduleLoop`, `ListSchedules`, `ScheduleStatus`, `PauseSchedule`, `ResumeSchedule`, `CancelSchedule`, `CreateOrchestrator`, `OrchestratorStatus`, `ListOrchestrators`, `CancelOrchestrator`, `InitCustomOrchestrator`, `ListAgents`, `ConfigureAgent`
 
 `DelegateTask` accepts an optional `metadata.orchestratorId` field for orchestrator attribution. Long-running MCP servers should pass this so sub-tasks are attributed to the calling orchestration even when the process ID changes across restarts.
 
@@ -295,6 +295,8 @@ Quick reference for common operations:
 | Usage parser | `src/services/usage-parser.ts` |
 | Usage capture handler | `src/services/handlers/usage-capture-handler.ts` |
 | Keyboard handlers | `src/cli/dashboard/keyboard/` |
+| Orchestrator prompt builder | `src/services/orchestrator-prompt.ts` |
+| Orchestrator scaffolding | `src/core/orchestrator-scaffold.ts` |
 
 ## Documentation Structure
 
