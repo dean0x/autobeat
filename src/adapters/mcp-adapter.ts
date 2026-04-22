@@ -46,6 +46,15 @@ import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 
 // Zod schemas for MCP protocol validation
 // Exported for unit-testing schema validation independently of the MCP protocol layer
+
+// Reusable model schema — enforces safe characters to prevent shell injection via agent flags.
+// Pattern: letters, digits, dots, underscores, and hyphens only (e.g. "claude-opus-4-5").
+const modelSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens');
+
 export const DelegateTaskSchema = z.object({
   prompt: z.string().min(1),
   priority: z.enum(['P0', 'P1', 'P2']).optional(),
@@ -64,13 +73,7 @@ export const DelegateTaskSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('AI agent to execute the task (uses configured default if omitted)'),
-  model: z
-    .string()
-    .min(1)
-    .max(200)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-    .optional()
-    .describe('Model override for this task (overrides agent-config default)'),
+  model: modelSchema.optional().describe('Model override for this task (overrides agent-config default)'),
   /**
    * v1.3.0: Orchestration attribution metadata.
    * IMPORTANT (Risk #8): This is intentionally per-request metadata, NOT an env var.
@@ -162,13 +165,7 @@ const ScheduleTaskSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('AI agent to execute the task (uses configured default if omitted)'),
-  model: z
-    .string()
-    .min(1)
-    .max(200)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-    .optional()
-    .describe('Model override for this task (overrides agent-config default)'),
+  model: modelSchema.optional().describe('Model override for this task (overrides agent-config default)'),
   /**
    * System prompt injected into the agent on every scheduled run.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
@@ -220,13 +217,7 @@ const CreatePipelineSchema = z.object({
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
         agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
-        model: z
-          .string()
-          .min(1)
-          .max(200)
-          .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-          .optional()
-          .describe('Model override for this step'),
+        model: modelSchema.optional().describe('Model override for this step'),
         systemPrompt: z.string().optional().describe('System prompt override for this step'),
       }),
     )
@@ -245,13 +236,7 @@ const CreatePipelineSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
-  model: z
-    .string()
-    .min(1)
-    .max(200)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-    .optional()
-    .describe('Default model for all steps (individual steps can override)'),
+  model: modelSchema.optional().describe('Default model for all steps (individual steps can override)'),
   systemPrompt: z.string().optional().describe('Default system prompt for all steps (individual steps can override)'),
 });
 
@@ -263,13 +248,7 @@ const SchedulePipelineSchema = z.object({
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
         agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
-        model: z
-          .string()
-          .min(1)
-          .max(200)
-          .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-          .optional()
-          .describe('Model override for this step'),
+        model: modelSchema.optional().describe('Model override for this step'),
         systemPrompt: z.string().optional().describe('System prompt override for this step'),
       }),
     )
@@ -293,13 +272,7 @@ const SchedulePipelineSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
-  model: z
-    .string()
-    .min(1)
-    .max(200)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-    .optional()
-    .describe('Default model for all steps (individual steps can override)'),
+  model: modelSchema.optional().describe('Default model for all steps (individual steps can override)'),
   /**
    * System prompt injected into every step task agent on each scheduled trigger.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
@@ -318,13 +291,7 @@ const CreateOrchestratorSchema = z.object({
   goal: z.string().min(1).describe('High-level goal for the orchestrator to achieve'),
   workingDirectory: z.string().optional().describe('Working directory for workers (absolute path)'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('AI agent for the orchestrator loop'),
-  model: z
-    .string()
-    .min(1)
-    .max(200)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-    .optional()
-    .describe('Model override for the orchestrator (overrides agent-config default)'),
+  model: modelSchema.optional().describe('Model override for the orchestrator (overrides agent-config default)'),
   maxDepth: z.number().min(1).max(10).optional().default(3).describe('Max delegation depth'),
   maxWorkers: z.number().min(1).max(20).optional().default(5).describe('Max concurrent workers'),
   maxIterations: z.number().min(1).max(200).optional().default(50).describe('Max orchestrator iterations'),
@@ -366,13 +333,7 @@ const InitCustomOrchestratorSchema = z.object({
   goal: z.string().min(1).describe('High-level goal for the custom orchestrator'),
   workingDirectory: z.string().optional().describe('Working directory (absolute path, default: server cwd)'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('AI agent for delegation commands'),
-  model: z
-    .string()
-    .min(1)
-    .max(200)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-    .optional()
-    .describe('Model for delegation commands'),
+  model: modelSchema.optional().describe('Model for delegation commands'),
   maxWorkers: z.number().min(1).max(20).optional().describe('Max concurrent workers (1-20, default: 5)'),
   maxDepth: z.number().min(1).max(10).optional().describe('Max delegation depth (1-10, default: 3)'),
 });
@@ -385,13 +346,7 @@ const ConfigureAgentSchema = z.object({
     .describe('Action: set config values, check auth status, or reset all stored config'),
   apiKey: z.string().min(1).optional().describe('API key to store (set action)'),
   baseUrl: z.string().url().optional().describe('Base URL override (set action, e.g. https://proxy.example.com/v1)'),
-  model: z
-    .string()
-    .min(1)
-    .max(200)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-    .optional()
-    .describe('Default model override for this agent (set action)'),
+  model: modelSchema.optional().describe('Default model override for this agent (set action)'),
 });
 
 // Loop-related Zod schemas (v0.7.0 Task/Pipeline Loops)
@@ -434,13 +389,7 @@ const CreateLoopSchema = z.object({
     .describe('Pipeline step prompts (creates pipeline loop)'),
   priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Task priority'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent provider'),
-  model: z
-    .string()
-    .min(1)
-    .max(200)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-    .optional()
-    .describe('Model override for each iteration task (overrides agent-config default)'),
+  model: modelSchema.optional().describe('Model override for each iteration task (overrides agent-config default)'),
   gitBranch: z.string().optional().describe('Git branch name for loop iteration work'),
   /**
    * v1.3.0: Agent eval sub-strategy.
@@ -522,13 +471,7 @@ const ScheduleLoopSchema = z.object({
   gitBranch: z.string().optional().describe('Git branch name for loop iteration work'),
   priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Task priority'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent provider'),
-  model: z
-    .string()
-    .min(1)
-    .max(200)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
-    .optional()
-    .describe('Model override for each iteration task (overrides agent-config default)'),
+  model: modelSchema.optional().describe('Model override for each iteration task (overrides agent-config default)'),
   // Schedule fields
   scheduleType: z.enum(['cron', 'one_time']).describe('Schedule type'),
   cronExpression: z.string().optional().describe('Cron expression (5-field) for recurring loops'),
@@ -684,7 +627,7 @@ export class MCPAdapter {
         return {
           content: [
             {
-              type: 'text' as const,
+              type: 'text',
               text: JSON.stringify({ error: `Unknown tool: ${name}`, code: 'INVALID_TOOL' }, null, 2),
             },
           ],

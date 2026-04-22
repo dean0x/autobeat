@@ -157,14 +157,7 @@ describe('snippet-vs-prompt drift detection', () => {
       maxWorkers,
     });
 
-    const sharedMarkers = [
-      'beat run',
-      'beat status',
-      'beat logs',
-      'beat cancel',
-      'beat loop',
-      '--eval-mode agent',
-    ];
+    const sharedMarkers = ['beat run', 'beat status', 'beat logs', 'beat cancel', 'beat loop', '--eval-mode agent'];
 
     for (const marker of sharedMarkers) {
       expect(snippet, `snippet missing marker: "${marker}"`).toContain(marker);
@@ -237,10 +230,7 @@ describe('snippet-vs-prompt drift detection', () => {
       maxWorkers,
     });
 
-    const sharedMarkers = [
-      `Max concurrent workers: ${maxWorkers}`,
-      `Max delegation depth: ${maxDepth}`,
-    ];
+    const sharedMarkers = [`Max concurrent workers: ${maxWorkers}`, `Max delegation depth: ${maxDepth}`];
 
     for (const marker of sharedMarkers) {
       expect(snippet, `snippet missing marker: "${marker}"`).toContain(marker);
@@ -258,10 +248,7 @@ describe('snippet-vs-prompt drift detection', () => {
       maxWorkers,
     });
 
-    const sharedMarkers = [
-      `Max concurrent workers: ${maxWorkers}`,
-      `Max delegation depth: ${maxDepth}`,
-    ];
+    const sharedMarkers = [`Max concurrent workers: ${maxWorkers}`, `Max delegation depth: ${maxDepth}`];
 
     for (const marker of sharedMarkers) {
       expect(snippet, `snippet missing marker: "${marker}"`).toContain(marker);
