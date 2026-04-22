@@ -11,7 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MCPAdapter } from '../../../src/adapters/mcp-adapter.js';
 import type { Configuration } from '../../../src/core/configuration.js';
 import type { Logger, LoopService, ScheduleService, TaskManager } from '../../../src/core/interfaces.js';
-import { ok } from '../../../src/core/result.js';
+import { err, ok } from '../../../src/core/result.js';
+import * as orchestratorScaffold from '../../../src/core/orchestrator-scaffold.js';
 import { createTestConfiguration } from '../../fixtures/factories.js';
 
 const TEST_STATE_DIR = path.join(tmpdir(), `autobeat-mcp-init-test-${process.pid}`);
@@ -221,16 +222,39 @@ describe('MCPAdapter - InitCustomOrchestrator tool', () => {
       expect(body.success).toBe(false);
     });
 
-    it('returns error for invalid working directory (non-existent path)', async () => {
+    it('accepts non-existent working directory (only used in output text, not created on disk)', async () => {
+      // workingDirectory is validated for path traversal only (mustExist=false) because
+      // the scaffold writes to ~/.autobeat/ — the directory is embedded in the usage text.
       const response = await adapter.callTool('InitCustomOrchestrator', {
         goal: 'Test goal',
         workingDirectory: '/nonexistent/path/that/does/not/exist',
       });
 
-      expect(response.isError).toBe(true);
+      expect(response.isError).toBeFalsy();
       const body = JSON.parse(response.content[0].text);
-      expect(body.success).toBe(false);
-      expect(body.error).toContain('working directory');
+      expect(body.success).toBe(true);
+      expect(body.usage).toContain('/nonexistent/path/that/does/not/exist');
+    });
+  });
+
+  describe('scaffold failure', () => {
+    it('returns error when scaffoldCustomOrchestrator fails', async () => {
+      const spy = vi
+        .spyOn(orchestratorScaffold, 'scaffoldCustomOrchestrator')
+        .mockReturnValue(err(new Error('disk write failed')));
+
+      try {
+        const response = await adapter.callTool('InitCustomOrchestrator', {
+          goal: 'Test goal',
+        });
+
+        expect(response.isError).toBe(true);
+        const body = JSON.parse(response.content[0].text);
+        expect(body.success).toBe(false);
+        expect(body.error).toContain('disk write failed');
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 

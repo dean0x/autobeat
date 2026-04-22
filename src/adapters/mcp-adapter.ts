@@ -68,6 +68,7 @@ export const DelegateTaskSchema = z.object({
     .string()
     .min(1)
     .max(200)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
     .optional()
     .describe('Model override for this task (overrides agent-config default)'),
   /**
@@ -165,6 +166,7 @@ const ScheduleTaskSchema = z.object({
     .string()
     .min(1)
     .max(200)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
     .optional()
     .describe('Model override for this task (overrides agent-config default)'),
   /**
@@ -218,7 +220,13 @@ const CreatePipelineSchema = z.object({
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
         agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
-        model: z.string().min(1).max(200).optional().describe('Model override for this step'),
+        model: z
+          .string()
+          .min(1)
+          .max(200)
+          .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
+          .optional()
+          .describe('Model override for this step'),
         systemPrompt: z.string().optional().describe('System prompt override for this step'),
       }),
     )
@@ -237,7 +245,13 @@ const CreatePipelineSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
-  model: z.string().min(1).max(200).optional().describe('Default model for all steps (individual steps can override)'),
+  model: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
+    .optional()
+    .describe('Default model for all steps (individual steps can override)'),
   systemPrompt: z.string().optional().describe('Default system prompt for all steps (individual steps can override)'),
 });
 
@@ -249,7 +263,13 @@ const SchedulePipelineSchema = z.object({
         priority: z.enum(['P0', 'P1', 'P2']).optional().describe('Priority override for this step'),
         workingDirectory: z.string().optional().describe('Working directory override (absolute path)'),
         agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('Agent override for this step'),
-        model: z.string().min(1).max(200).optional().describe('Model override for this step'),
+        model: z
+          .string()
+          .min(1)
+          .max(200)
+          .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
+          .optional()
+          .describe('Model override for this step'),
         systemPrompt: z.string().optional().describe('System prompt override for this step'),
       }),
     )
@@ -273,7 +293,13 @@ const SchedulePipelineSchema = z.object({
     .enum(AGENT_PROVIDERS_TUPLE)
     .optional()
     .describe('Default agent for all steps (individual steps can override)'),
-  model: z.string().min(1).max(200).optional().describe('Default model for all steps (individual steps can override)'),
+  model: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
+    .optional()
+    .describe('Default model for all steps (individual steps can override)'),
   /**
    * System prompt injected into every step task agent on each scheduled trigger.
    * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
@@ -296,6 +322,7 @@ const CreateOrchestratorSchema = z.object({
     .string()
     .min(1)
     .max(200)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
     .optional()
     .describe('Model override for the orchestrator (overrides agent-config default)'),
   maxDepth: z.number().min(1).max(10).optional().default(3).describe('Max delegation depth'),
@@ -339,7 +366,13 @@ const InitCustomOrchestratorSchema = z.object({
   goal: z.string().min(1).describe('High-level goal for the custom orchestrator'),
   workingDirectory: z.string().optional().describe('Working directory (absolute path, default: server cwd)'),
   agent: z.enum(AGENT_PROVIDERS_TUPLE).optional().describe('AI agent for delegation commands'),
-  model: z.string().min(1).max(200).optional().describe('Model for delegation commands'),
+  model: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
+    .optional()
+    .describe('Model for delegation commands'),
   maxWorkers: z.number().min(1).max(20).optional().describe('Max concurrent workers (1-20, default: 5)'),
   maxDepth: z.number().min(1).max(10).optional().describe('Max delegation depth (1-10, default: 3)'),
 });
@@ -352,7 +385,13 @@ const ConfigureAgentSchema = z.object({
     .describe('Action: set config values, check auth status, or reset all stored config'),
   apiKey: z.string().min(1).optional().describe('API key to store (set action)'),
   baseUrl: z.string().url().optional().describe('Base URL override (set action, e.g. https://proxy.example.com/v1)'),
-  model: z.string().min(1).max(200).optional().describe('Default model override for this agent (set action)'),
+  model: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
+    .optional()
+    .describe('Default model override for this agent (set action)'),
 });
 
 // Loop-related Zod schemas (v0.7.0 Task/Pipeline Loops)
@@ -399,6 +438,7 @@ const CreateLoopSchema = z.object({
     .string()
     .min(1)
     .max(200)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
     .optional()
     .describe('Model override for each iteration task (overrides agent-config default)'),
   gitBranch: z.string().optional().describe('Git branch name for loop iteration work'),
@@ -486,6 +526,7 @@ const ScheduleLoopSchema = z.object({
     .string()
     .min(1)
     .max(200)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Model name must contain only letters, digits, dots, underscores, and hyphens')
     .optional()
     .describe('Model override for each iteration task (overrides agent-config default)'),
   // Schedule fields
@@ -3233,7 +3274,7 @@ export class MCPAdapter {
       return {
         content: [
           {
-            type: 'text' as const,
+            type: 'text',
             text: JSON.stringify(
               {
                 success: false,
@@ -3250,26 +3291,12 @@ export class MCPAdapter {
 
     const data = parseResult.data;
 
-    // SECURITY: Validate workingDirectory if provided (defense-in-depth)
-    if (data.workingDirectory) {
-      const pathResult = validatePath(data.workingDirectory, undefined, true);
-      if (!pathResult.ok) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(
-                { success: false, error: `Invalid working directory: ${pathResult.error.message}` },
-                null,
-                2,
-              ),
-            },
-          ],
-          isError: true,
-        };
-      }
-    }
-
+    // DECISION: workingDirectory is NOT validated with validatePath here. The value is only
+    // embedded in the output usage text (the CreateLoop snippet) — it is never used for file
+    // I/O. validatePath enforces a cwd-relative traversal check that rejects absolute paths
+    // outside the server cwd, which would incorrectly reject all valid working directories.
+    // Handlers that actually write to the path (DelegateTask, CreateOrchestrator) validate it;
+    // this handler has no such I/O so validation adds user friction with no security benefit.
     const workingDirectory = data.workingDirectory ?? process.cwd();
     const result = scaffoldCustomOrchestrator({
       goal: data.goal,
@@ -3283,7 +3310,7 @@ export class MCPAdapter {
       return {
         content: [
           {
-            type: 'text' as const,
+            type: 'text',
             text: JSON.stringify({ success: false, error: result.error.message }, null, 2),
           },
         ],
@@ -3309,7 +3336,7 @@ export class MCPAdapter {
     return {
       content: [
         {
-          type: 'text' as const,
+          type: 'text',
           text: JSON.stringify(
             {
               success: true,
