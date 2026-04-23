@@ -144,17 +144,16 @@ async function readBody(req: http.IncomingMessage): Promise<Result<Buffer>> {
 /** Extract a human-readable error message from backend response body. */
 function extractBackendErrorMessage(chunks: Buffer[]): string {
   const MAX_LENGTH = 500;
-  const raw = Buffer.concat(chunks).toString('utf-8').substring(0, MAX_LENGTH);
+  const raw = Buffer.concat(chunks).toString('utf-8');
   if (!raw) return 'Backend returned error';
   try {
-    const parsed = JSON.parse(raw);
-    // OpenAI format: { error: { message: "..." } }
-    const msg = (parsed as Record<string, unknown>)?.['error']
-      ? ((parsed as Record<string, Record<string, unknown>>)['error']['message'] as string | undefined)
-      : ((parsed as Record<string, unknown>)['message'] as string | undefined);
-    return typeof msg === 'string' ? msg.substring(0, MAX_LENGTH) : raw;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // OpenAI format: { error: { message: "..." } }; fallback to top-level message
+    const errorObj = parsed['error'] as Record<string, unknown> | undefined;
+    const msg = errorObj?.['message'] ?? parsed['message'];
+    return typeof msg === 'string' ? msg.substring(0, MAX_LENGTH) : raw.substring(0, MAX_LENGTH);
   } catch {
-    return raw;
+    return raw.substring(0, MAX_LENGTH);
   }
 }
 

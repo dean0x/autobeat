@@ -324,12 +324,12 @@ class OpenAIStreamParser implements StreamParser {
           events.push({ type: 'tool_call_delta', index: canonicalIndex, arguments: tcArgs });
         }
       } else if (this.pendingToolCalls.has(tcIndex)) {
-        // Previously registered without id/name — now completing the start
+        // Seen before but id/name not yet arrived — accumulate args and promote when ready
         const existing = this.pendingToolCalls.get(tcIndex) as ActiveToolCall;
         if (tcArgs) {
           existing.argumentsAccumulator += tcArgs;
         }
-        if (!existing.started && tcId && tcName) {
+        if (tcId && tcName) {
           existing.id = tcId;
           existing.name = tcName;
           existing.started = true;
@@ -339,12 +339,6 @@ class OpenAIStreamParser implements StreamParser {
           events.push({ type: 'tool_call_start', index: this.currentContentIndex, id: tcId, name: tcName });
           this.lastActiveToolIndex = this.currentContentIndex;
           this.currentContentIndex++;
-        } else if (tcArgs) {
-          // Still pending — emit delta at pending index if started, else hold
-          if (existing.started) {
-            const canonicalIndex = this.openaiToCanonicalIndex.get(tcIndex) as number;
-            events.push({ type: 'tool_call_delta', index: canonicalIndex, arguments: tcArgs });
-          }
         }
       } else {
         // Brand new tool call — first time we see this OpenAI tcIndex
