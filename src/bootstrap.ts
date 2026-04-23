@@ -360,9 +360,18 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // The proxy URL is captured here (before agentRegistry is registered) so the
   // agentRegistry factory can use ProxiedClaudeAdapter with the correct port.
   //
+  // TEMPORAL DEPENDENCY: proxyPort is captured in the enclosing scope and read
+  // inside the agentRegistry factory closure (registered below). This means proxy
+  // startup MUST complete before agentRegistry is registered — the current code
+  // ordering enforces this. Do NOT move agentRegistry registration above this block.
+  //
   // DECISION: Proxy startup is eagerly awaited at bootstrap time (not lazily).
   // Rationale: The port must be known before the agentRegistry factory runs,
   // and factory functions are synchronous. Eager start ensures consistency.
+  //
+  // DECISION: Proxy is only started in 'server' mode (MCP daemon). CLI modes
+  // ('cli', 'run') skip proxy startup — spawned claude processes read their own
+  // config and start their own proxy when needed.
   //
   // Failure handling: A proxy start failure is non-fatal — bootstrap falls back
   // to the standard ClaudeAdapter (direct Anthropic API). This keeps the server
@@ -370,13 +379,16 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // ============================================================================
   let proxyPort: number | undefined;
 
-  if (!options.processSpawner) {
+  if (!options.processSpawner && (options.mode ?? 'server') === 'server') {
     const proxyConfig = loadProxyConfig('claude');
     if (proxyConfig !== null) {
       const proxyManager = new ProxyManager(proxyConfig, logger.child({ module: 'ProxyManager' }));
       const proxyResult = await proxyManager.start();
       if (proxyResult.ok) {
         proxyPort = proxyResult.value.port;
+        // ARCHITECTURE: Optional registration — only present when proxy is active.
+        // Resolved by key in src/index.ts shutdown handler; callers must handle
+        // the missing-key case (container.get returns Err when unregistered).
         container.registerValue('proxyManager', proxyManager);
         logger.info('Translation proxy active', { port: proxyPort, targetBaseUrl: proxyConfig.targetBaseUrl });
       } else {

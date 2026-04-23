@@ -227,11 +227,18 @@ export function resetConfigValue(key: string): ConfigWriteResult {
 // Per-Agent Config Storage (agents.<provider>.apiKey in config.json)
 // ============================================================================
 
+/**
+ * Supported API translation targets.
+ * Single source of truth — kept in sync with SUPPORTED_TRANSLATE_TARGETS in proxy-manager.ts.
+ * Empty string is the "clear" sentinel accepted at save boundaries (CLI, MCP).
+ */
+export type TranslateTarget = 'openai';
+
 export interface AgentConfig {
   readonly apiKey?: string;
   readonly baseUrl?: string;
   readonly model?: string;
-  readonly translate?: string;
+  readonly translate?: TranslateTarget;
 }
 
 /**
@@ -248,7 +255,7 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : undefined,
     baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : undefined,
     model: typeof record.model === 'string' ? record.model : undefined,
-    translate: typeof record.translate === 'string' ? record.translate : undefined,
+    translate: record.translate === 'openai' ? (record.translate as TranslateTarget) : undefined,
   };
 }
 

@@ -348,7 +348,7 @@ const ConfigureAgentSchema = z.object({
   baseUrl: z.string().url().optional().describe('Base URL override (set action, e.g. https://proxy.example.com/v1)'),
   model: modelSchema.optional().describe('Default model override for this agent (set action)'),
   translate: z
-    .string()
+    .enum(['openai', ''])
     .optional()
     .describe(
       'API translation target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
@@ -3477,7 +3477,7 @@ export class MCPAdapter {
         if (baseUrlWarning) warnings.push(baseUrlWarning);
 
         // Warn when translate is set but required fields are missing
-        if (effectiveTranslate && effectiveTranslate !== '') {
+        if (effectiveTranslate) {
           if (!effectiveBaseUrl) warnings.push('translate requires baseUrl to be set');
           if (!effectiveApiKey) warnings.push('translate requires apiKey to be set');
           if (!currentConfig.model && !attempts.some((a) => a.key === 'model'))

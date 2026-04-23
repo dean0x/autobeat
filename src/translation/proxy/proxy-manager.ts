@@ -129,20 +129,20 @@ export class ProxyManager {
 
     const proxyLogger = this.logger.child({ module: 'TranslationProxy' });
 
-    // Build middleware stack: tool name mapping, prompt cache metrics, logging
-    const middlewares = [
-      new ToolNameMappingMiddleware(),
-      new PromptCacheMiddleware(),
-      new LoggingMiddleware(proxyLogger),
-    ];
-
     const proxy = new TranslationProxy({
       targetBaseUrl: this.config.targetBaseUrl,
       targetApiKey: this.config.targetApiKey,
       targetModel: this.config.targetModel,
       sourceCodec: new AnthropicCodec(),
       targetCodec: new OpenAICodec(),
-      middlewares,
+      // ARCHITECTURE: Factory produces fresh middleware instances per request so
+      // concurrent requests do not share mutable middleware state (see middlewareFactory
+      // DECISION comment in TranslationProxyConfig).
+      middlewareFactory: () => [
+        new ToolNameMappingMiddleware(),
+        new PromptCacheMiddleware(),
+        new LoggingMiddleware(proxyLogger),
+      ],
       logger: proxyLogger,
     });
 

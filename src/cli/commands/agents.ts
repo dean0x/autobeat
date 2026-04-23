@@ -120,6 +120,15 @@ export async function agentsConfigSet(
     );
   }
 
+  // Validate translate is a supported target (empty string clears)
+  if (key === 'translate' && value !== '') {
+    const SUPPORTED_TRANSLATE_TARGETS = ['openai'];
+    if (!SUPPORTED_TRANSLATE_TARGETS.includes(value)) {
+      ui.error(`Unsupported translate target: "${value}". Supported values: ${SUPPORTED_TRANSLATE_TARGETS.join(', ')}`);
+      process.exit(1);
+    }
+  }
+
   // Validate baseUrl is a well-formed absolute URL before saving
   if (key === 'baseUrl' && value !== '') {
     try {

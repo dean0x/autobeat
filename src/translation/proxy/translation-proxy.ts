@@ -32,7 +32,16 @@ export interface TranslationProxyConfig {
   readonly targetModel: string;
   readonly sourceCodec: FormatCodec;
   readonly targetCodec: FormatCodec;
-  readonly middlewares: readonly TranslationMiddleware[];
+  /**
+   * Factory called once per request to produce fresh middleware instances.
+   *
+   * DECISION: Per-request factory (not a shared instance array) so each
+   * concurrent request gets its own middleware state. Shared instances would
+   * cause data races: LoggingMiddleware would corrupt elapsed-time metrics,
+   * PromptCacheMiddleware would cross-contaminate prefix hashes, and
+   * ToolNameMappingMiddleware would bleed tool name maps across requests.
+   */
+  readonly middlewareFactory: () => readonly TranslationMiddleware[];
   readonly logger: Logger;
 }
 
@@ -141,6 +150,40 @@ function sendError(res: http.ServerResponse, status: number, type: string, messa
   res.end(body);
 }
 
+/**
+ * Count approximate characters across all text content in a parsed request body.
+ * Used by /v1/messages/count_tokens for rough token estimation (chars / 4).
+ */
+function countApproxChars(parsed: unknown): number {
+  if (!parsed || typeof parsed !== 'object') return 0;
+
+  const r = parsed as Record<string, unknown>;
+  let chars = 0;
+
+  const messages = r['messages'] as Array<Record<string, unknown>> | undefined;
+  if (messages) {
+    for (const msg of messages) {
+      const content = msg['content'];
+      if (typeof content === 'string') {
+        chars += content.length;
+      } else if (Array.isArray(content)) {
+        for (const block of content) {
+          const b = block as Record<string, unknown>;
+          if (typeof b['text'] === 'string') {
+            chars += (b['text'] as string).length;
+          }
+        }
+      }
+    }
+  }
+
+  if (typeof r['system'] === 'string') {
+    chars += (r['system'] as string).length;
+  }
+
+  return chars;
+}
+
 export class TranslationProxy {
   private server: http.Server | null = null;
 
@@ -218,7 +261,9 @@ export class TranslationProxy {
       return;
     }
 
-    sendError(res, 404, 'invalid_request_error', `Unknown endpoint: ${url}`);
+    // Sanitize URL: keep only printable ASCII, cap at 200 chars to prevent log injection
+    const safeUrl = url.replace(/[^\x20-\x7E]/g, '').substring(0, 200);
+    sendError(res, 404, 'invalid_request_error', `Unknown endpoint: ${safeUrl}`);
   }
 
   private async handleCountTokens(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -241,30 +286,7 @@ export class TranslationProxy {
     }
 
     // Approximate token count: sum of all text content chars / 4
-    let chars = 0;
-    if (parsed && typeof parsed === 'object') {
-      const r = parsed as Record<string, unknown>;
-      const messages = r['messages'] as Array<Record<string, unknown>> | undefined;
-      if (messages) {
-        for (const msg of messages) {
-          const content = msg['content'];
-          if (typeof content === 'string') {
-            chars += content.length;
-          } else if (Array.isArray(content)) {
-            for (const block of content) {
-              const b = block as Record<string, unknown>;
-              if (typeof b['text'] === 'string') {
-                chars += (b['text'] as string).length;
-              }
-            }
-          }
-        }
-      }
-      if (typeof r['system'] === 'string') {
-        chars += (r['system'] as string).length;
-      }
-    }
-
+    const chars = countApproxChars(parsed);
     const inputTokens = Math.max(1, Math.ceil(chars / 4));
     const body = JSON.stringify({ input_tokens: inputTokens });
     res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
@@ -304,8 +326,12 @@ export class TranslationProxy {
       model: this.config.targetModel,
     };
 
+    // Create fresh middleware instances for this request to avoid shared mutable state
+    // across concurrent requests (see middlewareFactory DECISION comment in config type).
+    const middlewares = this.config.middlewareFactory();
+
     // Run request middleware
-    const processedRequest = runRequestMiddleware(this.config.middlewares, canonicalRequest);
+    const processedRequest = runRequestMiddleware(middlewares, canonicalRequest);
 
     // Serialize for target
     const serializeResult = this.config.targetCodec.serializeRequest(processedRequest);
@@ -326,9 +352,9 @@ export class TranslationProxy {
     const isStreaming = processedRequest.stream;
 
     if (isStreaming) {
-      await this.handleStreamingRequest(req, res, targetUrl, outboundHeaders, targetBody);
+      await this.handleStreamingRequest(req, res, targetUrl, outboundHeaders, targetBody, middlewares);
     } else {
-      await this.handleNonStreamingRequest(req, res, targetUrl, outboundHeaders, targetBody);
+      await this.handleNonStreamingRequest(req, res, targetUrl, outboundHeaders, targetBody, middlewares);
     }
   }
 
@@ -338,6 +364,7 @@ export class TranslationProxy {
     targetUrl: URL,
     outboundHeaders: Record<string, string>,
     targetBody: string,
+    middlewares: readonly TranslationMiddleware[],
   ): Promise<void> {
     const abort = new AbortController();
     const connectTimeout = setTimeout(() => abort.abort(), CONNECT_TIMEOUT_MS);
@@ -397,7 +424,7 @@ export class TranslationProxy {
               return;
             }
 
-            const processedResponse = runResponseMiddleware(this.config.middlewares, parseResult.value);
+            const processedResponse = runResponseMiddleware(middlewares, parseResult.value);
 
             const serializeResult = this.config.sourceCodec.serializeResponse(processedResponse);
             if (!serializeResult.ok) {
@@ -444,6 +471,7 @@ export class TranslationProxy {
     targetUrl: URL,
     outboundHeaders: Record<string, string>,
     targetBody: string,
+    middlewares: readonly TranslationMiddleware[],
   ): Promise<void> {
     const abort = new AbortController();
     const connectTimeout = setTimeout(() => abort.abort(), CONNECT_TIMEOUT_MS);
@@ -459,7 +487,7 @@ export class TranslationProxy {
     const translator = new StreamTranslator(
       this.config.sourceCodec.createStreamSerializer(),
       this.config.targetCodec.createStreamParser(),
-      this.config.middlewares,
+      middlewares,
     );
     const lineBuffer = new LineBuffer();
 
@@ -521,7 +549,7 @@ export class TranslationProxy {
                 return;
               }
 
-              const processedResponse = runResponseMiddleware(this.config.middlewares, parseResult.value);
+              const processedResponse = runResponseMiddleware(middlewares, parseResult.value);
               const serializeResult = this.config.sourceCodec.serializeResponse(processedResponse);
               if (!serializeResult.ok) {
                 if (!res.headersSent) sendError(res, 500, 'api_error', 'Failed to serialize response');
