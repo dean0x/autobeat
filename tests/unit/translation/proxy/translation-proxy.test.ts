@@ -577,14 +577,11 @@ describe('TranslationProxy', () => {
       const { port } = startResult.value;
 
       const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
-        const req = http.request(
-          { hostname: '127.0.0.1', port, path: '/v1/messages', method: 'GET' },
-          (res) => {
-            const chunks: Buffer[] = [];
-            res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-            res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
-          },
-        );
+        const req = http.request({ hostname: '127.0.0.1', port, path: '/v1/messages', method: 'GET' }, (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
+        });
         req.on('error', reject);
         req.end();
       });
@@ -806,31 +803,33 @@ describe('TranslationProxy', () => {
         stream: true,
       });
 
-      const response = await new Promise<{ statusCode: number; body: string; contentType: string }>((resolve, reject) => {
-        const req = http.request(
-          {
-            hostname: '127.0.0.1',
-            port,
-            path: '/v1/messages',
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(requestBody) },
-          },
-          (res) => {
-            const chunks: Buffer[] = [];
-            res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-            res.on('end', () =>
-              resolve({
-                statusCode: res.statusCode ?? 0,
-                body: Buffer.concat(chunks).toString(),
-                contentType: res.headers['content-type'] ?? '',
-              }),
-            );
-          },
-        );
-        req.on('error', reject);
-        req.write(requestBody);
-        req.end();
-      });
+      const response = await new Promise<{ statusCode: number; body: string; contentType: string }>(
+        (resolve, reject) => {
+          const req = http.request(
+            {
+              hostname: '127.0.0.1',
+              port,
+              path: '/v1/messages',
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(requestBody) },
+            },
+            (res) => {
+              const chunks: Buffer[] = [];
+              res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+              res.on('end', () =>
+                resolve({
+                  statusCode: res.statusCode ?? 0,
+                  body: Buffer.concat(chunks).toString(),
+                  contentType: res.headers['content-type'] ?? '',
+                }),
+              );
+            },
+          );
+          req.on('error', reject);
+          req.write(requestBody);
+          req.end();
+        },
+      );
 
       // Proxy should translate the JSON fallback as a normal non-streaming response
       expect(response.statusCode).toBe(200);
