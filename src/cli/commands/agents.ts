@@ -141,6 +141,15 @@ export async function agentsConfigSet(
   } else {
     ui.success(`${agent}.${key} saved: ${value}`);
   }
+
+  // Warn when translate is set but required fields are missing
+  if (key === 'translate' && value !== '') {
+    const config = loadAgentConfig(agent);
+    if (!config.baseUrl) ui.note('translate requires baseUrl to be set', 'Warning');
+    if (!config.apiKey) ui.note('translate requires apiKey to be set', 'Warning');
+    if (!config.model) ui.note('translate requires model to be set', 'Warning');
+  }
+
   process.exit(0);
 }
 

@@ -3466,11 +3466,23 @@ export class MCPAdapter {
           };
         }
 
-        // Compute Claude baseUrl warning using effective values after writes
+        // Compute warnings using effective values after writes
         const currentConfig = loadAgentConfig(agent);
         const effectiveBaseUrl = baseUrl !== undefined ? baseUrl : currentConfig.baseUrl;
         const effectiveApiKey = apiKey ?? currentConfig.apiKey;
-        const setWarning = this.getClaudeBaseUrlWarning(agent, effectiveBaseUrl, effectiveApiKey);
+        const effectiveTranslate = translate !== undefined ? translate : currentConfig.translate;
+
+        const warnings: string[] = [];
+        const baseUrlWarning = this.getClaudeBaseUrlWarning(agent, effectiveBaseUrl, effectiveApiKey);
+        if (baseUrlWarning) warnings.push(baseUrlWarning);
+
+        // Warn when translate is set but required fields are missing
+        if (effectiveTranslate && effectiveTranslate !== '') {
+          if (!effectiveBaseUrl) warnings.push('translate requires baseUrl to be set');
+          if (!effectiveApiKey) warnings.push('translate requires apiKey to be set');
+          if (!currentConfig.model && !attempts.some((a) => a.key === 'model'))
+            warnings.push('translate requires model to be set');
+        }
 
         interface SetPayload {
           success: boolean;
@@ -3480,7 +3492,7 @@ export class MCPAdapter {
         const responsePayload: SetPayload = {
           success: true,
           message: `${agent}: ${attempts.map((a) => a.label).join(', ')}`,
-          ...(setWarning && { warning: setWarning }),
+          ...(warnings.length > 0 && { warning: warnings.join('. ') }),
         };
 
         return {

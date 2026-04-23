@@ -54,7 +54,11 @@ function serializeContentForOpenAI(content: CanonicalContent[]): Array<Record<st
         parts.push({ type: 'image_url', image_url: { url: block.source.data } });
       }
     }
-    // Other content types are ignored or handled at message level
+    // document: convert to text (lossy but functional)
+    else if (block.type === 'document') {
+      parts.push({ type: 'text', text: `[Document: ${block.source.mediaType}]` });
+    }
+    // Other content types (tool_use, tool_result, thinking, etc.) are handled at message level
   }
   return parts;
 }
@@ -285,6 +289,12 @@ class OpenAIStreamParser implements StreamParser {
         this.hasActiveTextBlock = true;
       }
       events.push({ type: 'content_delta', index: this.currentContentIndex, text: content });
+    }
+
+    // Reasoning/thinking content delta (for models like Kimi K2 that stream reasoning)
+    const reasoningContent = delta['reasoning_content'] as string | null | undefined;
+    if (reasoningContent !== null && reasoningContent !== undefined && reasoningContent !== '') {
+      events.push({ type: 'thinking_delta', thinking: reasoningContent });
     }
 
     // Tool calls delta

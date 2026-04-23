@@ -72,6 +72,13 @@ async function main() {
         executor.stop();
       }
 
+      // Stop translation proxy before killing workers
+      const proxyManagerResult = container?.get('proxyManager');
+      if (proxyManagerResult?.ok) {
+        const proxyManager = proxyManagerResult.value as { stop(): Promise<void> };
+        await proxyManager.stop();
+      }
+
       // Kill all workers
       const workerPoolResult = container?.get('workerPool');
       if (workerPoolResult?.ok) {
