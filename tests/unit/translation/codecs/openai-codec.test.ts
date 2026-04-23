@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { OpenAICodec } from '../../../../src/translation/codecs/openai-codec.js';
-import type { CanonicalRequest } from '../../../../src/translation/ir.js';
+import type { CanonicalRequest, ToolCallStopEvent } from '../../../../src/translation/ir.js';
 
 describe('OpenAICodec', () => {
   const codec = new OpenAICodec();
@@ -794,6 +794,197 @@ describe('OpenAICodec', () => {
       });
       expect(events.some((e) => e.type === 'tool_call_stop')).toBe(true);
       expect(events.some((e) => e.type === 'message_stop')).toBe(true);
+    });
+
+    it('accumulates tool arguments after text content', () => {
+      const parser = codec.createStreamParser();
+      // message_start
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+      });
+      // text content — advances currentContentIndex
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [{ index: 0, delta: { content: 'Hello!' }, finish_reason: null }],
+      });
+      // tool call start (OpenAI index 0, but canonical index will be 2 due to text)
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                { index: 0, id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{"k' } },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      });
+      // tool call delta (OpenAI index 0 again — this is the bug trigger)
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: 'ey":1}' } }],
+            },
+            finish_reason: null,
+          },
+        ],
+      });
+      // finish
+      const events = parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+      });
+      const stopEvent = events.find((e) => e.type === 'tool_call_stop') as ToolCallStopEvent | undefined;
+      expect(stopEvent).toBeDefined();
+      expect(stopEvent?.arguments).toBe('{"key":1}');
+    });
+
+    it('handles multiple tool calls with correct canonical indices after text', () => {
+      const parser = codec.createStreamParser();
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+      });
+      // text content first
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [{ index: 0, delta: { content: 'Let me help.' }, finish_reason: null }],
+      });
+      // two tool calls in one chunk
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                { index: 0, id: 'call_1', type: 'function', function: { name: 'tool_a', arguments: '{"a' } },
+                { index: 1, id: 'call_2', type: 'function', function: { name: 'tool_b', arguments: '{"b' } },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      });
+      // deltas for each
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: '":1}' } }],
+            },
+            finish_reason: null,
+          },
+        ],
+      });
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [{ index: 1, function: { arguments: '":2}' } }],
+            },
+            finish_reason: null,
+          },
+        ],
+      });
+      // finish
+      const events = parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+      });
+      const stops = events.filter((e) => e.type === 'tool_call_stop') as ToolCallStopEvent[];
+      expect(stops).toHaveLength(2);
+      expect(stops[0]?.arguments).toBe('{"a":1}');
+      expect(stops[1]?.arguments).toBe('{"b":2}');
+    });
+
+    it('accumulates arguments for delayed tool call start after text', () => {
+      const parser = codec.createStreamParser();
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+      });
+      // text first
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [{ index: 0, delta: { content: 'Thinking...' }, finish_reason: null }],
+      });
+      // tool call chunk without id/name (delayed start)
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: '{"partial' } }],
+            },
+            finish_reason: null,
+          },
+        ],
+      });
+      // tool call chunk WITH id/name (delayed start completes)
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                { index: 0, id: 'call_1', type: 'function', function: { name: 'my_tool', arguments: '":"val' } },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      });
+      // more args
+      parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: 'ue"}' } }],
+            },
+            finish_reason: null,
+          },
+        ],
+      });
+      const events = parser.processChunk({
+        id: 'chatcmpl-1',
+        model: 'gpt-4o',
+        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+      });
+      const stopEvent = events.find((e) => e.type === 'tool_call_stop') as ToolCallStopEvent | undefined;
+      expect(stopEvent).toBeDefined();
+      expect(stopEvent?.arguments).toBe('{"partial":"value"}');
     });
 
     it('flush returns empty array', () => {
