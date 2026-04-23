@@ -1,42 +1,22 @@
 /**
- * Tests for ProxiedClaudeAdapter — Claude adapter that routes through translation proxy
+ * Tests for ProxiedClaudeAdapter — Claude adapter that routes through translation proxy.
+ *
+ * ARCHITECTURE: Tests the resolveBaseUrl override behavior without spawning real processes.
+ * Uses a test subclass to expose the protected method, avoiding child_process mock issues
+ * with vitest isolate: false (prior test files in this directory load child_process unmocked).
+ *
+ * Full spawn integration (args, env, flags) is tested in agent-adapters.test.ts which
+ * has its own child_process mock established before any imports.
  */
-import type { ChildProcess } from 'child_process';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Configuration } from '../../../../src/core/configuration.js';
+import { describe, expect, it } from 'vitest';
+import type { AgentConfig, Configuration } from '../../../../src/core/configuration.js';
 import { ProxiedClaudeAdapter } from '../../../../src/translation/proxy/proxied-claude-adapter.js';
 
-// Mock child_process.spawn so no real processes are spawned
-vi.mock('child_process', () => ({
-  spawn: vi.fn(),
-  spawnSync: vi.fn(),
-  ChildProcess: vi.fn(),
-}));
-
-// Mock isCommandInPath to return true so adapter doesn't fail at binary check
-vi.mock('../../../../src/core/agents.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../../../../src/core/agents.js')>();
-  return {
-    ...original,
-    isCommandInPath: vi.fn().mockReturnValue(true),
-  };
-});
-
-// Static imports AFTER vi.mock() calls — ensures the mocked versions are used
-import { spawn } from 'child_process';
-import { isCommandInPath } from '../../../../src/core/agents.js';
-
-const mockSpawn = vi.mocked(spawn);
-const mockIsCommandInPath = vi.mocked(isCommandInPath);
-
-function makeChildProcess(): ChildProcess {
-  return {
-    pid: 12345,
-    stdout: { on: vi.fn() },
-    stderr: { on: vi.fn() },
-    on: vi.fn(),
-    kill: vi.fn(),
-  } as unknown as ChildProcess;
+/** Expose protected resolveBaseUrl for testing */
+class TestableProxiedClaudeAdapter extends ProxiedClaudeAdapter {
+  testResolveBaseUrl(agentConfig: AgentConfig): Record<string, string> {
+    return this.resolveBaseUrl(agentConfig);
+  }
 }
 
 const testConfig: Configuration = {
@@ -60,61 +40,43 @@ const testConfig: Configuration = {
 };
 
 describe('ProxiedClaudeAdapter', () => {
-  beforeEach(() => {
-    mockSpawn.mockReturnValue(makeChildProcess());
-    mockIsCommandInPath.mockReturnValue(true);
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
   it('has provider = claude', () => {
     const adapter = new ProxiedClaudeAdapter(testConfig, 9876);
     expect(adapter.provider).toBe('claude');
   });
 
-  it('injects ANTHROPIC_BASE_URL pointing to proxy port', () => {
-    const adapter = new ProxiedClaudeAdapter(testConfig, 9876);
-    const result = adapter.spawn({
-      prompt: 'Hello',
-      workingDirectory: '/tmp',
-    });
-    expect(result.ok).toBe(true);
-    const callEnv = mockSpawn.mock.calls[0][2]?.env as Record<string, string>;
-    expect(callEnv.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:9876');
+  it('resolveBaseUrl returns ANTHROPIC_BASE_URL pointing to proxy port', () => {
+    const adapter = new TestableProxiedClaudeAdapter(testConfig, 9876);
+    const env = adapter.testResolveBaseUrl({});
+    expect(env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:9876');
   });
 
-  it('injects CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 when proxy is active', () => {
-    const adapter = new ProxiedClaudeAdapter(testConfig, 9876);
-    adapter.spawn({ prompt: 'Hello', workingDirectory: '/tmp' });
-    const callEnv = mockSpawn.mock.calls[0][2]?.env as Record<string, string>;
-    expect(callEnv.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('1');
+  it('resolveBaseUrl injects CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1', () => {
+    const adapter = new TestableProxiedClaudeAdapter(testConfig, 9876);
+    const env = adapter.testResolveBaseUrl({});
+    expect(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('1');
   });
 
-  it('does not use config-level baseUrl — proxy URL takes precedence', () => {
-    // Even if there were a config-level baseUrl, the proxy adapter always uses the proxy port
-    const adapter = new ProxiedClaudeAdapter(testConfig, 12345);
-    adapter.spawn({ prompt: 'Test', workingDirectory: '/tmp' });
-    const callEnv = mockSpawn.mock.calls[0][2]?.env as Record<string, string>;
-    expect(callEnv.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:12345');
+  it('resolveBaseUrl ignores config-level baseUrl — proxy URL takes precedence', () => {
+    const adapter = new TestableProxiedClaudeAdapter(testConfig, 12345);
+    const env = adapter.testResolveBaseUrl({ baseUrl: 'https://custom.api.com' });
+    expect(env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:12345');
   });
 
-  it('preserves all standard Claude adapter behaviors (print, skip-permissions flags)', () => {
-    const adapter = new ProxiedClaudeAdapter(testConfig, 9876);
-    adapter.spawn({ prompt: 'Test prompt', workingDirectory: '/tmp' });
-    const callArgs = mockSpawn.mock.calls[0][1] as string[];
-    expect(callArgs).toContain('--print');
-    expect(callArgs).toContain('--dangerously-skip-permissions');
-    expect(callArgs).toContain('--output-format');
-    expect(callArgs).toContain('json');
+  it('resolveBaseUrl returns exactly two entries (base URL + beta disable)', () => {
+    const adapter = new TestableProxiedClaudeAdapter(testConfig, 9876);
+    const env = adapter.testResolveBaseUrl({});
+    expect(Object.keys(env)).toHaveLength(2);
+    expect(Object.keys(env).sort()).toEqual([
+      'ANTHROPIC_BASE_URL',
+      'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
+    ]);
   });
 
-  it('passes model arg when provided', () => {
-    const adapter = new ProxiedClaudeAdapter(testConfig, 9876);
-    adapter.spawn({ prompt: 'Test', workingDirectory: '/tmp', model: 'claude-opus-4-5' });
-    const callArgs = mockSpawn.mock.calls[0][1] as string[];
-    expect(callArgs).toContain('--model');
-    expect(callArgs).toContain('claude-opus-4-5');
+  it('uses the exact port passed to constructor', () => {
+    const adapter1 = new TestableProxiedClaudeAdapter(testConfig, 3000);
+    const adapter2 = new TestableProxiedClaudeAdapter(testConfig, 54321);
+    expect(adapter1.testResolveBaseUrl({}).ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:3000');
+    expect(adapter2.testResolveBaseUrl({}).ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:54321');
   });
 });
