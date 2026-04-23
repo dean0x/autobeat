@@ -15,14 +15,23 @@
 import type { StreamParser, StreamSerializer } from '../codec.js';
 import type { CanonicalStreamEvent } from '../ir.js';
 import type { TranslationMiddleware } from '../middleware/middleware.js';
-import { runStreamEventMiddleware } from '../middleware/middleware.js';
 
 export class StreamTranslator {
+  /**
+   * DECISION: reversed middlewares are pre-computed once at construction rather
+   * than calling [...middlewares].reverse() inside applyMiddleware on every SSE
+   * chunk. During streaming, applyMiddleware is called hundreds or thousands of
+   * times per response; pre-computing avoids repeated array allocations.
+   */
+  private readonly reversedMiddlewares: readonly TranslationMiddleware[];
+
   constructor(
     private readonly sourceSerializer: StreamSerializer,
     private readonly targetParser: StreamParser,
     private readonly middlewares: readonly TranslationMiddleware[],
-  ) {}
+  ) {
+    this.reversedMiddlewares = [...middlewares].reverse();
+  }
 
   /**
    * Process one raw SSE line from the target API.
@@ -89,7 +98,14 @@ export class StreamTranslator {
   }
 
   private applyMiddleware(event: CanonicalStreamEvent): CanonicalStreamEvent | null {
-    if (this.middlewares.length === 0) return event;
-    return runStreamEventMiddleware(this.middlewares, event);
+    if (this.reversedMiddlewares.length === 0) return event;
+    let current: CanonicalStreamEvent | null = event;
+    for (const mw of this.reversedMiddlewares) {
+      if (!current) return null;
+      if (mw.processStreamEvent) {
+        current = mw.processStreamEvent(current);
+      }
+    }
+    return current;
   }
 }

@@ -14,7 +14,7 @@
  * never receives API keys — they are only held by the proxy config.
  */
 import type { Logger } from '../../core/interfaces.js';
-import type { CanonicalRequest, CanonicalResponse } from '../../translation/ir.js';
+import type { CanonicalRequest, CanonicalResponse } from '../ir.js';
 import type { TranslationMiddleware } from './middleware.js';
 
 export class LoggingMiddleware implements TranslationMiddleware {

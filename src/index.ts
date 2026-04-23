@@ -10,6 +10,7 @@ import { MCPAdapter } from './adapters/mcp-adapter.js';
 import { bootstrap } from './bootstrap.js';
 import { Container } from './core/container.js';
 import { Logger, WorkerPool } from './core/interfaces.js';
+import { ProxyManager } from './translation/proxy/proxy-manager.js';
 
 // Handle errors gracefully
 process.on('uncaughtException', (error) => {
@@ -75,7 +76,7 @@ async function main() {
       // Stop translation proxy before killing workers
       const proxyManagerResult = container?.get('proxyManager');
       if (proxyManagerResult?.ok) {
-        const proxyManager = proxyManagerResult.value as { stop(): Promise<void> };
+        const proxyManager = proxyManagerResult.value as ProxyManager;
         await proxyManager.stop();
       }
 

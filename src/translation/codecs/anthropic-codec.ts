@@ -26,80 +26,78 @@ import type {
 // ==========================================
 
 function parseContentBlock(block: Record<string, unknown>): CanonicalContent {
-  const type = block['type'];
-
-  if (type === 'text') {
-    const cc = block['cache_control'] as Record<string, unknown> | undefined;
-    return {
-      type: 'text',
-      text: (block['text'] as string) ?? '',
-      ...(cc ? { cacheControl: { type: cc['type'] as string } } : {}),
-    };
-  }
-
-  if (type === 'image') {
-    const source = block['source'] as Record<string, unknown>;
-    return {
-      type: 'image',
-      source: {
-        type: source['type'] as 'base64' | 'url',
-        mediaType: source['media_type'] as string,
-        data: source['data'] as string,
-      },
-    };
-  }
-
-  if (type === 'tool_use') {
-    return {
-      type: 'tool_use',
-      id: block['id'] as string,
-      name: block['name'] as string,
-      input: (block['input'] as Record<string, unknown>) ?? {},
-    };
-  }
-
-  if (type === 'tool_result') {
-    const rawContent = block['content'];
-    let content: CanonicalContent[] = [];
-    if (Array.isArray(rawContent)) {
-      content = rawContent.map((c) => parseContentBlock(c as Record<string, unknown>));
-    } else if (typeof rawContent === 'string') {
-      content = [{ type: 'text', text: rawContent }];
+  switch (block['type']) {
+    case 'text': {
+      const cc = block['cache_control'] as Record<string, unknown> | undefined;
+      return {
+        type: 'text',
+        text: (block['text'] as string) ?? '',
+        ...(cc ? { cacheControl: { type: cc['type'] as string } } : {}),
+      };
     }
-    return {
-      type: 'tool_result',
-      toolUseId: block['tool_use_id'] as string,
-      content,
-      ...(block['is_error'] !== undefined ? { isError: block['is_error'] as boolean } : {}),
-    };
-  }
 
-  if (type === 'thinking') {
-    return {
-      type: 'thinking',
-      thinking: block['thinking'] as string,
-      ...(block['signature'] ? { signature: block['signature'] as string } : {}),
-    };
-  }
+    case 'image': {
+      const source = block['source'] as Record<string, unknown>;
+      return {
+        type: 'image',
+        source: {
+          type: source['type'] as 'base64' | 'url',
+          mediaType: source['media_type'] as string,
+          data: source['data'] as string,
+        },
+      };
+    }
 
-  if (type === 'redacted_thinking') {
-    return { type: 'redacted_thinking' };
-  }
+    case 'tool_use':
+      return {
+        type: 'tool_use',
+        id: block['id'] as string,
+        name: block['name'] as string,
+        input: (block['input'] as Record<string, unknown>) ?? {},
+      };
 
-  if (type === 'document') {
-    const source = block['source'] as Record<string, unknown>;
-    return {
-      type: 'document',
-      source: {
-        type: source['type'] as 'base64' | 'url',
-        mediaType: source['media_type'] as string,
-        data: source['data'] as string,
-      },
-    };
-  }
+    case 'tool_result': {
+      const rawContent = block['content'];
+      let content: CanonicalContent[] = [];
+      if (Array.isArray(rawContent)) {
+        content = rawContent.map((c) => parseContentBlock(c as Record<string, unknown>));
+      } else if (typeof rawContent === 'string') {
+        content = [{ type: 'text', text: rawContent }];
+      }
+      return {
+        type: 'tool_result',
+        toolUseId: block['tool_use_id'] as string,
+        content,
+        ...(block['is_error'] !== undefined ? { isError: block['is_error'] as boolean } : {}),
+      };
+    }
 
-  // Fallback: treat unknown as text
-  return { type: 'text', text: String(block['text'] ?? '') };
+    case 'thinking':
+      return {
+        type: 'thinking',
+        thinking: block['thinking'] as string,
+        ...(block['signature'] ? { signature: block['signature'] as string } : {}),
+      };
+
+    case 'redacted_thinking':
+      return { type: 'redacted_thinking' };
+
+    case 'document': {
+      const source = block['source'] as Record<string, unknown>;
+      return {
+        type: 'document',
+        source: {
+          type: source['type'] as 'base64' | 'url',
+          mediaType: source['media_type'] as string,
+          data: source['data'] as string,
+        },
+      };
+    }
+
+    default:
+      // Fallback: treat unknown as text
+      return { type: 'text', text: String(block['text'] ?? '') };
+  }
 }
 
 function parseMessageContent(content: unknown): CanonicalContent[] {
@@ -308,8 +306,12 @@ class AnthropicStreamSerializer implements StreamSerializer {
         return [];
       }
 
-      default:
+      default: {
+        // Exhaustive check — compiler will error here if a new CanonicalStreamEvent
+        // discriminant is added without a corresponding case in this switch.
+        const _exhaustive: never = event;
         return [];
+      }
     }
   }
 }
