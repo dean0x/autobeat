@@ -287,6 +287,7 @@ describe('TranslationProxy', () => {
     expect(response.statusCode).toBe(401);
     const body = JSON.parse(response.body);
     expect(body.error.type).toBe('authentication_error');
+    expect(body.error.message).toBe('Invalid API key');
     // Must never include API keys in error messages
     expect(response.body).not.toContain('test-api-key-12345');
   });
@@ -336,6 +337,7 @@ describe('TranslationProxy', () => {
     expect(response.statusCode).toBe(429);
     const body = JSON.parse(response.body);
     expect(body.error.type).toBe('rate_limit_error');
+    expect(body.error.message).toBe('Rate limit exceeded');
   });
 
   it('maps 500 backend error to api_error format', async () => {
@@ -383,6 +385,149 @@ describe('TranslationProxy', () => {
     expect(response.statusCode).toBe(500);
     const body = JSON.parse(response.body);
     expect(body.error.type).toBe('api_error');
+    expect(body.error.message).toBe('Internal server error');
+  });
+
+  it('forwards non-JSON backend error as raw text', async () => {
+    const { server: backend, port: backendPort } = await makeBackend(async (req, res) => {
+      await readBody(req);
+      res.writeHead(502, { 'Content-Type': 'text/plain' });
+      res.end('Bad Gateway: upstream timeout');
+    });
+    backendServers.push(backend);
+
+    const logger = makeLogger();
+    const proxy = makeProxy(backendPort, logger);
+    proxies.push(proxy);
+
+    const startResult = await proxy.start();
+    if (!startResult.ok) return;
+    const { port } = startResult.value;
+
+    const requestBody = JSON.stringify({
+      model: 'claude-3-5-sonnet-20241022',
+      messages: [{ role: 'user', content: 'Hi' }],
+      max_tokens: 512,
+    });
+
+    const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/v1/messages',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(requestBody) },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
+        },
+      );
+      req.on('error', reject);
+      req.write(requestBody);
+      req.end();
+    });
+
+    expect(response.statusCode).toBe(502);
+    const body = JSON.parse(response.body);
+    expect(body.error.message).toBe('Bad Gateway: upstream timeout');
+  });
+
+  it('falls back to generic message on empty error body', async () => {
+    const { server: backend, port: backendPort } = await makeBackend(async (req, res) => {
+      await readBody(req);
+      res.writeHead(500);
+      res.end();
+    });
+    backendServers.push(backend);
+
+    const logger = makeLogger();
+    const proxy = makeProxy(backendPort, logger);
+    proxies.push(proxy);
+
+    const startResult = await proxy.start();
+    if (!startResult.ok) return;
+    const { port } = startResult.value;
+
+    const requestBody = JSON.stringify({
+      model: 'claude-3-5-sonnet-20241022',
+      messages: [{ role: 'user', content: 'Hi' }],
+      max_tokens: 512,
+    });
+
+    const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/v1/messages',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(requestBody) },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
+        },
+      );
+      req.on('error', reject);
+      req.write(requestBody);
+      req.end();
+    });
+
+    expect(response.statusCode).toBe(500);
+    const body = JSON.parse(response.body);
+    expect(body.error.message).toBe('Backend returned error');
+  });
+
+  it('truncates long backend error messages', async () => {
+    const longMessage = 'x'.repeat(1000);
+    const { server: backend, port: backendPort } = await makeBackend(async (req, res) => {
+      await readBody(req);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: longMessage } }));
+    });
+    backendServers.push(backend);
+
+    const logger = makeLogger();
+    const proxy = makeProxy(backendPort, logger);
+    proxies.push(proxy);
+
+    const startResult = await proxy.start();
+    if (!startResult.ok) return;
+    const { port } = startResult.value;
+
+    const requestBody = JSON.stringify({
+      model: 'claude-3-5-sonnet-20241022',
+      messages: [{ role: 'user', content: 'Hi' }],
+      max_tokens: 512,
+    });
+
+    const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/v1/messages',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(requestBody) },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
+        },
+      );
+      req.on('error', reject);
+      req.write(requestBody);
+      req.end();
+    });
+
+    expect(response.statusCode).toBe(500);
+    const body = JSON.parse(response.body);
+    expect(body.error.message.length).toBeLessThanOrEqual(500);
   });
 
   it('returns 413 for requests over 50MB', async () => {

@@ -141,6 +141,23 @@ async function readBody(req: http.IncomingMessage): Promise<Result<Buffer>> {
   });
 }
 
+/** Extract a human-readable error message from backend response body. */
+function extractBackendErrorMessage(chunks: Buffer[]): string {
+  const MAX_LENGTH = 500;
+  const raw = Buffer.concat(chunks).toString('utf-8').substring(0, MAX_LENGTH);
+  if (!raw) return 'Backend returned error';
+  try {
+    const parsed = JSON.parse(raw);
+    // OpenAI format: { error: { message: "..." } }
+    const msg = (parsed as Record<string, unknown>)?.['error']
+      ? ((parsed as Record<string, Record<string, unknown>>)['error']['message'] as string | undefined)
+      : ((parsed as Record<string, unknown>)['message'] as string | undefined);
+    return typeof msg === 'string' ? msg.substring(0, MAX_LENGTH) : raw;
+  } catch {
+    return raw;
+  }
+}
+
 function sendError(res: http.ServerResponse, status: number, type: string, message: string): void {
   const body = JSON.stringify(buildErrorResponse(type, message));
   res.writeHead(status, {
@@ -436,7 +453,9 @@ export class TranslationProxy {
             backendRes.on('end', () => {
               clearTimeout(responseTimeout);
               const errorType = mapStatusToErrorType(statusCode);
-              sendError(res, statusCode, errorType, 'Backend returned error');
+              const backendMessage = extractBackendErrorMessage(errChunks);
+              this.config.logger.debug('Backend error response', { statusCode, backendMessage });
+              sendError(res, statusCode, errorType, backendMessage);
               resolve();
             });
             return;
@@ -486,8 +505,10 @@ export class TranslationProxy {
     backendRes.on('end', () => {
       clearIdleTimer();
       const errorType = mapStatusToErrorType(statusCode);
+      const backendMessage = extractBackendErrorMessage(errChunks);
+      this.config.logger.debug('Backend error response', { statusCode, backendMessage });
       if (!res.headersSent) {
-        sendError(res, statusCode, errorType, 'Backend returned error');
+        sendError(res, statusCode, errorType, backendMessage);
       }
       resolve();
     });
