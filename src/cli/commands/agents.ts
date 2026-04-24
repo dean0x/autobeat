@@ -17,10 +17,18 @@ import {
   isAgentProvider,
   maskApiKey,
 } from '../../core/agents.js';
-import { loadAgentConfig, loadConfiguration, resetAgentConfig, saveAgentConfig } from '../../core/configuration.js';
+import {
+  loadAgentConfig,
+  loadConfiguration,
+  resetAgentConfig,
+  saveAgentConfig,
+  TRANSLATE_TARGETS,
+  type TranslateTarget,
+} from '../../core/configuration.js';
 import * as ui from '../ui.js';
 
-const SUPPORTED_TRANSLATE_TARGETS = ['openai'] as const;
+/** Derived from the canonical TRANSLATE_TARGETS tuple — no manual sync required. */
+const SUPPORTED_TRANSLATE_TARGETS: readonly TranslateTarget[] = TRANSLATE_TARGETS;
 
 export async function listAgents(): Promise<void> {
   const config = loadConfiguration();

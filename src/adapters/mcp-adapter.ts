@@ -15,7 +15,13 @@ import {
   checkAgentAuth,
   maskApiKey,
 } from '../core/agents.js';
-import { type Configuration, loadAgentConfig, resetAgentConfig, saveAgentConfig } from '../core/configuration.js';
+import {
+  type Configuration,
+  loadAgentConfig,
+  resetAgentConfig,
+  saveAgentConfig,
+  TRANSLATE_TARGETS,
+} from '../core/configuration.js';
 import {
   EvalMode,
   LoopCreateRequest,
@@ -348,7 +354,9 @@ const ConfigureAgentSchema = z.object({
   baseUrl: z.string().url().optional().describe('Base URL override (set action, e.g. https://proxy.example.com/v1)'),
   model: modelSchema.optional().describe('Default model override for this agent (set action)'),
   translate: z
-    .enum(['openai', ''])
+    // TRANSLATE_TARGETS is the canonical list; '' is the "clear" sentinel accepted only at
+    // save boundaries (CLI, MCP) — it is never persisted to stored config.
+    .enum([...TRANSLATE_TARGETS, ''] as [string, ...string[]])
     .optional()
     .describe(
       'API translation target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',

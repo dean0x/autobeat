@@ -46,6 +46,7 @@ export interface TranslationProxyConfig {
 }
 
 const MAX_BODY_BYTES = 50 * 1024 * 1024; // 50MB
+const MAX_ERR_BYTES = 64 * 1024; // 64KB cap on accumulated error body
 const CONNECT_TIMEOUT_MS = 30_000;
 const NONSTREAM_TIMEOUT_MS = 300_000;
 const STREAM_IDLE_TIMEOUT_MS = 60_000;
@@ -141,7 +142,17 @@ async function readBody(req: http.IncomingMessage): Promise<Result<Buffer>> {
   });
 }
 
-/** Extract a human-readable error message from backend response body. */
+/**
+ * Extract a human-readable error message from backend response body.
+ *
+ * DECISION: Raw backend error text (rate-limit messages, auth failures, quota
+ * errors) is forwarded to the caller without sanitization. This is intentional
+ * because the proxy binds exclusively to 127.0.0.1 and its only client is the
+ * local Claude Code process — not an untrusted external caller. Forwarding the
+ * full error message is useful for debugging (e.g., surfacing "rate limited,
+ * retry after 30s" to the user). The 500-char truncation prevents unbounded
+ * memory growth from malformed responses.
+ */
 function extractBackendErrorMessage(chunks: Buffer[]): string {
   const MAX_LENGTH = 500;
   const raw = Buffer.concat(chunks).toString('utf-8');
@@ -376,25 +387,25 @@ export class TranslationProxy {
 
   /**
    * Parse, run middleware, serialize, and send a successful non-streaming backend response.
-   * Returns true on success, false if an error response was already sent.
+   * Sends an error response directly if any step fails.
    */
   private processNonStreamingResponse(
     rawBody: string,
     res: http.ServerResponse,
     middlewares: readonly TranslationMiddleware[],
-  ): boolean {
+  ): void {
     let rawResponse: unknown;
     try {
       rawResponse = JSON.parse(rawBody);
     } catch {
       sendError(res, 502, 'api_error', 'Backend returned invalid JSON');
-      return false;
+      return;
     }
 
     const parseResult = this.config.targetCodec.parseResponse(rawResponse);
     if (!parseResult.ok) {
       sendError(res, 502, 'api_error', 'Failed to parse backend response');
-      return false;
+      return;
     }
 
     const processedResponse = runResponseMiddleware(middlewares, parseResult.value);
@@ -402,7 +413,7 @@ export class TranslationProxy {
     const serializeResult = this.config.sourceCodec.serializeResponse(processedResponse);
     if (!serializeResult.ok) {
       sendError(res, 500, 'api_error', 'Failed to serialize response');
-      return false;
+      return;
     }
 
     const responseBody = JSON.stringify(serializeResult.value);
@@ -411,7 +422,6 @@ export class TranslationProxy {
       'Content-Length': Buffer.byteLength(responseBody),
     });
     res.end(responseBody);
-    return true;
   }
 
   private async handleNonStreamingRequest(
@@ -448,7 +458,13 @@ export class TranslationProxy {
 
           if (statusCode >= 400) {
             const errChunks: Buffer[] = [];
-            backendRes.on('data', (chunk: Buffer) => errChunks.push(chunk));
+            let errBytesAccum = 0;
+            backendRes.on('data', (chunk: Buffer) => {
+              if (errBytesAccum < MAX_ERR_BYTES) {
+                errChunks.push(chunk);
+                errBytesAccum += chunk.length;
+              }
+            });
             backendRes.on('end', () => {
               clearTimeout(responseTimeout);
               const errorType = mapStatusToErrorType(statusCode);
@@ -500,7 +516,13 @@ export class TranslationProxy {
     resolve: () => void,
   ): void {
     const errChunks: Buffer[] = [];
-    backendRes.on('data', (chunk: Buffer) => errChunks.push(chunk));
+    let errBytesAccum = 0;
+    backendRes.on('data', (chunk: Buffer) => {
+      if (errBytesAccum < MAX_ERR_BYTES) {
+        errChunks.push(chunk);
+        errBytesAccum += chunk.length;
+      }
+    });
     backendRes.on('end', () => {
       clearIdleTimer();
       const errorType = mapStatusToErrorType(statusCode);

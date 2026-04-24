@@ -228,11 +228,17 @@ export function resetConfigValue(key: string): ConfigWriteResult {
 // ============================================================================
 
 /**
- * Supported API translation targets.
- * Single source of truth — kept in sync with SUPPORTED_TRANSLATE_TARGETS in proxy-manager.ts.
- * Empty string is the "clear" sentinel accepted at save boundaries (CLI, MCP).
+ * Supported API translation targets as a const tuple.
+ * Single source of truth — derive TranslateTarget and all runtime arrays from this.
+ * Empty string is the "clear" sentinel accepted at save boundaries (CLI, MCP); it is
+ * NOT included here because stored config never holds an empty string.
  */
-export type TranslateTarget = 'openai';
+export const TRANSLATE_TARGETS = ['openai'] as const satisfies readonly string[];
+
+/**
+ * Union type derived from TRANSLATE_TARGETS — no manual sync required.
+ */
+export type TranslateTarget = (typeof TRANSLATE_TARGETS)[number];
 
 export interface AgentConfig {
   readonly apiKey?: string;
@@ -255,7 +261,13 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : undefined,
     baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : undefined,
     model: typeof record.model === 'string' ? record.model : undefined,
-    translate: record.translate === 'openai' ? (record.translate as TranslateTarget) : undefined,
+    // DECISION: Intentional early narrowing — only accept known TranslateTarget values.
+    // Unknown stored values (e.g. from a downgraded install) are silently dropped here
+    // rather than propagating an invalid string downstream. Low practical risk: only
+    // 'openai' has ever been functional.
+    translate: (TRANSLATE_TARGETS as readonly string[]).includes(record.translate as string)
+      ? (record.translate as TranslateTarget)
+      : undefined,
   };
 }
 
