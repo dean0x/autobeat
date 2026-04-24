@@ -60,6 +60,13 @@ interface AnthropicErrorResponse {
   };
 }
 
+/** Callbacks shared by the three streaming response-path handlers. */
+interface StreamCallbackContext {
+  resetIdleTimer: () => void;
+  clearIdleTimer: () => void;
+  resolve: () => void;
+}
+
 function buildErrorResponse(type: string, message: string): AnthropicErrorResponse {
   return { type: 'error', error: { type, message } };
 }
@@ -424,6 +431,45 @@ export class TranslationProxy {
     res.end(responseBody);
   }
 
+  /** Handle the backend HTTP response for a non-streaming request. */
+  private handleBackendNonStreamingResponse(
+    backendRes: http.IncomingMessage,
+    res: http.ServerResponse,
+    middlewares: readonly TranslationMiddleware[],
+    responseTimeout: ReturnType<typeof setTimeout>,
+    resolve: () => void,
+  ): void {
+    const statusCode = backendRes.statusCode ?? 500;
+
+    if (statusCode >= 400) {
+      const errChunks: Buffer[] = [];
+      let errBytesAccum = 0;
+      backendRes.on('data', (chunk: Buffer) => {
+        if (errBytesAccum < MAX_ERR_BYTES) {
+          errChunks.push(chunk);
+          errBytesAccum += chunk.length;
+        }
+      });
+      backendRes.on('end', () => {
+        clearTimeout(responseTimeout);
+        const errorType = mapStatusToErrorType(statusCode);
+        const backendMessage = extractBackendErrorMessage(errChunks);
+        this.config.logger.debug('Backend error response', { statusCode, backendMessage });
+        sendError(res, statusCode, errorType, backendMessage);
+        resolve();
+      });
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    backendRes.on('data', (chunk: Buffer) => chunks.push(chunk));
+    backendRes.on('end', () => {
+      clearTimeout(responseTimeout);
+      this.processNonStreamingResponse(Buffer.concat(chunks).toString(), res, middlewares);
+      resolve();
+    });
+  }
+
   private async handleNonStreamingRequest(
     inboundReq: http.IncomingMessage,
     res: http.ServerResponse,
@@ -453,36 +499,7 @@ export class TranslationProxy {
         },
         (backendRes) => {
           clearTimeout(connectTimeout);
-
-          const statusCode = backendRes.statusCode ?? 500;
-
-          if (statusCode >= 400) {
-            const errChunks: Buffer[] = [];
-            let errBytesAccum = 0;
-            backendRes.on('data', (chunk: Buffer) => {
-              if (errBytesAccum < MAX_ERR_BYTES) {
-                errChunks.push(chunk);
-                errBytesAccum += chunk.length;
-              }
-            });
-            backendRes.on('end', () => {
-              clearTimeout(responseTimeout);
-              const errorType = mapStatusToErrorType(statusCode);
-              const backendMessage = extractBackendErrorMessage(errChunks);
-              this.config.logger.debug('Backend error response', { statusCode, backendMessage });
-              sendError(res, statusCode, errorType, backendMessage);
-              resolve();
-            });
-            return;
-          }
-
-          const chunks: Buffer[] = [];
-          backendRes.on('data', (chunk: Buffer) => chunks.push(chunk));
-          backendRes.on('end', () => {
-            clearTimeout(responseTimeout);
-            this.processNonStreamingResponse(Buffer.concat(chunks).toString(), res, middlewares);
-            resolve();
-          });
+          this.handleBackendNonStreamingResponse(backendRes, res, middlewares, responseTimeout, resolve);
         },
       );
 
@@ -512,8 +529,7 @@ export class TranslationProxy {
     backendRes: http.IncomingMessage,
     res: http.ServerResponse,
     statusCode: number,
-    clearIdleTimer: () => void,
-    resolve: () => void,
+    ctx: StreamCallbackContext,
   ): void {
     const errChunks: Buffer[] = [];
     let errBytesAccum = 0;
@@ -524,14 +540,14 @@ export class TranslationProxy {
       }
     });
     backendRes.on('end', () => {
-      clearIdleTimer();
+      ctx.clearIdleTimer();
       const errorType = mapStatusToErrorType(statusCode);
       const backendMessage = extractBackendErrorMessage(errChunks);
       this.config.logger.debug('Backend error response', { statusCode, backendMessage });
       if (!res.headersSent) {
         sendError(res, statusCode, errorType, backendMessage);
       }
-      resolve();
+      ctx.resolve();
     });
   }
 
@@ -543,17 +559,16 @@ export class TranslationProxy {
     backendRes: http.IncomingMessage,
     res: http.ServerResponse,
     middlewares: readonly TranslationMiddleware[],
-    clearIdleTimer: () => void,
-    resolve: () => void,
+    ctx: StreamCallbackContext,
   ): void {
     const chunks: Buffer[] = [];
     backendRes.on('data', (chunk: Buffer) => chunks.push(chunk));
     backendRes.on('end', () => {
-      clearIdleTimer();
+      ctx.clearIdleTimer();
       if (!res.headersSent) {
         this.processNonStreamingResponse(Buffer.concat(chunks).toString(), res, middlewares);
       }
-      resolve();
+      ctx.resolve();
     });
   }
 
@@ -563,9 +578,7 @@ export class TranslationProxy {
     res: http.ServerResponse,
     translator: StreamTranslator,
     lineBuffer: LineBuffer,
-    resetIdleTimer: () => void,
-    clearIdleTimer: () => void,
-    resolve: () => void,
+    ctx: StreamCallbackContext,
   ): void {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -573,10 +586,10 @@ export class TranslationProxy {
       Connection: 'keep-alive',
     });
 
-    resetIdleTimer();
+    ctx.resetIdleTimer();
 
     backendRes.on('data', (chunk: Buffer) => {
-      resetIdleTimer();
+      ctx.resetIdleTimer();
       const lines = lineBuffer.feed(chunk.toString('utf-8'));
 
       // Collect all translated SSE lines from this backend chunk and write once
@@ -593,7 +606,7 @@ export class TranslationProxy {
     });
 
     backendRes.on('end', () => {
-      clearIdleTimer();
+      ctx.clearIdleTimer();
 
       // Flush any lines still buffered in the translator
       const flushLines = translator.flush();
@@ -602,13 +615,13 @@ export class TranslationProxy {
       }
 
       res.end();
-      resolve();
+      ctx.resolve();
     });
 
     backendRes.on('error', () => {
-      clearIdleTimer();
+      ctx.clearIdleTimer();
       res.end();
-      resolve();
+      ctx.resolve();
     });
   }
 
@@ -658,9 +671,10 @@ export class TranslationProxy {
 
           const statusCode = backendRes.statusCode ?? 500;
           const contentType = backendRes.headers['content-type'] ?? '';
+          const ctx: StreamCallbackContext = { resetIdleTimer, clearIdleTimer, resolve };
 
           if (statusCode >= 400) {
-            this.handleStreamingError(backendRes, res, statusCode, clearIdleTimer, resolve);
+            this.handleStreamingError(backendRes, res, statusCode, ctx);
             return;
           }
 
@@ -668,11 +682,11 @@ export class TranslationProxy {
           const isJsonFallback = contentType.includes('application/json') && !contentType.includes('event-stream');
 
           if (isJsonFallback) {
-            this.handleJsonFallback(backendRes, res, middlewares, clearIdleTimer, resolve);
+            this.handleJsonFallback(backendRes, res, middlewares, ctx);
             return;
           }
 
-          this.handleSseStream(backendRes, res, translator, lineBuffer, resetIdleTimer, clearIdleTimer, resolve);
+          this.handleSseStream(backendRes, res, translator, lineBuffer, ctx);
         },
       );
 
