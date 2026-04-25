@@ -13,12 +13,20 @@ import type { AgentConfig, Configuration } from '../../../../src/core/configurat
 import { ProxiedClaudeAdapter } from '../../../../src/translation/proxy/proxied-claude-adapter.js';
 
 /**
- * Expose protected resolveBaseUrl for testing.
+ * Expose protected methods for testing.
  * DECISION: Subclass exposure chosen over child_process mocking due to isolate:false constraint.
  */
 class TestableProxiedClaudeAdapter extends ProxiedClaudeAdapter {
   testResolveBaseUrl(agentConfig: AgentConfig): Record<string, string> {
     return this.resolveBaseUrl(agentConfig);
+  }
+
+  testResolveModel(agentConfig: AgentConfig, taskModel?: string): string | undefined {
+    return this.resolveModel(agentConfig, taskModel);
+  }
+
+  testResolveAuth(agentConfig: AgentConfig) {
+    return this.resolveAuth(agentConfig);
   }
 }
 
@@ -78,5 +86,40 @@ describe('ProxiedClaudeAdapter', () => {
     const adapter2 = new TestableProxiedClaudeAdapter(testConfig, 54321);
     expect(adapter1.testResolveBaseUrl({}).ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:3000');
     expect(adapter2.testResolveBaseUrl({}).ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:54321');
+  });
+
+  it('resolveModel suppresses config model — proxy handles model mapping', () => {
+    const adapter = new TestableProxiedClaudeAdapter(testConfig, 9876);
+    expect(adapter.testResolveModel({ model: 'deepseek-ai/deepseek-r1' })).toBeUndefined();
+  });
+
+  it('resolveModel preserves per-task model override', () => {
+    const adapter = new TestableProxiedClaudeAdapter(testConfig, 9876);
+    expect(adapter.testResolveModel({ model: 'deepseek-ai/deepseek-r1' }, 'claude-sonnet-4-20250514')).toBe(
+      'claude-sonnet-4-20250514',
+    );
+  });
+
+  it('resolveModel returns undefined when no config model and no task model', () => {
+    const adapter = new TestableProxiedClaudeAdapter(testConfig, 9876);
+    expect(adapter.testResolveModel({})).toBeUndefined();
+  });
+
+  it('resolveAuth suppresses backend API key — proxy handles auth', () => {
+    const adapter = new TestableProxiedClaudeAdapter(testConfig, 9876);
+    const result = adapter.testResolveAuth({ apiKey: 'nvapi-some-nvidia-key' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.injectedEnv).toEqual({});
+    }
+  });
+
+  it('resolveAuth returns empty env even with no config key', () => {
+    const adapter = new TestableProxiedClaudeAdapter(testConfig, 9876);
+    const result = adapter.testResolveAuth({});
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.injectedEnv).toEqual({});
+    }
   });
 });

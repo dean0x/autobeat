@@ -736,6 +736,90 @@ describe('TranslationProxy', () => {
       expect(body.error.type).toBe('invalid_request_error');
     });
 
+    it('responds 200 to HEAD / health check', async () => {
+      const { server: backend, port: backendPort } = await makeBackend((_req, res) => {
+        res.writeHead(200);
+        res.end('{}');
+      });
+      backendServers.push(backend);
+
+      const logger = makeLogger();
+      const proxy = makeProxy(backendPort, logger);
+      proxies.push(proxy);
+
+      const startResult = await proxy.start();
+      if (!startResult.ok) return;
+      const { port } = startResult.value;
+
+      const response = await new Promise<{ statusCode: number }>((resolve, reject) => {
+        const req = http.request({ hostname: '127.0.0.1', port, path: '/', method: 'HEAD' }, (res) => {
+          resolve({ statusCode: res.statusCode ?? 0 });
+        });
+        req.on('error', reject);
+        req.end();
+      });
+
+      expect(response.statusCode).toBe(200);
+    });
+
+    it('routes /v1/messages?beta=true to messages handler (strips query string)', async () => {
+      const { server: backend, port: backendPort } = await makeBackend((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'chatcmpl-test',
+            object: 'chat.completion',
+            choices: [{ index: 0, message: { role: 'assistant', content: 'Hello' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
+          }),
+        );
+      });
+      backendServers.push(backend);
+
+      const logger = makeLogger();
+      const proxy = makeProxy(backendPort, logger);
+      proxies.push(proxy);
+
+      const startResult = await proxy.start();
+      if (!startResult.ok) return;
+      const { port } = startResult.value;
+
+      const body = JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+      });
+
+      const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+        const req = http.request(
+          {
+            hostname: '127.0.0.1',
+            port,
+            path: '/v1/messages?beta=true',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'anthropic-version': '2023-06-01',
+              'Content-Length': Buffer.byteLength(body),
+            },
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+            res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
+          },
+        );
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+      });
+
+      expect(response.statusCode).toBe(200);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.type).toBe('message');
+      expect(parsed.content[0].text).toBe('Hello');
+    });
+
     it('returns 404 for unknown endpoints', async () => {
       const { server: backend, port: backendPort } = await makeBackend((_req, res) => {
         res.writeHead(200);

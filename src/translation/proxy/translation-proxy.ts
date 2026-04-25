@@ -275,8 +275,18 @@ export class TranslationProxy {
   }
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const url = req.url ?? '';
+    const rawUrl = req.url ?? '';
     const method = req.method ?? 'GET';
+
+    // Strip query string for route matching (Claude Code sends ?beta=true)
+    const url = rawUrl.split('?')[0];
+
+    // Health check — Claude Code sends HEAD / before first request
+    if (method === 'HEAD' && url === '/') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
 
     // Only handle POST
     if (method !== 'POST') {
@@ -297,7 +307,7 @@ export class TranslationProxy {
     }
 
     // Sanitize URL: keep only printable ASCII, cap at 200 chars to prevent log injection
-    const safeUrl = url.replace(/[^\x20-\x7E]/g, '').substring(0, 200);
+    const safeUrl = rawUrl.replace(/[^\x20-\x7E]/g, '').substring(0, 200);
     sendError(res, 404, 'invalid_request_error', `Unknown endpoint: ${safeUrl}`);
   }
 
