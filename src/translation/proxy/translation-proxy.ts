@@ -432,7 +432,16 @@ export class TranslationProxy {
     res.end(responseBody);
   }
 
-  /** Handle the backend HTTP response for a non-streaming request. */
+  /**
+   * Handle the backend HTTP response for a non-streaming request.
+   *
+   * DECISION: Non-streaming uses raw `responseTimeout` + `resolve` instead of
+   * `StreamCallbackContext` because non-streaming has no idle timer — only a single
+   * response timeout that is cleared on completion. `StreamCallbackContext`'s
+   * `resetIdleTimer`/`clearIdleTimer` are meaningless here; including them would
+   * force callers to supply no-op implementations and mislead readers about the
+   * lifecycle of this handler.
+   */
   private handleBackendNonStreamingResponse(
     backendRes: http.IncomingMessage,
     res: http.ServerResponse,
