@@ -1,6 +1,6 @@
 import pc from 'picocolors';
-import { stdout } from '../ui.js';
 import { VERSION } from '../../generated/version.js';
+import { stdout } from '../ui.js';
 
 // Help writes to stdout (Unix convention), so styling must check stdout TTY — not stderr
 const isStdoutTTY = process.stdout.isTTY === true;

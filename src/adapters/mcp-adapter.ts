@@ -5,7 +5,6 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { z } from 'zod';
-import { VERSION } from '../generated/version.js';
 import {
   AGENT_DESCRIPTIONS,
   AGENT_PROVIDERS,
@@ -46,6 +45,7 @@ import {
 import { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager } from '../core/interfaces.js';
 import { scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
 import { match } from '../core/result.js';
+import { VERSION } from '../generated/version.js';
 import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
 import { probeUrl, type UrlProbeResult } from '../utils/url-probe.js';
 import { validatePath } from '../utils/validation.js';

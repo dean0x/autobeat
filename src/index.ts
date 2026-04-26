@@ -5,11 +5,11 @@
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { VERSION } from './generated/version.js';
 import { MCPAdapter } from './adapters/mcp-adapter.js';
 import { bootstrap } from './bootstrap.js';
 import { Container } from './core/container.js';
 import { Logger, WorkerPool } from './core/interfaces.js';
+import { VERSION } from './generated/version.js';
 import { ProxyManager } from './translation/proxy/proxy-manager.js';
 
 // Handle errors gracefully

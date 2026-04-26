@@ -5,7 +5,6 @@ process.title = 'beat-cli';
 
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { VERSION } from './generated/version.js';
 import {
   agentsConfigReset,
   agentsConfigSet,
@@ -31,6 +30,7 @@ import { handleScheduleCommand } from './cli/commands/schedule.js';
 import { getTaskStatus } from './cli/commands/status.js';
 import * as ui from './cli/ui.js';
 import { AGENT_PROVIDERS, isAgentProvider } from './core/agents.js';
+import { VERSION } from './generated/version.js';
 import { validateBufferSize, validatePath, validateTimeout } from './utils/validation.js';
 
 const __filename = fileURLToPath(import.meta.url);

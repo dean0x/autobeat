@@ -13,7 +13,6 @@ import ansiEscapes from 'ansi-escapes';
 import { render } from 'ink';
 import React from 'react';
 import { bootstrap } from '../../bootstrap.js';
-import { VERSION } from '../../generated/version.js';
 import type {
   LoopRepository,
   LoopService,
@@ -28,6 +27,7 @@ import type {
   UsageRepository,
   WorkerRepository,
 } from '../../core/interfaces.js';
+import { VERSION } from '../../generated/version.js';
 import { DEFAULT_DASHBOARD_LOG_PATH, type DisposableLogger, FileLogger } from '../../implementations/file-logger.js';
 import { LogLevel } from '../../implementations/logger.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
