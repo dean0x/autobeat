@@ -156,6 +156,29 @@ export async function agentsConfigSet(
     ui.success(`${agent}.${key} saved: ${value}`);
   }
 
+  // Probe connectivity when a URL/auth/translate field is changed and non-empty
+  if ((key === 'baseUrl' || key === 'apiKey' || key === 'translate') && value !== '') {
+    const config = loadAgentConfig(agent);
+    const effectiveBaseUrl = key === 'baseUrl' ? value : config.baseUrl;
+    if (effectiveBaseUrl) {
+      // Dynamic import avoids loading network code for non-probe paths (e.g. model set)
+      const { probeUrl } = await import('../../utils/url-probe.js');
+      const effectiveApiKey = key === 'apiKey' ? value : config.apiKey;
+      const probeResult = await probeUrl(effectiveBaseUrl, {
+        apiKey: effectiveApiKey,
+        timeoutMs: 5000,
+      });
+      if (probeResult.ok) {
+        const probe = probeResult.value;
+        if (probe.severity === 'ok') {
+          ui.success(`Connectivity check passed (${probe.durationMs}ms)`);
+        } else {
+          ui.note(probe.message, 'Connectivity');
+        }
+      }
+    }
+  }
+
   // Warn when translate is set but required fields are missing
   if (key === 'translate' && value !== '') {
     const config = loadAgentConfig(agent);

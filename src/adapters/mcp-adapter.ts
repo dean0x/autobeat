@@ -47,6 +47,8 @@ import { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager
 import { scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
 import { match } from '../core/result.js';
 import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
+import { probeUrl } from '../utils/url-probe.js';
+import type { UrlProbeResult } from '../utils/url-probe.js';
 import { validatePath } from '../utils/validation.js';
 import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 
@@ -636,7 +638,7 @@ export class MCPAdapter {
       case 'InitCustomOrchestrator':
         return this.handleInitCustomOrchestrator(args);
       case 'ConfigureAgent':
-        return this.handleConfigureAgent(args);
+        return await this.handleConfigureAgent(args);
       default:
         return {
           content: [
@@ -3322,7 +3324,7 @@ export class MCPAdapter {
    * Handle ConfigureAgent tool call
    * Actions: check auth status, set API key, reset stored key
    */
-  private handleConfigureAgent(args: unknown): MCPToolResponse {
+  private async handleConfigureAgent(args: unknown): Promise<MCPToolResponse> {
     const parseResult = ConfigureAgentSchema.safeParse(args);
     if (!parseResult.success) {
       return {
@@ -3350,6 +3352,18 @@ export class MCPAdapter {
         const agentConfig = loadAgentConfig(agent);
         const status = checkAgentAuth(agent, agentConfig.apiKey);
 
+        // Probe connectivity when a baseUrl is configured
+        let connectivity: UrlProbeResult | undefined;
+        if (agentConfig.baseUrl) {
+          const probeResult = await probeUrl(agentConfig.baseUrl, {
+            apiKey: agentConfig.apiKey,
+            timeoutMs: 5000,
+          });
+          if (probeResult.ok) {
+            connectivity = probeResult.value;
+          }
+        }
+
         interface CheckPayload {
           success: boolean;
           ready: boolean;
@@ -3359,6 +3373,7 @@ export class MCPAdapter {
           baseUrl?: string;
           model?: string;
           warning?: string;
+          connectivity?: UrlProbeResult;
         }
         const checkWarning = this.getClaudeBaseUrlWarning(agent, agentConfig.baseUrl, agentConfig.apiKey);
         const checkPayload: CheckPayload = {
@@ -3369,6 +3384,7 @@ export class MCPAdapter {
           ...(agentConfig.model && { model: agentConfig.model }),
           ...(agentConfig.translate && { translate: agentConfig.translate }),
           ...(checkWarning && { warning: checkWarning }),
+          ...(connectivity !== undefined && { connectivity }),
         };
 
         return {
@@ -3490,6 +3506,19 @@ export class MCPAdapter {
           if (!effectiveApiKey) warnings.push('translate requires apiKey to be set');
           if (!currentConfig.model && !attempts.some((a) => a.key === 'model'))
             warnings.push('translate requires model to be set');
+        }
+
+        // Probe connectivity when a baseUrl-related field was changed and baseUrl is available
+        const integrationFieldChanged =
+          baseUrl !== undefined || apiKey !== undefined || translate !== undefined;
+        if (integrationFieldChanged && effectiveBaseUrl) {
+          const probeResult = await probeUrl(effectiveBaseUrl, {
+            apiKey: effectiveApiKey,
+            timeoutMs: 5000,
+          });
+          if (probeResult.ok && probeResult.value.severity !== 'ok') {
+            warnings.push(probeResult.value.message);
+          }
         }
 
         interface SetPayload {

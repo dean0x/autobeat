@@ -27,3 +27,7 @@ export {
   validatePath,
   validateTimeout,
 } from './validation.js';
+
+// URL probe utility for connectivity checks at config time
+export { probeUrl } from './url-probe.js';
+export type { UrlProbeOptions, UrlProbeResult } from './url-probe.js';
