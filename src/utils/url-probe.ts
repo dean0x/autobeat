@@ -140,8 +140,8 @@ function messageForError(error: NodeJS.ErrnoException, url: URL, timeoutMs: numb
     code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
     code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
     code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
-    code?.startsWith('ERR_TLS') ||
-    code?.startsWith('ERR_SSL')
+    code.startsWith('ERR_TLS') ||
+    code.startsWith('ERR_SSL')
   ) {
     return `TLS/SSL error connecting to ${urlStr}: ${error.message}. For self-signed certs, set NODE_TLS_REJECT_UNAUTHORIZED=0.`;
   }

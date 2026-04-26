@@ -47,8 +47,7 @@ import { Logger, LoopService, OrchestrationService, ScheduleService, TaskManager
 import { scaffoldCustomOrchestrator } from '../core/orchestrator-scaffold.js';
 import { match } from '../core/result.js';
 import { toMissedRunPolicy, toOptimizeDirection, truncatePrompt } from '../utils/format.js';
-import type { UrlProbeResult } from '../utils/url-probe.js';
-import { probeUrl } from '../utils/url-probe.js';
+import { probeUrl, type UrlProbeResult } from '../utils/url-probe.js';
 import { validatePath } from '../utils/validation.js';
 import { MCP_INSTRUCTIONS } from './mcp-instructions.js';
 
@@ -3509,8 +3508,7 @@ export class MCPAdapter {
         }
 
         // Probe connectivity when a baseUrl-related field was changed and baseUrl is available
-        const integrationFieldChanged = baseUrl !== undefined || apiKey !== undefined || translate !== undefined;
-        if (integrationFieldChanged && effectiveBaseUrl) {
+        if ((baseUrl !== undefined || apiKey !== undefined || translate !== undefined) && effectiveBaseUrl) {
           const probeResult = await probeUrl(effectiveBaseUrl, {
             apiKey: effectiveApiKey,
             timeoutMs: 5000,
@@ -3520,22 +3518,19 @@ export class MCPAdapter {
           }
         }
 
-        interface SetPayload {
-          success: boolean;
-          message: string;
-          warning?: string;
-        }
-        const responsePayload: SetPayload = {
-          success: true,
-          message: `${agent}: ${attempts.map((a) => a.label).join(', ')}`,
-          ...(warnings.length > 0 && { warning: warnings.join('. ') }),
-        };
-
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(responsePayload, null, 2),
+              text: JSON.stringify(
+                {
+                  success: true,
+                  message: `${agent}: ${attempts.map((a) => a.label).join(', ')}`,
+                  ...(warnings.length > 0 && { warning: warnings.join('. ') }),
+                },
+                null,
+                2,
+              ),
             },
           ],
         };

@@ -20,9 +20,8 @@ export {
   retryImmediate,
   retryWithBackoff,
 } from './retry.js';
-export type { UrlProbeOptions, UrlProbeResult } from './url-probe.js';
-
 // URL probe utility for connectivity checks at config time
+export type { UrlProbeOptions, UrlProbeResult } from './url-probe.js';
 export { probeUrl } from './url-probe.js';
 // Validation utilities
 export {
