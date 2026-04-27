@@ -200,6 +200,22 @@ describe('probeUrl', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('returns err for file:// URL scheme', async () => {
+    const result = await probeUrl('file:///etc/passwd');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toMatch(/unsupported.*scheme|file:/i);
+  });
+
+  it('returns err for ftp:// URL scheme', async () => {
+    const result = await probeUrl('ftp://example.com/data');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toMatch(/unsupported.*scheme|ftp:/i);
+  });
+
   it('durationMs is always > 0', async () => {
     const { server, port } = await makeServer((_req, res) => {
       res.writeHead(200);
@@ -396,6 +412,47 @@ describe('probeUrl', () => {
     await probeUrl(`http://127.0.0.1:${port}`); // no apiKey
 
     expect(requestCount).toBe(1); // only HEAD, no GET /models
+  });
+
+  it('deep probe network failure sets deepProbeWarning on the returned result', async () => {
+    // HEAD (first call) succeeds; GET /models (second call) fails with ENOTFOUND.
+    // We use a stateful requestFn counter that returns different behaviour per call.
+    let callCount = 0;
+
+    const { server, port } = await makeServer((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
+    servers.push(server);
+
+    // Real HEAD goes to the loopback server; DI requestFn intercepts only GET /models.
+    // We override requestFn to proxy the first call to the real http.request and
+    // error-inject on the second call.
+    const realRequestFn = http.request;
+    const requestFn: UrlProbeOptions['requestFn'] = (options, callback) => {
+      callCount++;
+      if (callCount === 1) {
+        // First call is HEAD — proxy to real loopback server
+        return realRequestFn(options, callback);
+      }
+      // Second call is GET /models — inject a network error
+      const req = new http.ClientRequest(`http://127.0.0.1:${port}`);
+      process.nextTick(() => {
+        req.emit('error', Object.assign(new Error('getaddrinfo ENOTFOUND models-endpoint'), { code: 'ENOTFOUND' }));
+      });
+      return req;
+    };
+
+    const result = await probeUrl(`http://127.0.0.1:${port}`, { apiKey: 'test-key', requestFn });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Base HEAD probe result is returned (200 = ok)
+    expect(result.value.severity).toBe('ok');
+    expect(result.value.statusCode).toBe(200);
+    // deepProbeWarning surfaces the GET /models network error
+    expect(result.value.deepProbeWarning).toBeDefined();
+    expect(result.value.deepProbeWarning).toMatch(/deep probe|GET \/models/i);
   });
 
   it('deep probe is skipped when base probe fails (ECONNREFUSED)', async () => {

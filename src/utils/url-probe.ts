@@ -26,6 +26,13 @@ export interface UrlProbeResult {
   readonly message: string;
   readonly severity: 'ok' | 'warning' | 'error';
   readonly durationMs: number;
+  /**
+   * Non-fatal diagnostic produced when the deep probe (GET /models) fails with
+   * a network error after the base HEAD probe succeeded. The base probe result
+   * is still returned; this field surfaces the otherwise-silent failure so
+   * callers can log or display it.
+   */
+  readonly deepProbeWarning?: string;
 }
 
 export interface UrlProbeOptions {
@@ -98,7 +105,15 @@ function httpRequest(
 
       // AbortController fires 'abort' but also emits an error on the req
       // with name='AbortError'. We treat it as a timeout.
-      const error = rawError as NodeJS.ErrnoException;
+      //
+      // Narrow to Error before accessing name/code — ErrnoException extends
+      // Error so instanceof guards both the AbortError check and the code
+      // field access in the fallback path.
+      const error: NodeJS.ErrnoException =
+        rawError instanceof Error
+          ? (rawError as NodeJS.ErrnoException)
+          : Object.assign(new Error(String(rawError)), { code: undefined });
+
       if (error.name === 'AbortError' || controller.signal.aborted) {
         const timeoutErr = Object.assign(new Error(`No response from ${url.href} after ${timeoutMs}ms`), {
           code: '__PROBE_TIMEOUT__',
@@ -118,6 +133,22 @@ function httpRequest(
 // Message builders
 // ---------------------------------------------------------------------------
 
+/**
+ * Exact TLS error codes emitted by Node.js TLS/SSL machinery.
+ * Checked before the ERR_TLS / ERR_SSL prefix guards below.
+ */
+const TLS_ERROR_CODES = new Set([
+  'CERT_HAS_EXPIRED',
+  'CERT_INVALID',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+]);
+
+function isTlsError(code: string): boolean {
+  return TLS_ERROR_CODES.has(code) || code.startsWith('ERR_TLS') || code.startsWith('ERR_SSL');
+}
+
 function messageForError(error: NodeJS.ErrnoException, url: URL, timeoutMs: number): string {
   const code = error.code ?? '';
   const urlStr = url.href;
@@ -134,69 +165,75 @@ function messageForError(error: NodeJS.ErrnoException, url: URL, timeoutMs: numb
   if (code === '__PROBE_TIMEOUT__') {
     return `No response from ${urlStr} after ${timeoutMs}ms. The server may be slow or unreachable.`;
   }
-  if (
-    code === 'CERT_HAS_EXPIRED' ||
-    code === 'CERT_INVALID' ||
-    code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
-    code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
-    code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
-    code.startsWith('ERR_TLS') ||
-    code.startsWith('ERR_SSL')
-  ) {
-    return `TLS/SSL error connecting to ${urlStr}: ${error.message}. For self-signed certs, set NODE_TLS_REJECT_UNAUTHORIZED=0.`;
+  if (isTlsError(code)) {
+    // NODE_TLS_REJECT_UNAUTHORIZED=0 disables ALL certificate verification globally —
+    // recommend NODE_EXTRA_CA_CERTS to trust a specific CA bundle instead.
+    return (
+      `TLS/SSL error connecting to ${urlStr}: ${error.message}. ` +
+      `For self-signed or private-CA certificates, set NODE_EXTRA_CA_CERTS=<path-to-ca.pem>.`
+    );
   }
 
   // Non-ErrnoException or unrecognised code — include the raw message
   return error.message;
 }
 
-function messageForStatus(
+interface StatusResult {
+  readonly message: string;
+  readonly severity: 'ok' | 'warning' | 'error';
+}
+
+/**
+ * Map an HTTP status code to a human-readable message and severity level.
+ *
+ * DESIGN: Consolidating message and severity dispatch into a single function
+ * eliminates the duplicated switch-like chains that previously existed in
+ * `messageForStatus` and `severityForStatus`, keeping the two values in sync
+ * by construction.
+ */
+function statusResult(
   statusCode: number,
   headers: http.IncomingHttpHeaders,
   url: URL,
   isDeepProbe: boolean,
-): string {
+): StatusResult {
   if (statusCode >= 200 && statusCode < 300) {
-    return isDeepProbe ? 'API endpoint is reachable and authenticated' : 'URL is reachable';
+    return {
+      message: isDeepProbe ? 'API endpoint is reachable and authenticated' : 'URL is reachable',
+      severity: 'ok',
+    };
   }
   if (statusCode === 301 || statusCode === 302) {
     const location = headers['location'] ?? '(unknown)';
-    return `URL is reachable but redirects to ${location}. Consider using the redirect target directly.`;
+    return {
+      message: `URL is reachable but redirects to ${location}. Consider using the redirect target directly.`,
+      severity: 'warning',
+    };
   }
   if (statusCode === 401) {
-    if (isDeepProbe) {
-      return `API key was rejected by ${url.hostname}. Verify your API key is correct.`;
-    }
-    return 'URL is reachable but requires authentication';
+    return isDeepProbe
+      ? { message: `API key was rejected by ${url.hostname}. Verify your API key is correct.`, severity: 'error' }
+      : { message: 'URL is reachable but requires authentication', severity: 'warning' };
   }
   if (statusCode === 403) {
-    return `API key lacks required permissions for ${url.hostname}.`;
+    return { message: `API key lacks required permissions for ${url.hostname}.`, severity: 'error' };
   }
   if (statusCode === 404) {
-    return `URL returned 404. Verify the path — expected format: https://host/v1`;
+    return { message: `URL returned 404. Verify the path — expected format: https://host/v1`, severity: 'warning' };
   }
   if (statusCode === 405) {
-    return 'URL is reachable';
+    return { message: 'URL is reachable', severity: 'ok' };
   }
   if (statusCode === 429) {
-    return 'URL is reachable but rate-limited. The server is working but throttled.';
+    return { message: 'URL is reachable but rate-limited. The server is working but throttled.', severity: 'warning' };
   }
   if (statusCode >= 500 && statusCode < 600) {
-    return `URL is reachable but server returned error (${statusCode}). The server may be starting up.`;
+    return {
+      message: `URL is reachable but server returned error (${statusCode}). The server may be starting up.`,
+      severity: 'warning',
+    };
   }
-  return `URL responded with status ${statusCode}`;
-}
-
-function severityForStatus(statusCode: number, isDeepProbe: boolean): 'ok' | 'warning' | 'error' {
-  if (statusCode >= 200 && statusCode < 300) return 'ok';
-  if (statusCode === 301 || statusCode === 302) return 'warning';
-  if (statusCode === 401) return isDeepProbe ? 'error' : 'warning';
-  if (statusCode === 403) return 'error';
-  if (statusCode === 404) return 'warning';
-  if (statusCode === 405) return 'ok';
-  if (statusCode === 429) return 'warning';
-  if (statusCode >= 500 && statusCode < 600) return 'warning';
-  return 'warning';
+  return { message: `URL responded with status ${statusCode}`, severity: 'warning' };
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +257,14 @@ export async function probeUrl(baseUrl: string, options: UrlProbeOptions = {}): 
     return err(new Error(`Invalid URL: "${baseUrl}"`));
   }
 
-  // 2. HEAD request — DNS + TCP + TLS + server existence
+  // 2. Scheme restriction — only http: and https: are valid probe targets.
+  // file://, ftp://, and other schemes cannot be probed via http.request /
+  // https.request and would silently misbehave or expose local filesystem paths.
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    return err(new Error(`Unsupported URL scheme "${parsedUrl.protocol}" — only http: and https: are allowed.`));
+  }
+
+  // 3. HEAD request — DNS + TCP + TLS + server existence
   const baseResult = await httpRequest('HEAD', parsedUrl, {}, timeoutMs, requestFn);
 
   if ('error' in baseResult) {
@@ -234,7 +278,7 @@ export async function probeUrl(baseUrl: string, options: UrlProbeOptions = {}): 
 
   const { statusCode, headers, durationMs } = baseResult;
 
-  // 3. Deep probe — GET <baseUrl>/models with Authorization header
+  // 4. Deep probe — GET <baseUrl>/models with Authorization header
   if (apiKey) {
     const modelsUrl = new URL(parsedUrl.href);
     // Append /models to pathname (preserves hostname, port, protocol)
@@ -243,25 +287,39 @@ export async function probeUrl(baseUrl: string, options: UrlProbeOptions = {}): 
     const deepResult = await httpRequest('GET', modelsUrl, { Authorization: `Bearer ${apiKey}` }, timeoutMs, requestFn);
 
     if ('error' in deepResult) {
-      // Deep probe failure — fall through to base probe result
-      // (base probe succeeded, deep probe network error is unusual; report base)
-    } else {
-      const deepCode = deepResult.statusCode;
-      const deepSeverity = severityForStatus(deepCode, true);
-      const deepMessage = messageForStatus(deepCode, deepResult.headers, parsedUrl, true);
+      // Deep probe failed with a network error after HEAD succeeded.
+      // This is unusual (HEAD worked, but GET /models did not even connect).
+      // Fall through to the base probe result, but surface a warning so
+      // callers can log or display it rather than silently discarding it.
+      const deepProbeWarning = `Deep probe (GET /models) failed: ${messageForError(deepResult.error, modelsUrl, timeoutMs)}`;
+      const { message, severity } = statusResult(statusCode, headers, parsedUrl, false);
       return ok({
-        reachable: deepSeverity !== 'error',
-        statusCode: deepCode,
-        message: deepMessage,
-        severity: deepSeverity,
-        durationMs: deepResult.durationMs,
+        reachable: severity !== 'error',
+        statusCode,
+        message,
+        severity,
+        durationMs,
+        deepProbeWarning,
       });
     }
+
+    const { message: deepMessage, severity: deepSeverity } = statusResult(
+      deepResult.statusCode,
+      deepResult.headers,
+      parsedUrl,
+      true,
+    );
+    return ok({
+      reachable: deepSeverity !== 'error',
+      statusCode: deepResult.statusCode,
+      message: deepMessage,
+      severity: deepSeverity,
+      durationMs: deepResult.durationMs,
+    });
   }
 
-  // 4. Return base probe result
-  const severity = severityForStatus(statusCode, false);
-  const message = messageForStatus(statusCode, headers, parsedUrl, false);
+  // 5. Return base probe result
+  const { message, severity } = statusResult(statusCode, headers, parsedUrl, false);
 
   return ok({
     reachable: severity !== 'error',
