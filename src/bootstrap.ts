@@ -253,7 +253,11 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
   // All logs go to stderr to keep stdout clean for MCP protocol
   logger.info('Bootstrapping Autobeat', { config });
 
-  // Register database with structured logging — eagerly verify the native module loads
+  // DECISION: Database is registered via registerValue (eager instantiation) rather than
+  // registerSingleton (lazy). Eager instantiation is intentional: it forces better-sqlite3's
+  // native module to load at bootstrap time so ABI mismatches (NODE_MODULE_VERSION errors)
+  // surface immediately with a clear remediation message. With lazy registration the error
+  // would only appear on first database access, deep inside request handling, with no context.
   try {
     const dbLogger = logger.child({ module: 'database' });
     const db = new Database(undefined, dbLogger);
@@ -271,7 +275,11 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
         ),
       );
     }
-    throw error;
+    return err(
+      new AutobeatError(ErrorCode.SYSTEM_ERROR, 'Failed to initialise database', {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 
   // Register repositories
@@ -409,6 +417,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
       if (proxyResult.ok) {
         proxyPort = proxyResult.value.port;
         container.registerValue('proxyManager', proxyManager);
+        // Only non-secret fields logged here — proxyConfig.targetApiKey is intentionally omitted.
         logger.info('Translation proxy active', { port: proxyPort, targetBaseUrl: proxyConfig.targetBaseUrl });
       } else {
         return err(
