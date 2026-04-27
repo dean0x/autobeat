@@ -175,9 +175,27 @@ function serializeContentBlock(content: CanonicalContent): Record<string, unknow
     case 'refusal':
       return { type: 'text', text: `[Refusal] ${content.refusal}` };
 
-    default:
-      // Fallback for content types not representable in Anthropic wire format (image, document, json, tool_result)
+    // image, document, json, and tool_result have no direct Anthropic wire equivalent
+    // when serializing a response back to the Anthropic client. Emit empty text as a
+    // safe fallback so the response remains structurally valid.
+    case 'image':
       return { type: 'text', text: '' };
+
+    case 'document':
+      return { type: 'text', text: '' };
+
+    case 'json':
+      return { type: 'text', text: '' };
+
+    case 'tool_result':
+      return { type: 'text', text: '' };
+
+    default: {
+      // Exhaustive check — compiler will error here if a new CanonicalContent
+      // discriminant is added without a corresponding case in this switch.
+      const _exhaustive: never = content;
+      return { type: 'text', text: '' };
+    }
   }
 }
 

@@ -197,7 +197,8 @@ function parseOpenAIUsage(usage: Record<string, unknown>): CanonicalUsage {
 interface ActiveToolCall {
   id: string;
   name: string;
-  argumentsAccumulator: string;
+  /** Chunks accumulated via array push; joined at close time to avoid O(n²) string concat. */
+  argumentsAccumulator: string[];
   started: boolean;
 }
 
@@ -326,7 +327,7 @@ class OpenAIStreamParser implements StreamParser {
     const tc = this.activeToolCalls.get(this.lastActiveToolIndex);
     if (!tc?.started) return [];
     const events: CanonicalStreamEvent[] = [
-      { type: 'tool_call_stop', index: this.lastActiveToolIndex, arguments: tc.argumentsAccumulator },
+      { type: 'tool_call_stop', index: this.lastActiveToolIndex, arguments: tc.argumentsAccumulator.join('') },
     ];
     this.currentContentIndex++;
     this.lastActiveToolIndex = -1;
@@ -350,7 +351,7 @@ class OpenAIStreamParser implements StreamParser {
         const existing = this.activeToolCalls.get(canonicalIndex);
         if (!existing) continue;
         if (tcArgs) {
-          existing.argumentsAccumulator += tcArgs;
+          existing.argumentsAccumulator.push(tcArgs);
           events.push({ type: 'tool_call_delta', index: canonicalIndex, arguments: tcArgs });
         }
       } else {
@@ -378,7 +379,7 @@ class OpenAIStreamParser implements StreamParser {
     tcArgs: string | undefined,
   ): CanonicalStreamEvent[] {
     if (tcArgs) {
-      pending.argumentsAccumulator += tcArgs;
+      pending.argumentsAccumulator.push(tcArgs);
     }
     if (tcId && tcName) {
       pending.id = tcId;
@@ -415,7 +416,7 @@ class OpenAIStreamParser implements StreamParser {
       const toolCallData: ActiveToolCall = {
         id: tcId,
         name: tcName,
-        argumentsAccumulator: tcArgs ?? '',
+        argumentsAccumulator: tcArgs ? [tcArgs] : [],
         started: true,
       };
       this.activeToolCalls.set(this.currentContentIndex, toolCallData);
@@ -435,7 +436,7 @@ class OpenAIStreamParser implements StreamParser {
     this.pendingToolCalls.set(tcIndex, {
       id: '',
       name: '',
-      argumentsAccumulator: tcArgs ?? '',
+      argumentsAccumulator: tcArgs ? [tcArgs] : [],
       started: false,
     });
     return [];
@@ -456,7 +457,7 @@ class OpenAIStreamParser implements StreamParser {
         events.push({
           type: 'tool_call_stop',
           index: blockIndex,
-          arguments: tc.argumentsAccumulator,
+          arguments: tc.argumentsAccumulator.join(''),
         });
         this.currentContentIndex++;
       }
