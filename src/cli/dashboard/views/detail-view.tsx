@@ -6,6 +6,7 @@
 
 import { Box, Text } from 'ink';
 import React from 'react';
+import type { TaskId } from '../../../core/domain.js';
 import type { DashboardData, PanelId } from '../types.js';
 import { LoopDetail } from './loop-detail.js';
 import { OrchestrationDetail } from './orchestration-detail.js';
@@ -65,7 +66,7 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
             : undefined;
         // Resolve dependent refs — tasks whose dependsOn list includes this task's ID
         const dependents = data?.tasks
-          .filter((t) => t.dependsOn?.includes(entityId))
+          .filter((t) => t.dependsOn?.includes(entityId as TaskId))
           .map((t) => ({ taskId: t.id, status: t.status }));
         // TODO(Phase C): usage data requires a dedicated TaskUsage lookup by taskId —
         // DashboardData does not carry per-task usage; fetch from UsageRepository when
