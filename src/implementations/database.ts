@@ -978,13 +978,13 @@ export class Database implements TransactionRunner {
               completed_at INTEGER
             )
           `);
-          db.exec(`CREATE INDEX idx_pipelines_status ON pipelines(status)`);
-          db.exec(`CREATE INDEX idx_pipelines_schedule_id ON pipelines(schedule_id)`);
-          db.exec(`CREATE INDEX idx_pipelines_loop_id ON pipelines(loop_id)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_status ON pipelines(status)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_schedule_id ON pipelines(schedule_id)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_loop_id ON pipelines(loop_id)`);
           db.exec(
-            `CREATE INDEX idx_pipelines_orchestrator_id ON pipelines(orchestrator_id) WHERE orchestrator_id IS NOT NULL`,
+            `CREATE INDEX IF NOT EXISTS idx_pipelines_orchestrator_id ON pipelines(orchestrator_id) WHERE orchestrator_id IS NOT NULL`,
           );
-          db.exec(`CREATE INDEX idx_pipelines_updated_at ON pipelines(updated_at)`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_pipelines_updated_at ON pipelines(updated_at)`);
         },
       },
     ];

@@ -350,6 +350,7 @@ const ListPipelinesSchema = z.object({
 const CancelPipelineSchema = z.object({
   pipelineId: z.string().describe('Pipeline entity ID to cancel'),
   reason: z.string().optional().describe('Reason for cancellation'),
+  cancelTasks: z.boolean().optional().default(true).describe('Also cancel in-flight step tasks'),
 });
 
 /**
@@ -1693,7 +1694,8 @@ export class MCPAdapter {
             },
             {
               name: 'CancelPipeline',
-              description: 'Cancel an active pipeline entity. The pipeline status transitions to cancelled.',
+              description:
+                'Cancel an active pipeline entity. The pipeline status transitions to cancelled. By default, also cancels any in-flight step tasks.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -1704,6 +1706,11 @@ export class MCPAdapter {
                   reason: {
                     type: 'string',
                     description: 'Reason for cancellation',
+                  },
+                  cancelTasks: {
+                    type: 'boolean',
+                    description: 'Also cancel in-flight step tasks (default: true)',
+                    default: true,
                   },
                 },
                 required: ['pipelineId'],
@@ -3640,7 +3647,8 @@ export class MCPAdapter {
   }
 
   /**
-   * Handle PipelineStatus tool call — retrieve a pipeline entity by ID
+   * Handle PipelineStatus tool call — retrieve a pipeline entity by ID.
+   * Resolves each step's taskId to include task status and duration in the response.
    */
   private async handlePipelineStatus(args: unknown): Promise<MCPToolResponse> {
     const parseResult = PipelineStatusSchema.safeParse(args);
@@ -3655,44 +3663,62 @@ export class MCPAdapter {
     const { pipelineId } = parseResult.data;
     const result = await this.pipelineRepository.findById(PipelineId(pipelineId));
 
-    return match(result, {
-      ok: (pipeline) => {
-        if (!pipeline) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ found: false, pipelineId }, null, 2) }],
-          };
-        }
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(
-                {
-                  pipelineId: pipeline.id,
-                  status: pipeline.status,
-                  stepCount: pipeline.steps.length,
-                  steps: pipeline.steps.map((s, i) => ({
-                    index: s.index,
-                    prompt: truncatePrompt(s.prompt, 80),
-                    taskId: pipeline.stepTaskIds[i] ?? null,
-                  })),
-                  priority: pipeline.priority ?? null,
-                  createdAt: new Date(pipeline.createdAt).toISOString(),
-                  updatedAt: new Date(pipeline.updatedAt).toISOString(),
-                  completedAt: pipeline.completedAt ? new Date(pipeline.completedAt).toISOString() : null,
-                },
-                null,
-                2,
-              ),
-            },
-          ],
-        };
-      },
-      err: (error) => ({
-        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }, null, 2) }],
+    if (!result.ok) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ success: false, error: result.error.message }, null, 2) }],
         isError: true,
+      };
+    }
+
+    const pipeline = result.value;
+    if (!pipeline) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ found: false, pipelineId }, null, 2) }],
+      };
+    }
+
+    // Resolve each step's taskId to include task status and duration
+    const steps = await Promise.all(
+      pipeline.steps.map(async (s, i) => {
+        const taskId = pipeline.stepTaskIds[i] ?? null;
+        const base = { index: s.index, prompt: truncatePrompt(s.prompt, 80), taskId };
+        if (taskId === null) return { ...base, taskStatus: null, taskDuration: null, agent: null };
+
+        const taskResult = await this.taskManager.getStatus(taskId);
+        if (!taskResult.ok) return { ...base, taskStatus: null, taskDuration: null, agent: null };
+
+        const task = taskResult.value as Task;
+        const duration = task.completedAt != null ? task.completedAt - task.createdAt : Date.now() - task.createdAt;
+        return {
+          ...base,
+          taskStatus: task.status,
+          taskDuration: duration,
+          agent: task.agent ?? null,
+        };
       }),
-    });
+    );
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              pipelineId: pipeline.id,
+              status: pipeline.status,
+              stepCount: pipeline.steps.length,
+              steps,
+              priority: pipeline.priority ?? null,
+              createdAt: new Date(pipeline.createdAt).toISOString(),
+              updatedAt: new Date(pipeline.updatedAt).toISOString(),
+              completedAt: pipeline.completedAt ? new Date(pipeline.completedAt).toISOString() : null,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
   }
 
   /**
