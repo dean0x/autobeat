@@ -22,8 +22,6 @@ const INITIAL_NAV: NavState = {
   selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
-  activityFocused: false,
-  activitySelectedIndex: 0,
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
 };
@@ -101,12 +99,12 @@ describe('UPDATE_NAV', () => {
   });
 
   it('updater receives current nav state (not stale)', () => {
-    const state = makeState({ nav: { ...INITIAL_NAV, activityFocused: true } });
+    const state = makeState({ nav: { ...INITIAL_NAV, focusedPanel: 'loops' } });
     const next = dashboardReducer(state, {
       type: 'UPDATE_NAV',
-      updater: (prev) => ({ ...prev, activityFocused: false }),
+      updater: (prev) => ({ ...prev, focusedPanel: 'tasks' }),
     });
-    expect(next.nav.activityFocused).toBe(false);
+    expect(next.nav.focusedPanel).toBe('tasks');
   });
 });
 

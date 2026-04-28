@@ -11,7 +11,6 @@
 
 import { Box, useApp } from 'ink';
 import React, { useCallback, useEffect, useReducer } from 'react';
-import type { ActivityEntry } from '../../core/domain.js';
 import type { OutputRepository, ResourceMonitor } from '../../core/interfaces.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
 import { Footer } from './components/footer.js';
@@ -19,7 +18,6 @@ import { Header } from './components/header.js';
 import { computeMetricsLayout, computeWorkspaceLayout } from './layout.js';
 import { type DashboardState, dashboardReducer } from './nav-reducer.js';
 import type { DashboardMutationContext, NavState, ViewState } from './types.js';
-import { openDetail } from './types.js';
 import { useDashboardData } from './use-dashboard-data.js';
 import { useKeyboard } from './use-keyboard.js';
 import { useResourceMetrics } from './use-resource-metrics.js';
@@ -56,8 +54,6 @@ const INITIAL_NAV: NavState = {
   selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
-  activityFocused: false,
-  activitySelectedIndex: 0,
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
 };
@@ -160,33 +156,6 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     setWorkspaceNav,
   });
 
-  /**
-   * Activity row selection — map ActivityEntry kind to detail entityType and open.
-   * Phase E: wires the stub in MetricsView.ActivityPanel.onSelect.
-   */
-  const handleActivitySelect = useCallback(
-    (entry: ActivityEntry) => {
-      switch (entry.kind) {
-        case 'task':
-          setView(openDetail('tasks', entry.entityId as never, 'main'));
-          break;
-        case 'loop':
-          setView(openDetail('loops', entry.entityId as never, 'main'));
-          break;
-        case 'orchestration':
-          setView(openDetail('orchestrations', entry.entityId as never, 'main'));
-          break;
-        case 'schedule':
-          setView(openDetail('schedules', entry.entityId as never, 'main'));
-          break;
-        case 'pipeline':
-          setView(openDetail('pipelines', entry.entityId as never, 'main'));
-          break;
-      }
-    },
-    [setView],
-  );
-
   // View dispatcher
   const renderView = (): React.ReactNode => {
     if (view.kind === 'main') {
@@ -197,7 +166,6 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
           nav={nav}
           resourceMetrics={resourceMetrics}
           resourceError={resourceError}
-          onActivitySelect={handleActivitySelect}
         />
       );
     }

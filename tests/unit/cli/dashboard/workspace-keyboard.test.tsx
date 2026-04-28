@@ -52,8 +52,6 @@ const INITIAL_NAV: NavState = {
   selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
-  activityFocused: false,
-  activitySelectedIndex: 0,
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
 };
@@ -156,7 +154,20 @@ describe('useKeyboard — global v/m/w view-switch keys', () => {
 
   it('"w" from main jumps to workspace when orchestrations exist', async () => {
     const data = makeWorkspaceDashboardData({
-      orchestrations: [{ id: 'orch-1', goal: 'test', status: 'running', agent: 'claude', stateFilePath: '/tmp/s', workingDirectory: '/tmp', maxDepth: 3, maxWorkers: 2, createdAt: Date.now(), updatedAt: Date.now() } as never],
+      orchestrations: [
+        {
+          id: 'orch-1',
+          goal: 'test',
+          status: 'running',
+          agent: 'claude',
+          stateFilePath: '/tmp/s',
+          workingDirectory: '/tmp',
+          maxDepth: 3,
+          maxWorkers: 2,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        } as never,
+      ],
     });
     const { lastFrame, stdin } = render(<WorkspaceWrapper initialView={{ kind: 'main' }} initialData={data} />);
     await press(stdin, 'w');

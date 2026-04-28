@@ -34,7 +34,7 @@ function formatTime(epochMs: number): string {
  * Matches entity-browser-panel column conventions.
  */
 const COL_TIME_W = 5; // 'HH:MM'
-const COL_KIND_W = 7; // 'task   '|'loop   '|'orch   '|'sched  '|'pipe   '
+const COL_KIND_W = 14; // 'orchestration '|'schedule      '|'pipeline      '
 const COL_ID_W = 13; // shortId output (12 chars + 1 gap)
 const COL_STATUS_W = 11; // 'completed  '|'running    '|'failed     '
 
@@ -45,11 +45,11 @@ function kindLabel(kind: ActivityEntry['kind']): string {
     case 'loop':
       return 'loop';
     case 'orchestration':
-      return 'orch';
+      return 'orchestration';
     case 'schedule':
-      return 'sched';
+      return 'schedule';
     case 'pipeline':
-      return 'pipe';
+      return 'pipeline';
   }
 }
 

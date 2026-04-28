@@ -68,7 +68,7 @@ describe('ActivityPanel', () => {
       const { lastFrame } = render(
         <ActivityPanel activityFeed={[entry]} selectedIndex={0} scrollOffset={0} onSelect={vi.fn()} focused={false} />,
       );
-      expect(lastFrame()).toContain('orch');
+      expect(lastFrame()).toContain('orchestration');
     });
 
     it('renders a schedule entry', () => {
@@ -76,7 +76,7 @@ describe('ActivityPanel', () => {
       const { lastFrame } = render(
         <ActivityPanel activityFeed={[entry]} selectedIndex={0} scrollOffset={0} onSelect={vi.fn()} focused={false} />,
       );
-      expect(lastFrame()).toContain('sched');
+      expect(lastFrame()).toContain('schedule');
     });
 
     it('renders the action verb', () => {

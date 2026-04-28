@@ -12,7 +12,7 @@
 
 import { Box, Text } from 'ink';
 import React from 'react';
-import { formatElapsed, shortId, statusColor, statusIcon } from '../format.js';
+import { formatElapsed, shortId, statusColor, statusIcon, truncateCell } from '../format.js';
 import type { Identifiable } from '../keyboard/types.js';
 import type { DashboardData, EntityCounts, PanelId } from '../types.js';
 import { FETCH_LIMIT } from '../use-dashboard-data.js';
@@ -26,7 +26,7 @@ const COL_CURSOR_W = 2;
 const COL_ICON_W = 2;
 const COL_ID_W = 13;
 const COL_STATUS_W = 11;
-const COL_ELAPSED_W = 7;
+const COL_ELAPSED_W = 9;
 const COL_AGENT_W = 8;
 
 // ============================================================================
@@ -53,7 +53,7 @@ function getEntityDisplayFields(panelId: PanelId, entityId: string, data: Dashbo
       return {
         elapsed: task.startedAt ? formatElapsed(task.startedAt) : '—',
         agent: task.agent ?? '—',
-        description: task.prompt?.slice(0, 60) ?? '',
+        description: truncateCell(task.prompt ?? '', 60),
       };
     }
     case 'loops': {
@@ -62,7 +62,7 @@ function getEntityDisplayFields(panelId: PanelId, entityId: string, data: Dashbo
       return {
         elapsed: formatElapsed(loop.createdAt),
         agent: loop.taskTemplate.agent ?? '—',
-        description: loop.taskTemplate.prompt?.slice(0, 60) ?? '',
+        description: truncateCell(loop.taskTemplate.prompt ?? '', 60),
       };
     }
     case 'schedules': {
@@ -71,7 +71,7 @@ function getEntityDisplayFields(panelId: PanelId, entityId: string, data: Dashbo
       return {
         elapsed: '—',
         agent: schedule.taskTemplate.agent ?? '—',
-        description: schedule.taskTemplate.prompt?.slice(0, 60) ?? '',
+        description: truncateCell(schedule.taskTemplate.prompt ?? '', 60),
       };
     }
     case 'orchestrations': {
@@ -80,7 +80,7 @@ function getEntityDisplayFields(panelId: PanelId, entityId: string, data: Dashbo
       return {
         elapsed: formatElapsed(orch.createdAt),
         agent: orch.agent ?? '—',
-        description: orch.goal?.slice(0, 60) ?? '',
+        description: truncateCell(orch.goal ?? '', 60),
       };
     }
     case 'pipelines': {
@@ -113,12 +113,13 @@ const EntityRow: React.FC<EntityRowProps> = React.memo(({ item, isSelected, pane
   const icon = statusIcon(item.status);
   const id = shortId(item.id);
   const color = statusColor(item.status);
-  const statusText = item.status.slice(0, COL_STATUS_W - 1);
+  const statusText = truncateCell(item.status, COL_STATUS_W - 1);
   const { elapsed, agent, description } = getEntityDisplayFields(panelId, item.id, data);
-  const agentText = agent.slice(0, COL_AGENT_W - 1);
+  const elapsedText = truncateCell(elapsed, COL_ELAPSED_W - 1);
+  const agentText = truncateCell(agent, COL_AGENT_W - 1);
 
   return (
-    <Box flexDirection="row">
+    <Box flexDirection="row" overflow="hidden">
       <Box width={COL_CURSOR_W}>
         <Text color={isSelected ? 'cyan' : undefined}>{cursor}</Text>
       </Box>
@@ -134,7 +135,7 @@ const EntityRow: React.FC<EntityRowProps> = React.memo(({ item, isSelected, pane
         <Text color={color}>{statusText}</Text>
       </Box>
       <Box width={COL_ELAPSED_W}>
-        <Text dimColor>{elapsed}</Text>
+        <Text dimColor>{elapsedText}</Text>
       </Box>
       <Box width={COL_AGENT_W}>
         <Text dimColor>{agentText}</Text>

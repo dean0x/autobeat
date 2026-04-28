@@ -43,9 +43,9 @@ describe('EntityTabs', () => {
       const frame = lastFrame() ?? '';
       expect(frame).toContain('Tasks');
       expect(frame).toContain('Loops');
-      expect(frame).toContain('Scheds');
-      expect(frame).toContain('Orchs');
-      expect(frame).toContain('Pipes');
+      expect(frame).toContain('Schedules');
+      expect(frame).toContain('Orchestrations');
+      expect(frame).toContain('Pipelines');
     });
   });
 
@@ -59,7 +59,7 @@ describe('EntityTabs', () => {
       const { lastFrame } = render(<EntityTabs activeTab="tasks" entityCounts={makeAllCounts()} focused={true} />);
       const frame = lastFrame() ?? '';
       expect(frame).not.toContain('[Loops(');
-      expect(frame).not.toContain('[Scheds(');
+      expect(frame).not.toContain('[Schedules(');
     });
 
     it('shows correct active tab for loops', () => {
@@ -69,7 +69,7 @@ describe('EntityTabs', () => {
 
     it('shows correct active tab for pipelines', () => {
       const { lastFrame } = render(<EntityTabs activeTab="pipelines" entityCounts={makeAllCounts()} focused={true} />);
-      expect(lastFrame()).toContain('[Pipes(');
+      expect(lastFrame()).toContain('[Pipelines(');
     });
   });
 

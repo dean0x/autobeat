@@ -22,9 +22,9 @@ interface EntityTabsProps {
 const TAB_LABELS: Record<PanelId, string> = {
   tasks: 'Tasks',
   loops: 'Loops',
-  schedules: 'Scheds',
-  orchestrations: 'Orchs',
-  pipelines: 'Pipes',
+  schedules: 'Schedules',
+  orchestrations: 'Orchestrations',
+  pipelines: 'Pipelines',
 };
 
 /**

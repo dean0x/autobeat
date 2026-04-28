@@ -146,26 +146,20 @@ export function openDetail(
 /**
  * Navigation state for the main panel grid
  *
- * v1.3.0 (Phase F): activityFocused and activitySelectedIndex added so the
- * activity feed in MetricsView participates in keyboard navigation.
- * Tab cycles: panel grid → activity → panel grid (wraps at 'orchestrations').
- * When activityFocused is true, ↑/↓ move activitySelectedIndex and Enter opens
- * the selected entry's detail view; Esc returns to panel focus.
- *
  * v1.3.0 (D3 drill-through): orchestrationChildSelectedTaskId and
  * orchestrationChildPage track which child row is highlighted when viewing
  * an orchestration detail, and which page of children is shown.
  * Selection is by taskId (stable across refetches).
+ *
+ * DECISION (Dashboard Layout Overhaul): activityFocused and activitySelectedIndex
+ * removed. The Activity feed is now a non-interactive tile in the top row —
+ * Tab cycles only among entity browser panels.
  */
 export interface NavState {
   readonly focusedPanel: PanelId;
   readonly selectedIndices: Record<PanelId, number>;
   readonly filters: Record<PanelId, string | null>;
   readonly scrollOffsets: Record<PanelId, number>;
-  /** Whether the Activity panel in MetricsView currently has keyboard focus */
-  readonly activityFocused: boolean;
-  /** Which row in the activity feed is currently selected (0-based) */
-  readonly activitySelectedIndex: number;
   /** TaskId of the currently highlighted child row in orchestration detail (null = first row) */
   readonly orchestrationChildSelectedTaskId: string | null;
   /** 0-based page number within the orchestration detail children list */

@@ -12,8 +12,8 @@
 
 import { Box, Text } from 'ink';
 import React from 'react';
-import type { ActivityEntry, SystemResources } from '../../../core/domain.js';
-import { ActivityPanel } from '../components/activity-panel.js';
+import type { SystemResources } from '../../../core/domain.js';
+import { ActivityTile } from '../components/activity-tile.js';
 import { CostTile } from '../components/cost-tile.js';
 import { EntityBrowserPanel } from '../components/entity-browser-panel.js';
 import { ResourcesTile } from '../components/resources-tile.js';
@@ -48,11 +48,6 @@ interface MetricsViewProps {
   readonly nav: NavState;
   readonly resourceMetrics: SystemResources | null;
   readonly resourceError: string | null;
-  /**
-   * Phase E: called when the user presses Enter on an Activity row.
-   * Opens the detail view for that entity.
-   */
-  readonly onActivitySelect?: (entry: ActivityEntry) => void;
 }
 
 // ============================================================================
@@ -60,7 +55,7 @@ interface MetricsViewProps {
 // ============================================================================
 
 export const MetricsView: React.FC<MetricsViewProps> = React.memo(
-  ({ layout, data, nav, resourceMetrics, resourceError, onActivitySelect }) => {
+  ({ layout, data, nav, resourceMetrics, resourceError }) => {
     // Degraded mode: terminal too small
     if (layout.mode === 'too-small') {
       return (
@@ -77,6 +72,8 @@ export const MetricsView: React.FC<MetricsViewProps> = React.memo(
           <Text dimColor>Narrow terminal — expand to see full dashboard</Text>
           <ResourcesTile resources={resourceMetrics} error={resourceError} />
           <CostTile costRollup24h={data?.costRollup24h ?? ZERO_USAGE} top={data?.topOrchestrationsByCost ?? []} />
+          <ThroughputTile stats={data?.throughputStats ?? ZERO_THROUGHPUT} />
+          <ActivityTile activityFeed={data?.activityFeed ?? []} maxEntries={3} />
         </Box>
       );
     }
@@ -108,34 +105,34 @@ export const MetricsView: React.FC<MetricsViewProps> = React.memo(
 
     return (
       <Box flexDirection="column" flexGrow={1}>
-        {/* Top row: tiles */}
+        {/* Top row: 4 equal-width tiles */}
         <Box flexDirection="row" height={layout.topRowHeight}>
-          <ResourcesTile resources={resourceMetrics} error={resourceError} />
-          <CostTile costRollup24h={costRollup24h} top={topOrchestrationsByCost} />
-          <ThroughputTile stats={throughputStats} />
+          <Box flexGrow={1} flexBasis={0}>
+            <ResourcesTile resources={resourceMetrics} error={resourceError} />
+          </Box>
+          <Box flexGrow={1} flexBasis={0}>
+            <CostTile costRollup24h={costRollup24h} top={topOrchestrationsByCost} />
+          </Box>
+          <Box flexGrow={1} flexBasis={0}>
+            <ThroughputTile stats={throughputStats} />
+          </Box>
+          <Box flexGrow={1} flexBasis={0}>
+            <ActivityTile activityFeed={activityFeed} maxEntries={layout.topRowHeight - 3} />
+          </Box>
         </Box>
 
-        {/* Bottom row: entity browser + activity panel */}
-        <Box flexDirection="row" flexGrow={1}>
-          <EntityBrowserPanel
-            focusedType={focusedPanel}
-            items={panelItems}
-            selectedIndex={panelSelectedIndex}
-            scrollOffset={panelScrollOffset}
-            filterStatus={panelFilter}
-            focused={!nav.activityFocused}
-            entityCounts={entityCounts}
-            viewportHeight={browserViewportHeight}
-            data={data}
-          />
-          <ActivityPanel
-            activityFeed={activityFeed}
-            selectedIndex={nav.activitySelectedIndex}
-            scrollOffset={nav.activitySelectedIndex >= 10 ? nav.activitySelectedIndex - 9 : 0}
-            focused={nav.activityFocused}
-            onSelect={(entry) => onActivitySelect?.(entry)}
-          />
-        </Box>
+        {/* Bottom row: entity browser — full width, always focused */}
+        <EntityBrowserPanel
+          focusedType={focusedPanel}
+          items={panelItems}
+          selectedIndex={panelSelectedIndex}
+          scrollOffset={panelScrollOffset}
+          filterStatus={panelFilter}
+          focused={true}
+          entityCounts={entityCounts}
+          viewportHeight={browserViewportHeight}
+          data={data}
+        />
       </Box>
     );
   },

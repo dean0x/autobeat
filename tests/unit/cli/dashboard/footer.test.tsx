@@ -22,9 +22,9 @@ describe('Footer', () => {
       expect(lastFrame()).not.toContain('Tab cycle');
     });
 
-    it('contains "Tab: activity" hint describing the new focus toggle', () => {
+    it('contains "Tab: panel" hint describing panel cycling', () => {
       const { lastFrame } = render(<Footer viewKind="main" />);
-      expect(lastFrame()).toContain('Tab: activity');
+      expect(lastFrame()).toContain('Tab: panel');
     });
 
     it('contains "1-5: panel" hint for five-panel jump keys', () => {

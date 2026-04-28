@@ -195,9 +195,9 @@ describe('EntityBrowserPanel', () => {
       // All 5 tabs must be present
       expect(frame).toContain('Tasks');
       expect(frame).toContain('Loops');
-      expect(frame).toContain('Scheds');
-      expect(frame).toContain('Orchs');
-      expect(frame).toContain('[Pipes(');
+      expect(frame).toContain('Schedules');
+      expect(frame).toContain('Orchestrations');
+      expect(frame).toContain('[Pipelines(');
     });
   });
 });

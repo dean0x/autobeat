@@ -34,8 +34,6 @@ function makeNav(): NavState {
     selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
     filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
     scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
-    activityFocused: false,
-    activitySelectedIndex: 0,
     orchestrationChildSelectedTaskId: null,
     orchestrationChildPage: 0,
   };

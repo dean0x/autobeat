@@ -151,8 +151,6 @@ const INITIAL_NAV: NavState = {
   selectedIndices: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   filters: { loops: null, tasks: null, schedules: null, orchestrations: null, pipelines: null },
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
-  activityFocused: false,
-  activitySelectedIndex: 0,
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
 };
@@ -201,8 +199,6 @@ function KeyboardWrapper({
         </Text>
       )}
       <Text>panel:{nav.focusedPanel}</Text>
-      <Text>activity-focused:{nav.activityFocused ? 'true' : 'false'}</Text>
-      <Text>activity-sel:{nav.activitySelectedIndex}</Text>
       <Text>sel-loops:{nav.selectedIndices.loops}</Text>
       <Text>sel-tasks:{nav.selectedIndices.tasks}</Text>
       <Text>filter-loops:{nav.filters.loops ?? 'null'}</Text>
@@ -253,18 +249,17 @@ describe('useKeyboard — Tab panel cycling', () => {
     expect(lastFrame()).toContain('panel:schedules');
   });
 
-  it('Tab cycles all the way around: loops → schedules → orchestrations → pipelines → activity → tasks → loops', async () => {
+  it('Tab cycles all the way around: loops → schedules → orchestrations → pipelines → tasks → loops', async () => {
     // INITIAL_NAV starts at loops. PANEL_ORDER is tasks/loops/schedules/orchestrations/pipelines.
-    // From loops (index 1): Tab → schedules(2) → orchestrations(3) → pipelines(4) → activity → tasks(0) → loops(1)
+    // From loops (index 1): Tab → schedules(2) → orchestrations(3) → pipelines(4) → tasks(0) → loops(1)
     const { lastFrame, stdin } = render(<KeyboardWrapper />);
     await press(stdin, '\t'); // → schedules
     await press(stdin, '\t'); // → orchestrations
     await press(stdin, '\t'); // → pipelines
-    await press(stdin, '\t'); // → activity (end of list)
-    expect(lastFrame()).toContain('activity-focused:true');
-    await press(stdin, '\t'); // → tasks (wrap)
+    await press(stdin, '\t'); // → tasks (wrap around)
     expect(lastFrame()).toContain('panel:tasks');
-    expect(lastFrame()).toContain('activity-focused:false');
+    await press(stdin, '\t'); // → loops
+    expect(lastFrame()).toContain('panel:loops');
   });
 
   it('Shift+Tab cycles backward from loops → tasks', async () => {
@@ -275,20 +270,12 @@ describe('useKeyboard — Tab panel cycling', () => {
     expect(lastFrame()).toContain('panel:tasks');
   });
 
-  it('Shift+Tab from tasks → activity focus', async () => {
-    // tasks is the first panel (index 0) — Shift+Tab wraps to activity
+  it('Shift+Tab from tasks → pipelines (last panel, wraps around)', async () => {
+    // tasks is the first panel (index 0) — Shift+Tab wraps to pipelines (last)
     const { lastFrame, stdin } = render(<KeyboardWrapper initialNav={{ ...INITIAL_NAV, focusedPanel: 'tasks' }} />);
     expect(lastFrame()).toContain('panel:tasks');
     await press(stdin, '\x1B[Z');
-    expect(lastFrame()).toContain('activity-focused:true');
-  });
-
-  it('Shift+Tab from activity focus → pipelines panel (last panel)', async () => {
-    const { lastFrame, stdin } = render(<KeyboardWrapper initialNav={{ ...INITIAL_NAV, activityFocused: true }} />);
-    expect(lastFrame()).toContain('activity-focused:true');
-    await press(stdin, '\x1B[Z');
     expect(lastFrame()).toContain('panel:pipelines');
-    expect(lastFrame()).toContain('activity-focused:false');
   });
 });
 
@@ -803,127 +790,6 @@ describe('useKeyboard — global v/m/w no interference in main', () => {
 });
 
 // ============================================================================
-// Activity focus mode (v1.3.0 Phase F gap fix)
-// ============================================================================
-
-describe('useKeyboard — activity focus mode', () => {
-  function makeActivityEntry(id: string, kind: 'task' | 'loop' | 'orchestration' | 'schedule') {
-    return {
-      timestamp: new Date(),
-      kind,
-      entityId: id,
-      status: 'completed',
-      action: 'completed',
-    };
-  }
-
-  it('↓ increments activitySelectedIndex when activity is focused', async () => {
-    const feed = [
-      makeActivityEntry('e1', 'task'),
-      makeActivityEntry('e2', 'loop'),
-      makeActivityEntry('e3', 'schedule'),
-    ];
-    const data = makeDashboardData({ activityFeed: feed });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
-    );
-    expect(lastFrame()).toContain('activity-sel:0');
-    await press(stdin, '\x1B[B'); // down arrow
-    expect(lastFrame()).toContain('activity-sel:1');
-  });
-
-  it('↑ decrements activitySelectedIndex but does not go below 0', async () => {
-    const feed = [makeActivityEntry('e1', 'task'), makeActivityEntry('e2', 'loop')];
-    const data = makeDashboardData({ activityFeed: feed });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper
-        initialData={data}
-        initialNav={{ ...INITIAL_NAV, activityFocused: true, activitySelectedIndex: 1 }}
-      />,
-    );
-    expect(lastFrame()).toContain('activity-sel:1');
-    await press(stdin, '\x1B[A'); // up
-    expect(lastFrame()).toContain('activity-sel:0');
-    await press(stdin, '\x1B[A'); // up again — stays at 0
-    expect(lastFrame()).toContain('activity-sel:0');
-  });
-
-  it('↓ does not exceed activity feed length', async () => {
-    const feed = [makeActivityEntry('only', 'task')];
-    const data = makeDashboardData({ activityFeed: feed });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
-    );
-    await press(stdin, '\x1B[B'); // down — already at last item
-    expect(lastFrame()).toContain('activity-sel:0');
-  });
-
-  it('Enter on task activity row dispatches openDetail with entityType tasks', async () => {
-    const feed = [makeActivityEntry('task-abc', 'task')];
-    const data = makeDashboardData({ activityFeed: feed });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
-    );
-    await press(stdin, '\r'); // Enter
-    expect(lastFrame()).toContain('view:detail');
-    expect(lastFrame()).toContain('detail-type:tasks');
-    expect(lastFrame()).toContain('detail-id:task-abc');
-  });
-
-  it('Enter on loop activity row dispatches openDetail with entityType loops', async () => {
-    const feed = [makeActivityEntry('loop-xyz', 'loop')];
-    const data = makeDashboardData({ activityFeed: feed });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
-    );
-    await press(stdin, '\r');
-    expect(lastFrame()).toContain('detail-type:loops');
-    expect(lastFrame()).toContain('detail-id:loop-xyz');
-  });
-
-  it('Enter on orchestration activity row dispatches openDetail with entityType orchestrations', async () => {
-    const feed = [makeActivityEntry('orch-qrs', 'orchestration')];
-    const data = makeDashboardData({ activityFeed: feed });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
-    );
-    await press(stdin, '\r');
-    expect(lastFrame()).toContain('detail-type:orchestrations');
-    expect(lastFrame()).toContain('detail-id:orch-qrs');
-  });
-
-  it('Enter on schedule activity row dispatches openDetail with entityType schedules', async () => {
-    const feed = [makeActivityEntry('sched-def', 'schedule')];
-    const data = makeDashboardData({ activityFeed: feed });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
-    );
-    await press(stdin, '\r');
-    expect(lastFrame()).toContain('detail-type:schedules');
-    expect(lastFrame()).toContain('detail-id:sched-def');
-  });
-
-  it('Esc from activity focus returns to default panel focus (activityFocused:false)', async () => {
-    const { lastFrame, stdin } = render(<KeyboardWrapper initialNav={{ ...INITIAL_NAV, activityFocused: true }} />);
-    expect(lastFrame()).toContain('activity-focused:true');
-    await press(stdin, '\x1B'); // Esc
-    expect(lastFrame()).toContain('activity-focused:false');
-  });
-
-  it('detail view returnTo is main when opened from activity feed', async () => {
-    const feed = [makeActivityEntry('task-ret', 'task')];
-    const data = makeDashboardData({ activityFeed: feed });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper initialData={data} initialNav={{ ...INITIAL_NAV, activityFocused: true }} />,
-    );
-    await press(stdin, '\r');
-    // After drill-in, Esc returns to main view (not workspace)
-    await press(stdin, '\x1B');
-    expect(lastFrame()).toContain('view:main');
-  });
-});
-
-// ============================================================================
 // Detail view scroll
 // ============================================================================
 
@@ -985,117 +851,6 @@ describe('useKeyboard — m/w global keys from detail view (D1)', () => {
     await press(stdin, 'v');
     // Must remain in detail — v is deliberately ignored from detail
     expect(lastFrame()).toContain('view:detail');
-  });
-});
-
-// ============================================================================
-// D2 — Metrics view c/d target the Activity row when activityFocused (plan §9)
-// ============================================================================
-
-describe('useKeyboard — activity-row cancel/delete (D2)', () => {
-  function makeActivityEntry(id: string, kind: 'task' | 'loop' | 'orchestration' | 'schedule', status = 'running') {
-    return {
-      timestamp: new Date(),
-      kind,
-      entityId: id,
-      status,
-      action: 'running',
-    };
-  }
-
-  it('"c" on activity-focused task dispatches task cancel', async () => {
-    const entry = makeActivityEntry('task-act', 'task');
-    const data = makeDashboardData({ activityFeed: [entry] });
-    const nav: NavState = { ...INITIAL_NAV, activityFocused: true, activitySelectedIndex: 0 };
-    const { mutations, cancelTask } = makeMutations();
-    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
-
-    await press(stdin, 'c');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
-
-    expect(cancelTask).toHaveBeenCalledWith('task-act', 'User cancelled via dashboard');
-  });
-
-  it('"c" on activity-focused loop dispatches loop cancel', async () => {
-    const entry = makeActivityEntry('loop-act', 'loop');
-    const data = makeDashboardData({ activityFeed: [entry] });
-    const nav: NavState = { ...INITIAL_NAV, activityFocused: true, activitySelectedIndex: 0 };
-    const { mutations, cancelLoop } = makeMutations();
-    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
-
-    await press(stdin, 'c');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
-
-    expect(cancelLoop).toHaveBeenCalledWith('loop-act', 'User cancelled via dashboard', true);
-  });
-
-  it('"c" on activity-focused orchestration dispatches orchestration cancel WITH cancelAttributedTasks:true', async () => {
-    const entry = makeActivityEntry('orch-act', 'orchestration');
-    const data = makeDashboardData({ activityFeed: [entry] });
-    const nav: NavState = { ...INITIAL_NAV, activityFocused: true, activitySelectedIndex: 0 };
-    const { mutations, cancelOrchestration } = makeMutations();
-    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
-
-    await press(stdin, 'c');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
-
-    expect(cancelOrchestration).toHaveBeenCalledWith('orch-act', 'User cancelled via dashboard', {
-      cancelAttributedTasks: true,
-    });
-  });
-
-  it('"c" on activity-focused schedule dispatches schedule cancel', async () => {
-    const entry = makeActivityEntry('sched-act', 'schedule');
-    const data = makeDashboardData({ activityFeed: [entry] });
-    const nav: NavState = { ...INITIAL_NAV, activityFocused: true, activitySelectedIndex: 0 };
-    const { mutations, cancelSchedule } = makeMutations();
-    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
-
-    await press(stdin, 'c');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
-
-    expect(cancelSchedule).toHaveBeenCalledWith('sched-act', 'User cancelled via dashboard');
-  });
-
-  it('"c" when activityFocused is false does NOT dispatch any cancel (no-op)', async () => {
-    const entry = makeActivityEntry('task-noop', 'task');
-    const data = makeDashboardData({ activityFeed: [entry] });
-    // activityFocused: false — default state on metrics view open
-    const nav: NavState = { ...INITIAL_NAV, activityFocused: false };
-    const { mutations, cancelTask } = makeMutations();
-    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
-
-    await press(stdin, 'c');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
-
-    // Must NOT dispatch to activity entry — user has not tabbed to activity feed
-    expect(cancelTask).not.toHaveBeenCalled();
-  });
-
-  it('"d" on activity-focused terminal task dispatches task delete', async () => {
-    const entry = makeActivityEntry('task-done', 'task', 'completed');
-    const data = makeDashboardData({ activityFeed: [entry] });
-    const nav: NavState = { ...INITIAL_NAV, activityFocused: true, activitySelectedIndex: 0 };
-    const { mutations, deleteTask } = makeMutations();
-    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
-
-    await press(stdin, 'd');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
-
-    expect(deleteTask).toHaveBeenCalledWith('task-done');
-  });
-
-  it('"d" on activity-focused running task is no-op (cannot delete live entity)', async () => {
-    const entry = makeActivityEntry('task-live', 'task', 'running');
-    const data = makeDashboardData({ activityFeed: [entry] });
-    const nav: NavState = { ...INITIAL_NAV, activityFocused: true, activitySelectedIndex: 0 };
-    const { mutations, deleteTask } = makeMutations();
-    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
-
-    await press(stdin, 'd');
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
-
-    expect(deleteTask).not.toHaveBeenCalled();
   });
 });
 

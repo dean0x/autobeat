@@ -11,8 +11,7 @@
  * Includes panel-jump hint (1-5) and optionally c/d mutation hints.
  */
 export function mainHints(hasMutations: boolean): string {
-  const base =
-    'v: workspace · Tab: activity · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
+  const base = 'v: workspace · Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
   if (hasMutations) {
     return `${base} · c cancel · d delete (terminal)`;
   }
