@@ -129,6 +129,14 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
                 returnTo: 'main',
               });
               break;
+            case 'pipelines':
+              setView({
+                kind: 'detail',
+                entityType: 'pipelines',
+                entityId: entry.entityId as PipelineId,
+                returnTo: 'main',
+              });
+              break;
           }
         }
       }
