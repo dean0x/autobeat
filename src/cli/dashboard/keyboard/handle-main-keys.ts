@@ -10,7 +10,7 @@
  */
 
 import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
-import { FILTER_CYCLES, PANEL_JUMP_KEYS, PANEL_ORDER } from './constants.js';
+import { ENTITY_BROWSER_VIEWPORT_HEIGHT, FILTER_CYCLES, PANEL_JUMP_KEYS, PANEL_ORDER } from './constants.js';
 import { cancelEntity, deleteEntity } from './entity-mutations.js';
 import { clamp, filteredLength, getFocusedPanelItem, getPanelItems, panelToEntityKind } from './helpers.js';
 import type { InkKey, KeyHandlerParams } from './types.js';
@@ -74,9 +74,10 @@ export function handleMainKeys(input: string, key: InkKey, params: KeyHandlerPar
       const current = prev.selectedIndices[panel];
       const next = clamp(current + 1, 0, maxIndex);
       // Scroll down if selection exceeds viewport
-      const viewportHeight = 10;
       const scrollOffset =
-        next >= prev.scrollOffsets[panel] + viewportHeight ? next - viewportHeight + 1 : prev.scrollOffsets[panel];
+        next >= prev.scrollOffsets[panel] + ENTITY_BROWSER_VIEWPORT_HEIGHT
+          ? next - ENTITY_BROWSER_VIEWPORT_HEIGHT + 1
+          : prev.scrollOffsets[panel];
       return {
         ...prev,
         selectedIndices: { ...prev.selectedIndices, [panel]: next },

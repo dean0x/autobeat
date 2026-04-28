@@ -39,6 +39,16 @@ export function relativeTime(epochMs: number): string {
   return isFuture ? `in ${days}d` : `${days}d ago`;
 }
 
+/**
+ * Format an epoch ms timestamp as HH:MM for compact activity rows.
+ */
+export function formatActivityTime(epochMs: number): string {
+  const d = new Date(epochMs);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
+
 // ============================================================================
 // Status colors and icons
 // ============================================================================

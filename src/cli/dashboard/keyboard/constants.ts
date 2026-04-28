@@ -43,3 +43,9 @@ export const TERMINAL_STATUSES: {
 
 /** Conservative upper bound for detail scroll when caller does not provide content length */
 export const DETAIL_SCROLL_MAX_DEFAULT = 200;
+
+/**
+ * Fallback viewport height for entity browser scroll calculations in keyboard handlers.
+ * Matches the default viewport height used when layout data is unavailable.
+ */
+export const ENTITY_BROWSER_VIEWPORT_HEIGHT = 10;

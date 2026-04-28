@@ -3,7 +3,6 @@
  * All functions are side-effect-free and suitable for use in any handler module.
  */
 
-import type { ActivityEntry } from '../../../core/domain.js';
 import type { DashboardData, NavState, PanelId } from '../types.js';
 import type { EntityKind } from './entity-mutations.js';
 import type { Identifiable } from './types.js';
@@ -62,27 +61,6 @@ export function resolveChildIndex(selectedTaskId: string | null, children: reado
   if (!selectedTaskId) return 0;
   const idx = children.findIndex((c) => c.taskId === selectedTaskId);
   return idx >= 0 ? idx : 0;
-}
-
-/**
- * Map an ActivityEntry kind to the detail entityType used by openDetail.
- * Kept as a pure function so tests can assert on dispatched entityType.
- */
-export function activityKindToEntityType(
-  kind: ActivityEntry['kind'],
-): 'tasks' | 'loops' | 'orchestrations' | 'schedules' | 'pipelines' {
-  switch (kind) {
-    case 'task':
-      return 'tasks';
-    case 'loop':
-      return 'loops';
-    case 'orchestration':
-      return 'orchestrations';
-    case 'schedule':
-      return 'schedules';
-    case 'pipeline':
-      return 'pipelines';
-  }
 }
 
 /**

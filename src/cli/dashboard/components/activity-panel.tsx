@@ -7,7 +7,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { ActivityEntry } from '../../../core/domain.js';
-import { shortId } from '../format.js';
+import { formatActivityTime, shortId, truncateCell } from '../format.js';
 import { ScrollableList } from './scrollable-list.js';
 
 const VIEWPORT_HEIGHT = 10;
@@ -21,13 +21,6 @@ interface ActivityPanelProps {
   readonly onSelect: (entry: ActivityEntry) => void;
 }
 
-function formatTime(epochMs: number): string {
-  const d = new Date(epochMs);
-  const h = d.getHours().toString().padStart(2, '0');
-  const m = d.getMinutes().toString().padStart(2, '0');
-  return `${h}:${m}`;
-}
-
 /**
  * Fixed column widths for activity feed alignment.
  * All rows use Box-based columns so Ink measures them correctly.
@@ -38,26 +31,10 @@ const COL_KIND_W = 14; // 'orchestration '|'schedule      '|'pipeline      '
 const COL_ID_W = 13; // shortId output (12 chars + 1 gap)
 const COL_STATUS_W = 11; // 'completed  '|'running    '|'failed     '
 
-function kindLabel(kind: ActivityEntry['kind']): string {
-  switch (kind) {
-    case 'task':
-      return 'task';
-    case 'loop':
-      return 'loop';
-    case 'orchestration':
-      return 'orchestration';
-    case 'schedule':
-      return 'schedule';
-    case 'pipeline':
-      return 'pipeline';
-  }
-}
-
 function renderActivityRow(entry: ActivityEntry, _index: number, isSelected: boolean): React.ReactNode {
-  const timeStr = formatTime(entry.timestamp);
-  const kind = kindLabel(entry.kind);
+  const timeStr = formatActivityTime(entry.timestamp);
   const id = shortId(entry.entityId);
-  const status = entry.status.slice(0, COL_STATUS_W);
+  const status = truncateCell(entry.status, COL_STATUS_W);
   const action = entry.action;
 
   return (
@@ -69,7 +46,7 @@ function renderActivityRow(entry: ActivityEntry, _index: number, isSelected: boo
       </Box>
       <Box width={COL_KIND_W}>
         <Text bold={isSelected} inverse={isSelected}>
-          {kind}
+          {entry.kind}
         </Text>
       </Box>
       <Box width={COL_ID_W}>
