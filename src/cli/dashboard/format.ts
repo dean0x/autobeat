@@ -50,9 +50,9 @@ export function relativeTime(epochMs: number): string {
 export function statusColor(status: string): string {
   switch (status) {
     case 'running':
-    case 'active':
     case 'planning':
       return 'cyan';
+    case 'active':
     case 'completed':
     case 'triggered':
       return 'green';

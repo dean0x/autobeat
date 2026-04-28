@@ -31,18 +31,19 @@ function formatTokens(n: number): string {
 }
 
 export const CostTile: React.FC<CostTileProps> = React.memo(({ costRollup24h, top }) => {
-  const { totalCostUsd, inputTokens, outputTokens, cacheReadInputTokens } = costRollup24h;
+  const { totalCostUsd, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = costRollup24h;
   const cacheSavings = cacheReadInputTokens;
 
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
       <Text bold>Cost (24h)</Text>
       <Text>
         <Text bold>{formatCost(totalCostUsd)}</Text>
       </Text>
       <Text>In {formatTokens(inputTokens)} tok</Text>
       <Text>Out {formatTokens(outputTokens)} tok</Text>
-      {cacheSavings > 0 && <Text>Cache {formatTokens(cacheSavings)} saved</Text>}
+      {cacheCreationInputTokens > 0 && <Text>Cache create {formatTokens(cacheCreationInputTokens)} tok</Text>}
+      {cacheSavings > 0 && <Text>Cache read {formatTokens(cacheSavings)} tok</Text>}
       {top.length > 0 && (
         <Box flexDirection="column">
           <Text dimColor>Top:</Text>

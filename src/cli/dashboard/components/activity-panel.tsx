@@ -30,38 +30,60 @@ function formatTime(epochMs: number): string {
 
 /**
  * Fixed column widths for activity feed alignment.
- * All rows use identical padding so columns align perfectly.
+ * All rows use Box-based columns so Ink measures them correctly.
+ * Matches entity-browser-panel column conventions.
  */
-const COL_KIND_W = 5; // 'task '|'loop '|'orch '|'sched'
-const COL_ID_W = 8; // shortId output (~8 chars)
+const COL_TIME_W = 5; // 'HH:MM'
+const COL_KIND_W = 7; // 'task   '|'loop   '|'orch   '|'sched  '|'pipe   '
+const COL_ID_W = 13; // shortId output (12 chars + 1 gap)
 const COL_STATUS_W = 11; // 'completed  '|'running    '|'failed     '
 
 function kindLabel(kind: ActivityEntry['kind']): string {
   switch (kind) {
     case 'task':
-      return 'task'.padEnd(COL_KIND_W);
+      return 'task';
     case 'loop':
-      return 'loop'.padEnd(COL_KIND_W);
+      return 'loop';
     case 'orchestration':
-      return 'orch'.padEnd(COL_KIND_W);
+      return 'orch';
     case 'schedule':
-      return 'sched'.padEnd(COL_KIND_W);
+      return 'sched';
     case 'pipeline':
-      return 'pipe'.padEnd(COL_KIND_W);
+      return 'pipe';
   }
 }
 
 function renderActivityRow(entry: ActivityEntry, _index: number, isSelected: boolean): React.ReactNode {
   const timeStr = formatTime(entry.timestamp);
   const kind = kindLabel(entry.kind);
-  const id = shortId(entry.entityId).padEnd(COL_ID_W);
-  const status = entry.status.slice(0, COL_STATUS_W).padEnd(COL_STATUS_W);
+  const id = shortId(entry.entityId);
+  const status = entry.status.slice(0, COL_STATUS_W);
   const action = entry.action;
 
   return (
     <Box key={entry.entityId}>
+      <Box width={COL_TIME_W}>
+        <Text bold={isSelected} inverse={isSelected}>
+          {timeStr}
+        </Text>
+      </Box>
+      <Box width={COL_KIND_W}>
+        <Text bold={isSelected} inverse={isSelected}>
+          {kind}
+        </Text>
+      </Box>
+      <Box width={COL_ID_W}>
+        <Text bold={isSelected} inverse={isSelected}>
+          {id}
+        </Text>
+      </Box>
+      <Box width={COL_STATUS_W}>
+        <Text bold={isSelected} inverse={isSelected}>
+          {status}
+        </Text>
+      </Box>
       <Text bold={isSelected} inverse={isSelected}>
-        {timeStr} {kind} {id} {status} {action}
+        {action}
       </Text>
     </Box>
   );
