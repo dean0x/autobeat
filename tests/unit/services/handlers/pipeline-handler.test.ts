@@ -198,5 +198,49 @@ describe('PipelineHandler', () => {
       // Still running — second step pending (queued)
       expect(result.value?.status).toBe(PipelineStatus.RUNNING);
     });
+
+    it('correctly aggregates status for a large pipeline (parallel lookups)', async () => {
+      // Regression: updatePipelineStatus must correctly fetch all step statuses via parallel
+      // Promise.all rather than serial N+1 queries. Uses a 5-step pipeline to exercise
+      // the batch path: all-completed → COMPLETED, one-failed → FAILED.
+      const taskIds = Array.from({ length: 5 }, (_, i) => TaskId(`task-large-${i}`));
+      const pipeline = await savePipelineWithTasks(taskIds);
+
+      // All five tasks complete
+      for (const tid of taskIds) {
+        await taskRepo.update(tid, { status: TaskStatus.COMPLETED });
+      }
+
+      await eventBus.emit('TaskCompleted', { taskId: taskIds[4], exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const completedResult = await pipelineRepo.findById(pipeline.id);
+      expect(completedResult.ok).toBe(true);
+      if (!completedResult.ok) throw new Error();
+      expect(completedResult.value?.status).toBe(PipelineStatus.COMPLETED);
+    });
+
+    it('marks pipeline FAILED when one of many steps fails (parallel lookup path)', async () => {
+      const taskIds = Array.from({ length: 4 }, (_, i) => TaskId(`task-fail-large-${i}`));
+      const pipeline = await savePipelineWithTasks(taskIds);
+
+      // Three complete, one fails
+      await taskRepo.update(taskIds[0], { status: TaskStatus.COMPLETED });
+      await taskRepo.update(taskIds[1], { status: TaskStatus.COMPLETED });
+      await taskRepo.update(taskIds[2], { status: TaskStatus.COMPLETED });
+      await taskRepo.update(taskIds[3], { status: TaskStatus.FAILED });
+
+      const { AutobeatError, ErrorCode } = await import('../../../../src/core/errors.js');
+      await eventBus.emit('TaskFailed', {
+        taskId: taskIds[3],
+        error: new AutobeatError(ErrorCode.SYSTEM_ERROR, 'step 4 failed'),
+      });
+      await flushEventLoop();
+
+      const result = await pipelineRepo.findById(pipeline.id);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error();
+      expect(result.value?.status).toBe(PipelineStatus.FAILED);
+    });
   });
 });

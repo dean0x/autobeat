@@ -93,6 +93,12 @@ export class PipelineHandler extends BaseEventHandler {
    * ARCHITECTURE: Only populates steps for immediate pipelines (createPipeline path) where
    * step.scheduleId is set. Scheduled-pipeline triggers populate stepTaskIds via the
    * schedule-handler path directly.
+   *
+   * ARCHITECTURE: No transaction needed for the read-modify-write on stepTaskIds.
+   * Each pipeline step has a unique scheduleId, and steps are chained via afterScheduleId
+   * (step N's schedule only triggers after step N-1's task completes). This guarantees that
+   * ScheduleExecuted events for different steps of the same pipeline always fire sequentially,
+   * making concurrent updates to the same stepTaskIds slot architecturally impossible.
    */
   private async handleScheduleExecuted(event: ScheduleExecutedEvent): Promise<void> {
     await this.handleEvent(event, async (e) => {
@@ -226,12 +232,18 @@ export class PipelineHandler extends BaseEventHandler {
       return ok(undefined);
     }
 
-    // Fetch all step task statuses, tracking per-step status for failed-step detection
+    // Fetch all step task statuses in parallel — each lookup is independent.
+    // PERFORMANCE: Promise.all eliminates the N+1 serial query pattern for pipelines with many steps.
+    const assignedSteps = pipeline.stepTaskIds
+      .map((tid, stepIdx) => (tid !== null ? { tid, stepIdx } : null))
+      .filter((entry): entry is { tid: TaskId; stepIdx: number } => entry !== null);
+
+    const lookupResults = await Promise.all(assignedSteps.map(({ tid }) => this.taskRepository.findById(tid)));
+
     const stepStatuses: Array<{ taskId: TaskId; status: string; stepIndex: number }> = [];
-    for (let stepIdx = 0; stepIdx < pipeline.stepTaskIds.length; stepIdx++) {
-      const tid = pipeline.stepTaskIds[stepIdx];
-      if (tid === null) continue;
-      const taskResult = await this.taskRepository.findById(tid);
+    for (let i = 0; i < assignedSteps.length; i++) {
+      const { tid, stepIdx } = assignedSteps[i];
+      const taskResult = lookupResults[i];
       if (!taskResult.ok) {
         this.logger.warn('PipelineHandler: failed to fetch step task', {
           taskId: tid,
