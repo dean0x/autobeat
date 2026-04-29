@@ -39,61 +39,84 @@ interface EntityDisplayFields {
   readonly description: string;
 }
 
+const EMPTY_FIELDS: EntityDisplayFields = { elapsed: '—', agent: '—', description: '' };
+
+/**
+ * Find an item by id and map it to display fields, returning EMPTY_FIELDS when
+ * the item is absent. Eliminates the repeated find-guard-return pattern across
+ * every switch arm in getEntityDisplayFields.
+ */
+function findAndMap<T>(
+  items: readonly T[],
+  predicate: (item: T) => boolean,
+  mapper: (item: T) => EntityDisplayFields,
+): EntityDisplayFields {
+  const item = items.find(predicate);
+  return item !== undefined ? mapper(item) : EMPTY_FIELDS;
+}
+
 /**
  * Extract display fields from the underlying entity object.
  * Returns sensible defaults when the entity or fields are missing.
  */
 function getEntityDisplayFields(panelId: PanelId, entityId: string, data: DashboardData | null): EntityDisplayFields {
-  if (data === null) return { elapsed: '—', agent: '—', description: '' };
+  if (data === null) return EMPTY_FIELDS;
 
   switch (panelId) {
-    case 'tasks': {
-      const task = data.tasks.find((t) => t.id === entityId);
-      if (!task) return { elapsed: '—', agent: '—', description: '' };
-      return {
-        elapsed: task.startedAt ? formatElapsed(task.startedAt) : '—',
-        agent: task.agent ?? '—',
-        description: truncateCell(task.prompt ?? '', 60),
-      };
-    }
-    case 'loops': {
-      const loop = data.loops.find((l) => l.id === entityId);
-      if (!loop) return { elapsed: '—', agent: '—', description: '' };
-      return {
-        elapsed: formatElapsed(loop.createdAt),
-        agent: loop.taskTemplate.agent ?? '—',
-        description: truncateCell(loop.taskTemplate.prompt ?? '', 60),
-      };
-    }
-    case 'schedules': {
-      const schedule = data.schedules.find((s) => s.id === entityId);
-      if (!schedule) return { elapsed: '—', agent: '—', description: '' };
-      return {
-        elapsed: '—',
-        agent: schedule.taskTemplate.agent ?? '—',
-        description: truncateCell(schedule.taskTemplate.prompt ?? '', 60),
-      };
-    }
-    case 'orchestrations': {
-      const orch = data.orchestrations.find((o) => o.id === entityId);
-      if (!orch) return { elapsed: '—', agent: '—', description: '' };
-      return {
-        elapsed: formatElapsed(orch.createdAt),
-        agent: orch.agent ?? '—',
-        description: truncateCell(orch.goal ?? '', 60),
-      };
-    }
-    case 'pipelines': {
-      const pipeline = data.pipelines.find((p) => p.id === entityId);
-      if (!pipeline) return { elapsed: '—', agent: '—', description: '' };
-      const stepCount = pipeline.steps.length;
-      const assignedSteps = pipeline.stepTaskIds.filter((id) => id !== null).length;
-      return {
-        elapsed: formatElapsed(pipeline.createdAt),
-        agent: pipeline.agent ?? '—',
-        description: `${assignedSteps}/${stepCount} assigned`,
-      };
-    }
+    case 'tasks':
+      return findAndMap(
+        data.tasks,
+        (t) => t.id === entityId,
+        (task) => ({
+          elapsed: task.startedAt ? formatElapsed(task.startedAt) : '—',
+          agent: task.agent ?? '—',
+          description: truncateCell(task.prompt ?? '', 60),
+        }),
+      );
+    case 'loops':
+      return findAndMap(
+        data.loops,
+        (l) => l.id === entityId,
+        (loop) => ({
+          elapsed: formatElapsed(loop.createdAt),
+          agent: loop.taskTemplate.agent ?? '—',
+          description: truncateCell(loop.taskTemplate.prompt ?? '', 60),
+        }),
+      );
+    case 'schedules':
+      return findAndMap(
+        data.schedules,
+        (s) => s.id === entityId,
+        (schedule) => ({
+          elapsed: '—',
+          agent: schedule.taskTemplate.agent ?? '—',
+          description: truncateCell(schedule.taskTemplate.prompt ?? '', 60),
+        }),
+      );
+    case 'orchestrations':
+      return findAndMap(
+        data.orchestrations,
+        (o) => o.id === entityId,
+        (orch) => ({
+          elapsed: formatElapsed(orch.createdAt),
+          agent: orch.agent ?? '—',
+          description: truncateCell(orch.goal ?? '', 60),
+        }),
+      );
+    case 'pipelines':
+      return findAndMap(
+        data.pipelines,
+        (p) => p.id === entityId,
+        (pipeline) => {
+          const stepCount = pipeline.steps.length;
+          const assignedSteps = pipeline.stepTaskIds.filter((id) => id !== null).length;
+          return {
+            elapsed: formatElapsed(pipeline.createdAt),
+            agent: pipeline.agent ?? '—',
+            description: `${assignedSteps}/${stepCount} assigned`,
+          };
+        },
+      );
   }
 }
 
