@@ -147,21 +147,15 @@ export class PipelineHandler extends BaseEventHandler {
   }
 
   private async handleTaskCompleted(event: TaskCompletedEvent): Promise<void> {
-    await this.handleEvent(event, async (e) => {
-      return this.onTaskTerminated(e.taskId, true);
-    });
+    await this.handleEvent(event, (e) => this.onTaskTerminated(e.taskId, true));
   }
 
   private async handleTaskFailed(event: TaskFailedEvent): Promise<void> {
-    await this.handleEvent(event, async (e) => {
-      return this.onTaskTerminated(e.taskId, false);
-    });
+    await this.handleEvent(event, (e) => this.onTaskTerminated(e.taskId, false));
   }
 
   private async handleTaskCancelled(event: TaskCancelledEvent): Promise<void> {
-    await this.handleEvent(event, async (e) => {
-      return this.onTaskTerminated(e.taskId, false);
-    });
+    await this.handleEvent(event, (e) => this.onTaskTerminated(e.taskId, false));
   }
 
   /**

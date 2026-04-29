@@ -29,7 +29,6 @@ interface StatsTileProps {
 
 export const StatsTile: React.FC<StatsTileProps> = React.memo(({ costRollup24h, top, stats }) => {
   const { totalCostUsd, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = costRollup24h;
-  const cacheSavings = cacheReadInputTokens;
   const { tasksPerHour, loopsPerHour, successRate, avgDurationMs } = stats;
   const successPercent = Math.round(successRate * 100);
 
@@ -40,7 +39,7 @@ export const StatsTile: React.FC<StatsTileProps> = React.memo(({ costRollup24h, 
         <Text bold>{formatCost(totalCostUsd)}</Text> In {formatTokens(inputTokens)} Out {formatTokens(outputTokens)}
       </Text>
       {cacheCreationInputTokens > 0 && <Text dimColor>Cache create {formatTokens(cacheCreationInputTokens)}</Text>}
-      {cacheSavings > 0 && <Text dimColor>Cache read {formatTokens(cacheSavings)}</Text>}
+      {cacheReadInputTokens > 0 && <Text dimColor>Cache read {formatTokens(cacheReadInputTokens)}</Text>}
       <Text>
         {tasksPerHour} tasks/hr {loopsPerHour} loops/hr
       </Text>
