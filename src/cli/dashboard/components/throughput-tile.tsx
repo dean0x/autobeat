@@ -37,7 +37,7 @@ export const ThroughputTile: React.FC<ThroughputTileProps> = React.memo(({ stats
   const successPercent = Math.round(successRate * 100);
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+    <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" paddingX={1}>
       <Text bold>Throughput</Text>
       <Text>Tasks/hr {tasksPerHour}</Text>
       <Text>Loops/hr {loopsPerHour}</Text>

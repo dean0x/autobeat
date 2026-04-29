@@ -29,7 +29,7 @@ export const ActivityTile: React.FC<ActivityTileProps> = React.memo(({ activityF
 
   if (entries.length === 0) {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+      <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" paddingX={1}>
         <Text bold>Activity</Text>
         <Text dimColor>No recent activity</Text>
       </Box>
@@ -37,7 +37,7 @@ export const ActivityTile: React.FC<ActivityTileProps> = React.memo(({ activityF
   }
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+    <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" paddingX={1}>
       <Text bold>Activity</Text>
       {entries.map((entry) => {
         const timeStr = formatActivityTime(entry.timestamp);

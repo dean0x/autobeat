@@ -14,10 +14,9 @@ import { Box, Text } from 'ink';
 import React from 'react';
 import type { SystemResources } from '../../../core/domain.js';
 import { ActivityTile } from '../components/activity-tile.js';
-import { CostTile } from '../components/cost-tile.js';
 import { EntityBrowserPanel } from '../components/entity-browser-panel.js';
 import { ResourcesTile } from '../components/resources-tile.js';
-import { ThroughputTile } from '../components/throughput-tile.js';
+import { StatsTile } from '../components/stats-tile.js';
 import { getPanelItems } from '../keyboard/helpers.js';
 import type { MetricsLayout } from '../layout.js';
 import type { DashboardData, EntityCounts, NavState, PanelId } from '../types.js';
@@ -71,8 +70,11 @@ export const MetricsView: React.FC<MetricsViewProps> = React.memo(
         <Box flexDirection="column" flexGrow={1} paddingX={1}>
           <Text dimColor>Narrow terminal — expand to see full dashboard</Text>
           <ResourcesTile resources={resourceMetrics} error={resourceError} />
-          <CostTile costRollup24h={data?.costRollup24h ?? ZERO_USAGE} top={data?.topOrchestrationsByCost ?? []} />
-          <ThroughputTile stats={data?.throughputStats ?? ZERO_THROUGHPUT} />
+          <StatsTile
+            costRollup24h={data?.costRollup24h ?? ZERO_USAGE}
+            top={data?.topOrchestrationsByCost ?? []}
+            stats={data?.throughputStats ?? ZERO_THROUGHPUT}
+          />
           <ActivityTile activityFeed={data?.activityFeed ?? []} maxEntries={3} />
         </Box>
       );
@@ -105,16 +107,13 @@ export const MetricsView: React.FC<MetricsViewProps> = React.memo(
 
     return (
       <Box flexDirection="column" flexGrow={1}>
-        {/* Top row: 4 equal-width tiles */}
+        {/* Top row: 3 equal-width tiles */}
         <Box flexDirection="row" height={layout.topRowHeight}>
           <Box flexGrow={1} flexBasis={0}>
             <ResourcesTile resources={resourceMetrics} error={resourceError} />
           </Box>
           <Box flexGrow={1} flexBasis={0}>
-            <CostTile costRollup24h={costRollup24h} top={topOrchestrationsByCost} />
-          </Box>
-          <Box flexGrow={1} flexBasis={0}>
-            <ThroughputTile stats={throughputStats} />
+            <StatsTile costRollup24h={costRollup24h} top={topOrchestrationsByCost} stats={throughputStats} />
           </Box>
           <Box flexGrow={1} flexBasis={0}>
             <ActivityTile activityFeed={activityFeed} maxEntries={layout.topRowHeight - 3} />

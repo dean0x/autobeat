@@ -35,7 +35,7 @@ export const CostTile: React.FC<CostTileProps> = React.memo(({ costRollup24h, to
   const cacheSavings = cacheReadInputTokens;
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+    <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" paddingX={1}>
       <Text bold>Cost (24h)</Text>
       <Text>
         <Text bold>{formatCost(totalCostUsd)}</Text>
