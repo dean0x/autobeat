@@ -51,6 +51,7 @@ export function createOutputRepo(lines: string[]): OutputRepository {
     save: vi.fn().mockResolvedValue(ok(undefined)),
     delete: vi.fn().mockResolvedValue(ok(undefined)),
     append: vi.fn().mockResolvedValue(ok(undefined)),
+    getSize: vi.fn().mockResolvedValue(ok(0)),
   } as unknown as OutputRepository;
 }
 

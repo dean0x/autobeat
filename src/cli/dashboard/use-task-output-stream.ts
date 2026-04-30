@@ -10,6 +10,8 @@
  *  - mergeOutputLines: Pure function (exported for testing)
  *  - shouldPollThisTick: Pure function (exported for testing)
  *  - MAX_LINES_PER_STREAM: Constant (exported for testing)
+ *  - codePointLength: Pure function (exported for testing)
+ *  - codePointSlice: Pure function (exported for testing)
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -107,9 +109,18 @@ export function mergeOutputLines(content: string): string[] {
  * that caused dashboard OOM crashes with large task outputs.
  */
 export function codePointLength(str: string): number {
-  let n = 0;
-  for (const _ of str) n++;
-  return n;
+  // ASCII fast-path: for strings with no multi-byte characters (charCode ≤ 0x7F),
+  // every UTF-16 code unit is exactly one code point so str.length is correct.
+  // CLI/build log output is almost always pure ASCII, making this the common case.
+  for (let i = 0; i < str.length; i++) {
+    if (str.charCodeAt(i) > 0x7f) {
+      // Non-ASCII found — fall through to accurate for-of code-point count
+      let n = 0;
+      for (const _ of str) n++;
+      return n;
+    }
+  }
+  return str.length;
 }
 
 /**
@@ -389,22 +400,34 @@ export function useTaskOutputStream(
           continue;
         }
 
+        /**
+         * Size probe: cheap SELECT of total_size — skips full blob load when
+         * output is unchanged. Returns true when the probe hit (full fetch not
+         * needed), false when the full get() should still run.
+         *
+         * Falls through (returns false) on getSize error for graceful
+         * degradation. Also falls through when lines is empty so the initial
+         * read always executes.
+         */
+        const trySizeProbe = async (): Promise<boolean> => {
+          const sizeResult = await outputRepo.getSize(taskId);
+          if (closingRef.current) return true; // closing — treat as "skip fetch"
+          if (sizeResult.ok && sizeResult.value === prev.totalBytes && prev.lines.length > 0) {
+            const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
+            streamsRef.current.set(taskId, {
+              ...prevState,
+              taskStatus: status,
+              lastFetchedAt: new Date(),
+            });
+            if (status === 'terminal') terminalFetchedRef.current.add(taskId);
+            return true;
+          }
+          return false;
+        };
+
         const fetchTask = async (): Promise<void> => {
           try {
-            // Size probe: cheap SELECT of total_size — skips full blob load when unchanged.
-            // Falls through to get() on error (graceful degradation) or when lines is empty
-            // (prev.lines.length === 0 ensures the initial read always runs).
-            const sizeResult = await outputRepo.getSize(taskId);
-            if (sizeResult.ok && sizeResult.value === prev.totalBytes && prev.lines.length > 0) {
-              const prevState = streamsRef.current.get(taskId) ?? INITIAL_STREAM_STATE;
-              streamsRef.current.set(taskId, {
-                ...prevState,
-                taskStatus: status,
-                lastFetchedAt: new Date(),
-              });
-              if (status === 'terminal') terminalFetchedRef.current.add(taskId);
-              return;
-            }
+            if (await trySizeProbe()) return;
 
             const result = await outputRepo.get(taskId);
             if (closingRef.current) return;
