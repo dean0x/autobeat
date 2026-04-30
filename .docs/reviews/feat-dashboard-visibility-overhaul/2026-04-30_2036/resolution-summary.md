@@ -58,8 +58,8 @@
 - `87a9b67` refactor(dashboard): extract trySizeProbe as exported fn, fix T17-T20 test coupling
 - `213978f` simplify: remove redundant comment, fix TaskOutput stub shapes
 - `60168a9` refactor(dashboard): extract getPrev helper to deduplicate stream-state lookup (5x)
-- (perf commit SHA TBD) perf(dashboard): replace stdout.join('') with per-chunk computeDelta
-- (refactor commit SHA TBD) refactor(dashboard): extract computeOrchestrationLiveness from fetchAllData
+- `4c768e9` perf(dashboard): replace stdout.join('') with per-chunk computeDelta
+- `28e228c` refactor(dashboard): extract computeOrchestrationLiveness from fetchAllData
 
 ## Validation
 - Typecheck: clean
