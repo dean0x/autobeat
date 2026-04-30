@@ -9,7 +9,7 @@ import type { OutputStreamState } from '../../../../src/cli/dashboard/use-task-o
 import { MAX_LINES_PER_STREAM, useTaskOutputStream } from '../../../../src/cli/dashboard/use-task-output-stream.js';
 import type { TaskId } from '../../../../src/core/domain.js';
 import type { OutputRepository } from '../../../../src/core/interfaces.js';
-import { ok } from '../../../../src/core/result.js';
+import { err, ok } from '../../../../src/core/result.js';
 
 // ============================================================================
 // Helpers
@@ -462,5 +462,39 @@ describe('size probe behavior', () => {
     const state = buildStreamState(STREAM_INITIAL, output, 'running');
     expect(state.lines).toEqual([]);
     expect(state.taskStatus).toBe('running');
+  });
+
+  it('getSize error → full get() still called (graceful degradation) (T20)', async () => {
+    // Arrange: prev state with totalBytes > 0 and lines populated — conditions that
+    // would normally trigger the size-skip if getSize returned the same byte count.
+    const taskId = makeTaskId('task-t20');
+    const prevState: OutputStreamState = {
+      ...STREAM_INITIAL,
+      lines: ['existing line'],
+      totalBytes: 12,
+      totalChars: 12,
+    };
+    const output = makeTaskOutput(['existing line\n', 'new line\n']);
+    const repo = makeOutputRepo({
+      // getSize fails — probe returns an error
+      getSize: vi.fn().mockResolvedValue(err(new Error('db read error'))),
+      // get() returns valid data
+      get: vi.fn().mockResolvedValue(ok(output)),
+    });
+
+    // Act: simulate the fetchTask control flow from doPoll:
+    //   sizeResult.ok is false → skip condition is false → get() must be called
+    const sizeResult = await repo.getSize(taskId);
+    let nextState = prevState;
+    if (!(sizeResult.ok && sizeResult.value === prevState.totalBytes && prevState.lines.length > 0)) {
+      const result = await repo.get(taskId);
+      if (result.ok) {
+        nextState = buildStreamState(prevState, result.value, 'running');
+      }
+    }
+
+    // Assert: get() was called and produced updated state despite getSize failure
+    expect(repo.get).toHaveBeenCalledWith(taskId);
+    expect(nextState.lines).toContain('new line');
   });
 });
