@@ -19,7 +19,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { OrchestratorStatus, TaskId } from '../../core/domain.js';
+import { OrchestratorStatus, type Task, TaskId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import { checkOrchestrationLiveness, type Liveness } from '../../services/orchestration-liveness.js';
@@ -465,6 +465,23 @@ async function fetchDetailExtra(
   if (detail.entityType === 'schedules') {
     const result = await ctx.scheduleRepository.getExecutionHistory(detail.entityId, 50);
     return { executions: result.ok ? result.value : undefined };
+  }
+
+  if (detail.entityType === 'pipelines') {
+    const pipeResult = await ctx.pipelineRepository.findById(detail.entityId);
+    if (!pipeResult.ok || !pipeResult.value) return {};
+    const pipeline = pipeResult.value;
+    const nonNullIds = pipeline.stepTaskIds.filter((id): id is TaskId => id !== null);
+    if (nonNullIds.length === 0) return {};
+    const taskResults = await Promise.all(nonNullIds.map((id) => ctx.taskRepository.findById(id)));
+    const taskMap = new Map<string, Task>();
+    for (let i = 0; i < nonNullIds.length; i++) {
+      const r = taskResults[i];
+      if (r.ok && r.value) taskMap.set(nonNullIds[i], r.value);
+    }
+    return {
+      pipelineStepTasks: pipeline.stepTaskIds.map((id) => (id !== null ? (taskMap.get(id) ?? null) : null)),
+    };
   }
 
   if (detail.entityType === 'orchestrations') {

@@ -204,6 +204,8 @@ export interface DashboardData {
     readonly avgDurationMs: number;
   };
   readonly activityFeed?: readonly ActivityEntry[];
+  /** Step tasks fetched by ID for pipeline detail (bypasses FETCH_LIMIT) */
+  readonly pipelineStepTasks?: readonly (Task | null)[];
 
   // Workspace view data (v1.3.0 Phase D)
   readonly workspaceData?: {
@@ -228,4 +230,6 @@ export interface DetailExtra {
   readonly orchestrationCostAggregate?: TaskUsage;
   /** Total count of children for pagination (D3 drill-through) */
   readonly orchestrationChildrenTotal?: number;
+  /** Step tasks fetched by ID for pipeline detail (bypasses FETCH_LIMIT) */
+  readonly pipelineStepTasks?: readonly (Task | null)[];
 }

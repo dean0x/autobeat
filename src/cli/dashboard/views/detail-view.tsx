@@ -123,10 +123,11 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
       case 'pipelines': {
         const pipeline = data?.pipelines.find((p) => p.id === entityId);
         if (pipeline === undefined) return <NotFound entityType={entityType} entityId={entityId} />;
-        // Resolve step tasks from the pipeline's stepTaskIds
-        const stepTasks = pipeline.stepTaskIds.map((taskId) =>
-          taskId !== null ? (data?.tasks.find((t) => t.id === taskId) ?? null) : null,
-        );
+        const stepTasks =
+          data?.pipelineStepTasks ??
+          pipeline.stepTaskIds.map((taskId) =>
+            taskId !== null ? (data?.tasks.find((t) => t.id === taskId) ?? null) : null,
+          );
         return (
           <PipelineDetail pipeline={pipeline} stepTasks={stepTasks} scrollOffset={scrollOffset} animFrame={animFrame} />
         );

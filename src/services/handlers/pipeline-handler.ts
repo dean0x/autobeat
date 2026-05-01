@@ -304,7 +304,7 @@ export class PipelineHandler extends BaseEventHandler {
   /**
    * Determine the aggregate pipeline status from the statuses of its step tasks.
    * @param statuses - Array of task status strings for all assigned steps
-   * @param totalSteps - Total number of steps (including null / unassigned)
+   * @param totalSteps - Number of assigned (non-null) step tasks
    */
   private aggregateStatus(statuses: string[], totalSteps: number): PipelineStatus {
     if (statuses.some((s) => s === 'cancelled')) {
