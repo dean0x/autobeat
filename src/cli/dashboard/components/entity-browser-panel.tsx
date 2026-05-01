@@ -211,7 +211,8 @@ export const EntityBrowserPanel: React.FC<EntityBrowserPanelProps> = React.memo(
 
     // Viewport calculations
     const hasScrollUp = scrollOffset > 0;
-    const effectiveHeight = Math.max(1, viewportHeight - 2); // 1 for tabs row, 1 for potential scroll indicator
+    const filterRowHeight = filterStatus !== null ? 1 : 0;
+    const effectiveHeight = Math.max(1, viewportHeight - 2 - filterRowHeight);
     const hasScrollDown = scrollOffset + effectiveHeight < filteredItems.length;
     const visibleSlice = filteredItems.slice(scrollOffset, scrollOffset + effectiveHeight);
 
