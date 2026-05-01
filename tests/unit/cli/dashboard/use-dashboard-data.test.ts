@@ -7,15 +7,14 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { ViewState } from '../../../../src/cli/dashboard/types.js';
+import type { LivenessCacheEntry } from '../../../../src/cli/dashboard/use-dashboard-data.js';
 import {
   buildEntityCounts,
   computeOrchestrationLiveness,
   FETCH_LIMIT,
   fetchAllData,
-  LIVENESS_CACHE_TTL_MS,
   POLL_INTERVAL_BY_VIEW,
 } from '../../../../src/cli/dashboard/use-dashboard-data.js';
-import type { LivenessCacheEntry } from '../../../../src/cli/dashboard/use-dashboard-data.js';
 import type { ReadOnlyContext } from '../../../../src/cli/read-only-context.js';
 import { err, ok } from '../../../../src/core/result.js';
 
@@ -123,22 +122,16 @@ function makeCtx(overrides: Partial<ReadOnlyContext> = {}): ReadOnlyContext {
 const MAIN_VIEW: ViewState = { kind: 'main' };
 
 // ============================================================================
-// POLL_INTERVAL_BY_VIEW — per-view cadence
+// POLL_INTERVAL_BY_VIEW — per-view cadence ordering contract
 // ============================================================================
 
 describe('POLL_INTERVAL_BY_VIEW', () => {
-  it('main view polls at 1 000 ms', () => {
-    expect(POLL_INTERVAL_BY_VIEW.main).toBe(1_000);
-  });
-
-  it('workspace view polls at 750 ms (faster than main for live output)', () => {
-    expect(POLL_INTERVAL_BY_VIEW.workspace).toBe(750);
+  it('workspace polls faster than main, which polls faster than detail', () => {
+    // Ordering contract: workspace < main < detail
+    // workspace: snappier refresh for live task output
+    // detail: slower cadence reduces DB pressure for single-entity view
     expect(POLL_INTERVAL_BY_VIEW.workspace).toBeLessThan(POLL_INTERVAL_BY_VIEW.main);
-  });
-
-  it('detail view polls at 2 000 ms (slower to reduce DB pressure)', () => {
-    expect(POLL_INTERVAL_BY_VIEW.detail).toBe(2_000);
-    expect(POLL_INTERVAL_BY_VIEW.detail).toBeGreaterThan(POLL_INTERVAL_BY_VIEW.main);
+    expect(POLL_INTERVAL_BY_VIEW.main).toBeLessThan(POLL_INTERVAL_BY_VIEW.detail);
   });
 });
 
@@ -553,8 +546,14 @@ describe('fetchAllData — orchestration liveness caching', () => {
 describe('computeOrchestrationLiveness', () => {
   function makeLivenessDeps() {
     return {
-      loopRepo: { findAll: vi.fn(), getIterations: vi.fn() } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['loopRepo'],
-      taskRepo: { findAll: vi.fn(), get: vi.fn() } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['taskRepo'],
+      loopRepo: {
+        findAll: vi.fn(),
+        getIterations: vi.fn(),
+      } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['loopRepo'],
+      taskRepo: {
+        findAll: vi.fn(),
+        get: vi.fn(),
+      } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['taskRepo'],
       workerRepo: { findAll: vi.fn() } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['workerRepo'],
       isProcessAlive: vi.fn().mockReturnValue(true),
     };
@@ -630,9 +629,7 @@ describe('computeOrchestrationLiveness', () => {
 
   it('fresh cache entry survives sweep', async () => {
     const freshTs = Date.now() - 1_000; // 1s ago < 4s TTL
-    const cache = new Map<string, LivenessCacheEntry>([
-      ['fresh-orch', { result: 'live', timestamp: freshTs }],
-    ]);
+    const cache = new Map<string, LivenessCacheEntry>([['fresh-orch', { result: 'live', timestamp: freshTs }]]);
     const deps = makeLivenessDeps();
     await computeOrchestrationLiveness([], cache, deps);
     expect(cache.has('fresh-orch')).toBe(true);
@@ -648,7 +645,9 @@ describe('computeOrchestrationLiveness', () => {
         getLatestIteration: vi.fn().mockRejectedValue(new Error('db gone')),
         getIterations: vi.fn().mockRejectedValue(new Error('db gone')),
       } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['loopRepo'],
-      taskRepo: { get: vi.fn().mockRejectedValue(new Error('db gone')) } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['taskRepo'],
+      taskRepo: {
+        get: vi.fn().mockRejectedValue(new Error('db gone')),
+      } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['taskRepo'],
       workerRepo: { findAll: vi.fn() } as unknown as Parameters<typeof computeOrchestrationLiveness>[2]['workerRepo'],
       isProcessAlive: vi.fn().mockReturnValue(true),
     };

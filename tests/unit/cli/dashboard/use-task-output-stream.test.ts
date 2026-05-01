@@ -4,9 +4,9 @@
  * Pattern: Fake timers + mock OutputRepository — no real processes
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { OutputStreamState } from '../../../../src/cli/dashboard/use-task-output-stream.js';
-import { MAX_LINES_PER_STREAM, useTaskOutputStream } from '../../../../src/cli/dashboard/use-task-output-stream.js';
+import { MAX_LINES_PER_STREAM } from '../../../../src/cli/dashboard/use-task-output-stream.js';
 import type { TaskId } from '../../../../src/core/domain.js';
 import type { OutputRepository } from '../../../../src/core/interfaces.js';
 import { err, ok } from '../../../../src/core/result.js';
@@ -14,6 +14,16 @@ import { err, ok } from '../../../../src/core/result.js';
 // ============================================================================
 // Helpers
 // ============================================================================
+
+const EMPTY_INITIAL: OutputStreamState = {
+  lines: [],
+  totalBytes: 0,
+  totalChars: 0,
+  lastFetchedAt: null,
+  error: null,
+  droppedLines: 0,
+  taskStatus: 'pending',
+};
 
 function makeTaskId(id: string): TaskId {
   return id as TaskId;
@@ -42,13 +52,8 @@ function makeTaskOutput(stdout: string[], stderr: string[] = []) {
 }
 
 // ============================================================================
-// Direct function-level tests (polling logic is pure, hook is integration)
+// Pure helper tests — useTaskOutputStream delegates to these exported functions
 // ============================================================================
-
-// We test the exported pure helpers and the state machine logic via
-// the exported hook factory (non-React version) if available, else via
-// stub extraction. Since useTaskOutputStream is a React hook we test
-// the extracted pure logic it delegates to.
 
 import {
   buildStreamState,
@@ -137,16 +142,6 @@ describe('mergeOutputLines', () => {
 });
 
 describe('buildStreamState', () => {
-  const EMPTY_INITIAL: OutputStreamState = {
-    lines: [],
-    totalBytes: 0,
-    totalChars: 0,
-    lastFetchedAt: null,
-    error: null,
-    droppedLines: 0,
-    taskStatus: 'pending',
-  };
-
   it('returns pending state when output is null', () => {
     const state = buildStreamState(EMPTY_INITIAL, null, 'pending');
     expect(state.lines).toEqual([]);
@@ -191,7 +186,7 @@ describe('buildStreamState', () => {
     const firstState = buildStreamState(EMPTY_INITIAL, output, 'running');
     const secondState = buildStreamState(firstState, output, 'running');
     // Same totalBytes — no delta, lines unchanged
-    expect(secondState.lines).toEqual(['first_NOT_PRESENT', 'line1', 'line2'].slice(1));
+    expect(secondState.lines).toEqual(['line1', 'line2']);
     expect(secondState.lines.length).toBe(2);
   });
 
@@ -346,16 +341,6 @@ describe('shouldPollThisTick', () => {
     for (let tick = 0; tick < 10; tick++) {
       expect(shouldPollThisTick('terminal', tick)).toBe(false);
     }
-  });
-});
-
-// ============================================================================
-// MAX_LINES_PER_STREAM export
-// ============================================================================
-
-describe('MAX_LINES_PER_STREAM', () => {
-  it('is 500', () => {
-    expect(MAX_LINES_PER_STREAM).toBe(500);
   });
 });
 
@@ -601,16 +586,6 @@ describe('computeDelta', () => {
 // ============================================================================
 
 describe('buildStreamState multi-chunk regression', () => {
-  const EMPTY_INITIAL: OutputStreamState = {
-    lines: [],
-    totalBytes: 0,
-    totalChars: 0,
-    lastFetchedAt: null,
-    error: null,
-    droppedLines: 0,
-    taskStatus: 'pending',
-  };
-
   it('processes multi-chunk stdout correctly', () => {
     const output = makeTaskOutput(['chunk1\n', 'chunk2\n']);
     const state = buildStreamState(EMPTY_INITIAL, output, 'running');

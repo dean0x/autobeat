@@ -275,7 +275,13 @@ export function buildStreamState(
 
   if (newContent === '') {
     // No new characters — update metadata only
-    return { ...prev, totalBytes: newTotalBytes, totalChars: fullChars, taskStatus: nextStatus, lastFetchedAt: new Date() };
+    return {
+      ...prev,
+      totalBytes: newTotalBytes,
+      totalChars: fullChars,
+      taskStatus: nextStatus,
+      lastFetchedAt: new Date(),
+    };
   }
 
   // Strip ANSI and split into lines
@@ -458,8 +464,7 @@ export function useTaskOutputStream(
   // Convenience accessor: returns the current stream state for a task, or the
   // initial state if no entry exists yet. Centralises the fallback pattern that
   // previously appeared 5× in doPoll, each time with a slightly different spread.
-  const getPrev = (id: TaskId): OutputStreamState =>
-    streamsRef.current.get(id) ?? INITIAL_STREAM_STATE;
+  const getPrev = (id: TaskId): OutputStreamState => streamsRef.current.get(id) ?? INITIAL_STREAM_STATE;
 
   // doPoll reads taskIds/taskStatuses via refs — stable identity across renders.
   const doPoll = useCallback(async (): Promise<void> => {
