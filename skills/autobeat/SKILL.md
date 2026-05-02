@@ -12,7 +12,7 @@ allowed-tools: Read, Grep, Glob
 
 Autobeat lets you delegate work to background AI agent instances, build task pipelines,
 create iterative loops, schedule recurring work, and run autonomous orchestrations.
-Three runtimes supported: Claude, Codex, Gemini.
+Two runtimes supported: Claude, Codex.
 
 ## Iron Law
 

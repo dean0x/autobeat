@@ -17,7 +17,7 @@ Submit a task to a background AI agent instance.
 | `maxOutputBuffer` | number | No | 10485760 | Max output buffer bytes (1024-1073741824) |
 | `dependsOn` | string[] | No | — | Task IDs this task depends on |
 | `continueFrom` | string | No | — | Task ID to receive checkpoint context from |
-| `agent` | string | No | configured default | claude, codex, or gemini |
+| `agent` | string | No | configured default | claude or codex |
 
 ### TaskStatus
 
@@ -316,7 +316,7 @@ Check auth status, store API key, or reset stored key for an agent.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `agent` | string | Yes | — | Agent provider (claude, codex, gemini) |
+| `agent` | string | Yes | — | Agent provider (claude, codex) |
 | `action` | string | No | check | set, check, or reset |
 | `apiKey` | string | No | — | API key to store (required for set action) |
 
@@ -326,7 +326,7 @@ Check auth status, store API key, or reset stored key for an agent.
 
 ```
 beat run "<prompt>" [options]
-  --agent, -a <name>       Agent (claude, codex, gemini)
+  --agent, -a <name>       Agent (claude, codex)
   --priority, -p <level>   P0, P1, P2
   --working-directory, -w  Absolute path
   --timeout <ms>           Task timeout

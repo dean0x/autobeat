@@ -45,7 +45,7 @@ beat run "Run the test suite and report results" -w /path/to/repo --agent claude
 
 - `prompt` (required): What the agent should do (max 4000 chars)
 - `workingDirectory`: Absolute path — always set this
-- `agent`: claude | codex | gemini (falls back to configured default)
+- `agent`: claude | codex (falls back to configured default)
 - `priority`: P0 (critical), P1 (high), P2 (normal, default)
 - `timeout`: ms, default 30min, max 24h
 - `maxOutputBuffer`: bytes, default 10MB, max 1GB

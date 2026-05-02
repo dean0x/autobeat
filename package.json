@@ -71,14 +71,13 @@
     "ai-agents",
     "multi-agent",
     "codex",
-    "gemini",
     "automation",
     "task-delegation",
     "autobeat"
   ],
   "author": "dean0x",
   "license": "MIT",
-  "description": "AI coding agent orchestration at scale. Karpathy optimization loops, multi-agent pipelines, DAG dependencies, autoscaling workers. Claude, Codex, Gemini.",
+  "description": "AI coding agent orchestration at scale. Karpathy optimization loops, multi-agent pipelines, DAG dependencies, autoscaling workers. Claude, Codex.",
   "publishConfig": {
     "access": "public"
   },

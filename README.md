@@ -55,12 +55,12 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-Restart your MCP client to connect. Autobeat works with Claude Code, Codex, Gemini, and any MCP-compatible agent.
+Restart your MCP client to connect. Autobeat works with Claude Code, Codex, and any MCP-compatible agent.
 
 ### Prerequisites
 
 - Node.js 20.0.0+
-- At least one coding agent CLI installed (`claude`, `codex`, or `gemini`)
+- At least one coding agent CLI installed (`claude` or `codex`)
 
 ### First Run
 
@@ -208,7 +208,7 @@ beat schedule cancel <id>
 
 ## Agent Configuration
 
-Three agents are supported: **Claude**, **Codex**, and **Gemini**. Each agent can be configured with an API key, base URL, and default model.
+Two agents are supported: **Claude** and **Codex**. Each agent can be configured with an API key, base URL, and default model.
 
 ```bash
 beat agents list                    # Show available agents
@@ -222,7 +222,6 @@ By default, agents use CLI login-based auth (e.g., `claude login`). To use your 
 ```bash
 beat agents config set claude apiKey "sk-ant-your-key"
 beat agents config set codex apiKey "sk-your-openai-key"
-beat agents config set gemini apiKey "your-gemini-key"
 ```
 
 Auth resolution order: **environment variable** > **stored config** > **CLI login**.
@@ -231,7 +230,6 @@ Auth resolution order: **environment variable** > **stored config** > **CLI logi
 |-------|---------------------------|
 | claude | `ANTHROPIC_API_KEY` |
 | codex | `OPENAI_API_KEY` |
-| gemini | `GEMINI_API_KEY` |
 
 ### Model Selection
 
@@ -263,7 +261,6 @@ Or via environment variables (takes precedence over config):
 |-------|---------|
 | claude | `ANTHROPIC_BASE_URL` |
 | codex | `OPENAI_BASE_URL` |
-| gemini | `GEMINI_BASE_URL` |
 
 **Note**: Claude's login-based auth does not work with a custom `baseUrl` — you must also set an `apiKey`. Autobeat warns if `baseUrl` is set without one.
 
@@ -382,7 +379,7 @@ Event-driven system with autoscaling workers and SQLite persistence. Components 
 
 **Task Lifecycle**: `Queued` → `Running` → `Completed` / `Failed` / `Cancelled`
 
-Three agents supported: Claude, Codex, Gemini. Per-task agent selection. Crash recovery restores all in-flight work on restart.
+Two agents supported: Claude, Codex. Per-task agent selection. Crash recovery restores all in-flight work on restart.
 
 See **[Architecture Documentation](./docs/architecture/)** for details.
 
