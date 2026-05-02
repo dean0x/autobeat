@@ -432,7 +432,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Result<
 
   // Register AgentRegistry for multi-agent support (v0.5.0)
   // ARCHITECTURE: If a custom ProcessSpawner is injected (tests), wrap it in a
-  // compatibility adapter. Otherwise, register all 4 agent adapters.
+  // compatibility adapter. Otherwise, register all agent adapters.
   // If a translation proxy is active (proxyPort set), use ProxiedClaudeAdapter.
   container.registerSingleton('agentRegistry', () => {
     if (options.processSpawner) {

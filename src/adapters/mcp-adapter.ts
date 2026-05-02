@@ -124,8 +124,7 @@ export const DelegateTaskSchema = z.object({
   jsonSchema: z.string().optional().describe('JSON schema for structured output (Claude only)'),
   /**
    * System prompt to inject into the agent.
-   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Codex: -c developer_instructions.
+   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions.
    */
   systemPrompt: z
     .string()
@@ -182,8 +181,7 @@ const ScheduleTaskSchema = z.object({
   model: modelSchema.optional().describe('Model override for this task (overrides agent-config default)'),
   /**
    * System prompt injected into the agent on every scheduled run.
-   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Codex: -c developer_instructions.
+   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions.
    */
   systemPrompt: z
     .string()
@@ -289,8 +287,7 @@ const SchedulePipelineSchema = z.object({
   model: modelSchema.optional().describe('Default model for all steps (individual steps can override)'),
   /**
    * System prompt injected into every step task agent on each scheduled trigger.
-   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Codex: -c developer_instructions.
+   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions.
    */
   systemPrompt: z
     .string()
@@ -448,8 +445,7 @@ const CreateLoopSchema = z.object({
   judgePrompt: z.string().optional().describe('Custom judge instructions (judge evalType only)'),
   /**
    * System prompt for each iteration task.
-   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Codex: -c developer_instructions.
+   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions.
    */
   systemPrompt: z.string().optional().describe('System prompt injected into each iteration task agent'),
 });
@@ -519,8 +515,7 @@ const ScheduleLoopSchema = z.object({
   expiresAt: z.string().optional().describe('ISO 8601 datetime when schedule expires'),
   /**
    * System prompt injected into each iteration task agent on every scheduled trigger.
-   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions,
-   * Codex: -c developer_instructions.
+   * Per-agent mechanism: Claude --append-system-prompt, Codex -c developer_instructions.
    */
   systemPrompt: z
     .string()
