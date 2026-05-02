@@ -246,6 +246,8 @@ Safety nets that exist in the codebase but are not part of the manual release st
 - `workers.last_heartbeat`, loops eval columns: `eval_type`, `judge_agent`, `judge_prompt`, `eval_prompt` (migration v21)
 - CHECK constraints on `eval_type` and `judge_agent` in loops table (migration v22)
 - `tasks.system_prompt` column: nullable TEXT for per-task system prompt injection (migration v23)
+- `pipelines` table: first-class pipeline tracking with steps JSON, agent, model, status (migration v24)
+- Remove gemini from `judge_agent` CHECK constraint; nullify gemini agent references across all tables and JSON blobs (migration v25)
 
 ### Dependencies
 
