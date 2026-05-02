@@ -989,14 +989,61 @@ export class Database implements TransactionRunner {
       },
       {
         version: 25,
-        // DECISION: Gemini agent support removed (v1.5.0). Nullify any existing judge_agent='gemini'
-        // rows so they satisfy the new CHECK constraint after table recreation. Uses same
+        // DECISION: Gemini agent support removed (v1.5.0). Nullify any existing gemini
+        // references so they satisfy the new CHECK constraint (loops) and Zod boundary
+        // validation (tasks, orchestrations, pipelines, schedules). Uses same
         // table-recreation pattern as migration v22 — SQLite does not support modifying
         // CHECK constraints via ALTER TABLE.
-        description: 'Remove gemini from judge_agent CHECK constraint in loops table',
+        description: 'Remove gemini agent references from all tables',
         up: (db) => {
-          // Nullify any rows that reference the removed provider before recreation
+          // 1. Direct agent columns — nullify stale 'gemini' values to satisfy Zod
+          //    boundary validation (AGENT_PROVIDERS_TUPLE no longer includes 'gemini').
+          db.exec(`UPDATE tasks SET agent = NULL WHERE agent = 'gemini'`);
+          db.exec(`UPDATE orchestrations SET agent = NULL WHERE agent = 'gemini'`);
+          db.exec(`UPDATE pipelines SET agent = NULL WHERE agent = 'gemini'`);
           db.exec(`UPDATE loops SET judge_agent = NULL WHERE judge_agent = 'gemini'`);
+
+          // 2. JSON blob columns — task_template, steps, and loop_config store
+          //    serialized objects validated by Zod at read time. Remove "agent":"gemini"
+          //    entries using json_remove where the value matches.
+          for (const [table, column] of [
+            ['loops', 'task_template'],
+            ['schedules', 'task_template'],
+          ] as const) {
+            db.exec(`
+              UPDATE ${table}
+              SET ${column} = json_remove(${column}, '$.agent')
+              WHERE json_extract(${column}, '$.agent') = 'gemini'
+            `);
+          }
+
+          // schedules.loop_config is a flat LoopCreateRequest with top-level agent
+          db.exec(`
+            UPDATE schedules
+            SET loop_config = json_remove(loop_config, '$.agent')
+            WHERE loop_config IS NOT NULL
+              AND json_extract(loop_config, '$.agent') = 'gemini'
+          `);
+
+          // pipelines.steps and schedules.pipeline_steps are JSON arrays where
+          // each element may have .agent. SQLite cannot mutate individual array
+          // elements via json_remove, so use text replacement on the serialized
+          // JSON (JSON.stringify output is deterministic: no spaces). Two passes
+          // handle both positions:
+          //   middle: ,"agent":"gemini" (preceded by comma)
+          //   only/trailing: "agent":"gemini", (followed by comma)
+          for (const [table, column] of [
+            ['pipelines', 'steps'],
+            ['schedules', 'pipeline_steps'],
+          ] as const) {
+            db.exec(`
+              UPDATE ${table}
+              SET ${column} = REPLACE(REPLACE(${column},
+                ',"agent":"gemini"', ''),
+                '"agent":"gemini",', '')
+              WHERE ${column} LIKE '%"agent":"gemini"%'
+            `);
+          }
 
           db.exec(`
             CREATE TABLE loops_new (
