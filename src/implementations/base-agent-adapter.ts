@@ -209,7 +209,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       });
     }
 
-    return ok(null);
+    // Exhaustive guard: if a new runtime is added to RUNTIME_TARGETS but not handled
+    // above, fail loudly rather than silently ignoring the configuration.
+    const _exhaustive: never = agentConfig.runtime;
+    return err(
+      agentMisconfigured(this.provider, `Unhandled runtime: '${_exhaustive}'. This is a bug — please report it.`),
+    );
   }
 
   spawn({
@@ -325,7 +330,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       // When runtime is active, wrap the command: ollama launch <agent> [--model x] --yes -- <inner-args>
       const spawnCommand = runtimeConfig ? runtimeConfig.command : this.command;
-      const spawnArgs = runtimeConfig ? [...runtimeConfig.prependArgs, ...args] : [...args];
+      const spawnArgs = runtimeConfig ? [...runtimeConfig.prependArgs, ...args] : args;
 
       const child = spawn(spawnCommand, spawnArgs, {
         cwd: workingDirectory,

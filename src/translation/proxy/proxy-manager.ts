@@ -33,7 +33,7 @@ import { TranslationProxy } from './translation-proxy.js';
 
 /**
  * Target backend configuration for the translation proxy.
- * Derived from AgentConfig fields when `translate` is set.
+ * Derived from AgentConfig fields when `proxy` is set.
  */
 export interface ProxyConfig {
   /** Base URL of the OpenAI-compatible backend, e.g. "https://integrate.api.nvidia.com/v1" */
@@ -45,7 +45,7 @@ export interface ProxyConfig {
 }
 
 /**
- * Load proxy configuration from AgentConfig when `translate` is set.
+ * Load proxy configuration from AgentConfig when `proxy` is set.
  *
  * ARCHITECTURE: When an agent has `proxy: 'openai'`, the existing `baseUrl`,
  * `apiKey`, and `model` fields become the target backend config. This means users
@@ -63,7 +63,7 @@ export function loadProxyConfig(provider: AgentProvider): ProxyConfig | null {
   // Only claude supports translation (Anthropic → OpenAI)
   if (provider !== 'claude') return null;
 
-  const agentConfig: AgentConfig = loadAgentConfig(provider);
+  const agentConfig = loadAgentConfig(provider);
   if (!agentConfig.proxy) return null;
 
   // proxy requires baseUrl, apiKey, and model
@@ -115,8 +115,7 @@ export class ProxyManager {
   async start(): Promise<Result<{ port: number; proxyUrl: string }>> {
     // Idempotent: already running
     if (this.proxy !== null && this.port !== undefined) {
-      const url = `http://127.0.0.1:${this.port}`;
-      return ok({ port: this.port, proxyUrl: url });
+      return ok({ port: this.port, proxyUrl: this.proxyUrl! });
     }
 
     const proxyLogger = this.logger.child({ module: 'TranslationProxy' });
@@ -148,7 +147,6 @@ export class ProxyManager {
 
     this.proxy = proxy;
     this.port = startResult.value.port;
-    const url = `http://127.0.0.1:${this.port}`;
 
     this.logger.info('Translation proxy started', {
       port: this.port,
@@ -156,7 +154,7 @@ export class ProxyManager {
       targetModel: this.config.targetModel,
     });
 
-    return ok({ port: this.port, proxyUrl: url });
+    return ok({ port: this.port, proxyUrl: this.proxyUrl! });
   }
 
   /**
