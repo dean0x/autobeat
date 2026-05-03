@@ -24,7 +24,13 @@ import {
   isCommandInPath,
   SpawnOptions,
 } from '../core/agents.js';
-import { AgentConfig, Configuration, loadAgentConfig } from '../core/configuration.js';
+import {
+  AgentConfig,
+  Configuration,
+  isRuntimeSupportedForAgent,
+  loadAgentConfig,
+  RUNTIME_AGENT_SUPPORT,
+} from '../core/configuration.js';
 import { AutobeatError, agentMisconfigured, ErrorCode, processSpawnFailed } from '../core/errors.js';
 import { err, ok, Result, tryCatch } from '../core/result.js';
 
@@ -153,6 +159,64 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return agentConfig.model;
   }
 
+  /**
+   * Resolve the runtime wrapper configuration for this spawn.
+   *
+   * When a runtime (e.g. 'ollama') is configured, spawn is wrapped:
+   *   ollama launch <agent-command> [--model <model>] --yes -- <inner-args...>
+   *
+   * Ollama handles model routing and API compatibility, so the inner agent
+   * command does not receive --model, auth env vars, or baseUrl overrides.
+   *
+   * Returns ok(null) when no runtime is configured (normal direct spawn).
+   * Returns err(agentMisconfigured) when the runtime doesn't support this agent.
+   *
+   * @param agentConfig - Pre-loaded agent config
+   * @param taskModel - Optional per-task model override
+   */
+  protected resolveRuntime(
+    agentConfig: AgentConfig,
+    taskModel?: string,
+  ): Result<{
+    command: string;
+    prependArgs: readonly string[];
+    suppressModel: boolean;
+    suppressAuth: boolean;
+    suppressBaseUrl: boolean;
+  } | null> {
+    if (!agentConfig.runtime) return ok(null);
+
+    if (!isRuntimeSupportedForAgent(agentConfig.runtime, this.provider)) {
+      return err(
+        agentMisconfigured(
+          this.provider,
+          `Runtime '${agentConfig.runtime}' does not support agent '${this.provider}'. ` +
+            `Supported agents: ${RUNTIME_AGENT_SUPPORT[agentConfig.runtime].join(', ')}. ` +
+            `Clear with: beat agents config set ${this.provider} runtime ""`,
+        ),
+      );
+    }
+
+    if (agentConfig.runtime === 'ollama') {
+      const effectiveModel = taskModel ?? agentConfig.model;
+      const modelArgs: string[] = effectiveModel ? ['--model', effectiveModel] : [];
+      return ok({
+        command: 'ollama',
+        prependArgs: ['launch', this.command, ...modelArgs, '--yes', '--'],
+        suppressModel: true,
+        suppressAuth: true,
+        suppressBaseUrl: true,
+      });
+    }
+
+    // Exhaustive guard: if a new runtime is added to RUNTIME_TARGETS but not handled
+    // above, fail loudly rather than silently ignoring the configuration.
+    const _exhaustive: never = agentConfig.runtime;
+    return err(
+      agentMisconfigured(this.provider, `Unhandled runtime: '${_exhaustive}'. This is a bug — please report it.`),
+    );
+  }
+
   spawn({
     prompt,
     workingDirectory,
@@ -163,25 +227,39 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     systemPrompt,
   }: SpawnOptions): Result<{ process: ChildProcess; pid: number }> {
     try {
-      // Pre-spawn: verify CLI binary exists before anything else
-      if (!isCommandInPath(this.command)) {
+      // Load agent config once — passed to resolveRuntime, resolveAuth, resolveBaseUrl, resolveModel
+      // to avoid redundant readFileSync + JSON.parse calls per spawn
+      const agentConfig = loadAgentConfig(this.provider);
+
+      // Resolve runtime wrapper (e.g. ollama) before binary check so we know which binary to verify
+      const runtimeResult = this.resolveRuntime(agentConfig, model);
+      if (!runtimeResult.ok) return runtimeResult;
+      const runtimeConfig = runtimeResult.value;
+
+      // Pre-spawn: verify the correct CLI binary exists
+      const commandToCheck = runtimeConfig ? runtimeConfig.command : this.command;
+      if (!isCommandInPath(commandToCheck)) {
         return err(
           agentMisconfigured(
             this.provider,
-            [`CLI binary '${this.command}' not found in PATH.`, `  Install: ${this.authConfig.loginHint}`].join('\n'),
+            [
+              `CLI binary '${commandToCheck}' not found in PATH.`,
+              runtimeConfig
+                ? '  Install Ollama: https://ollama.com/download'
+                : `  Install: ${this.authConfig.loginHint}`,
+            ].join('\n'),
           ),
         );
       }
 
-      // Load agent config once — passed to resolveAuth, resolveBaseUrl, resolveModel
-      // to avoid redundant readFileSync + JSON.parse calls per spawn
-      const agentConfig = loadAgentConfig(this.provider);
-
-      // Pre-spawn auth validation
-      const authResult = this.resolveAuth(agentConfig);
+      // Pre-spawn auth validation (skipped when runtime handles auth)
+      const authResult = runtimeConfig?.suppressAuth
+        ? ok({ injectedEnv: {} as Record<string, string> })
+        : this.resolveAuth(agentConfig);
       if (!authResult.ok) return authResult;
 
-      const resolvedModel = this.resolveModel(agentConfig, model);
+      // Model suppressed from inner args when runtime handles model routing
+      const resolvedModel = runtimeConfig?.suppressModel ? undefined : this.resolveModel(agentConfig, model);
 
       // Resolve system prompt injection
       let effectivePrompt = prompt;
@@ -215,7 +293,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           ([key]) => !this.envPrefixesToStrip.some((prefix) => key.startsWith(prefix)) && !exactMatches.includes(key),
         ),
       );
-      const baseUrlEnv = this.resolveBaseUrl(agentConfig);
+      // Base URL suppressed from inner env when runtime handles API routing
+      const baseUrlEnv = runtimeConfig?.suppressBaseUrl ? {} : this.resolveBaseUrl(agentConfig);
       // NOTE: AUTOBEAT_ prefix is NOT in envPrefixesToStrip — it is preserved in cleanEnv.
       // We explicitly set AUTOBEAT_WORKER and AUTOBEAT_TASK_ID here, and optionally
       // AUTOBEAT_ORCHESTRATOR_ID so sub-tasks spawned by this agent are attributed to
@@ -249,7 +328,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         ...(safeOrchestratorId && { AUTOBEAT_ORCHESTRATOR_ID: safeOrchestratorId }),
       };
 
-      const child = spawn(this.command, [...args], {
+      // When runtime is active, wrap the command: ollama launch <agent> [--model x] --yes -- <inner-args>
+      const spawnCommand = runtimeConfig ? runtimeConfig.command : this.command;
+      const spawnArgs = runtimeConfig ? [...runtimeConfig.prependArgs, ...args] : args;
+
+      const child = spawn(spawnCommand, spawnArgs, {
         cwd: workingDirectory,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
