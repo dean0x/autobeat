@@ -19,7 +19,10 @@ import {
   loadAgentConfig,
   resetAgentConfig,
   saveAgentConfig,
+  isRuntimeSupportedForAgent,
   PROXY_TARGETS,
+  RUNTIME_AGENT_SUPPORT,
+  RUNTIME_TARGETS,
 } from '../core/configuration.js';
 import {
   EvalMode,
@@ -385,6 +388,13 @@ const ConfigureAgentSchema = z.object({
     .optional()
     .describe(
       'API proxy target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
+    ),
+  runtime: z
+    // RUNTIME_TARGETS is the canonical list; '' is the "clear" sentinel.
+    .enum([...RUNTIME_TARGETS, ''] as const satisfies readonly [string, ...string[]])
+    .optional()
+    .describe(
+      'Runtime to wrap agent spawns (set action). Supported: "ollama". Wraps spawn with `ollama launch`. Supported agents: claude, codex. Mutually exclusive with proxy — runtime takes precedence. Empty string clears.',
     ),
 });
 
@@ -1752,6 +1762,11 @@ export class MCPAdapter {
                     description:
                       'API proxy target (set action). Supported: "openai". Routes Anthropic API calls through a local proxy that translates to the target format. Requires baseUrl and apiKey. Empty string clears.',
                   },
+                  runtime: {
+                    type: 'string',
+                    description:
+                      'Runtime to wrap agent spawns (set action). Supported: "ollama". Wraps spawn with `ollama launch`. Supported agents: claude, codex. Empty string clears.',
+                  },
                 },
                 required: ['agent'],
               },
@@ -3076,6 +3091,7 @@ export class MCPAdapter {
         ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
         ...(agentConfig.model && { model: agentConfig.model }),
         ...(agentConfig.proxy && { proxy: agentConfig.proxy }),
+        ...(agentConfig.runtime && { runtime: agentConfig.runtime }),
         ...(claudeBaseUrlWarning && { warning: claudeBaseUrlWarning }),
       };
     });
@@ -3437,7 +3453,7 @@ export class MCPAdapter {
       };
     }
 
-    const { agent, action, apiKey, baseUrl, model, proxy } = parseResult.data;
+    const { agent, action, apiKey, baseUrl, model, proxy, runtime } = parseResult.data;
 
     switch (action) {
       case 'check': {
@@ -3468,6 +3484,7 @@ export class MCPAdapter {
           ...(agentConfig.baseUrl && { baseUrl: agentConfig.baseUrl }),
           ...(agentConfig.model && { model: agentConfig.model }),
           ...(agentConfig.proxy && { proxy: agentConfig.proxy }),
+          ...(agentConfig.runtime && { runtime: agentConfig.runtime }),
           ...(checkWarning && { warning: checkWarning }),
           ...(connectivity !== undefined && { connectivity }),
         };
@@ -3483,7 +3500,7 @@ export class MCPAdapter {
       }
 
       case 'set': {
-        if (!apiKey && !baseUrl && !model && proxy === undefined) {
+        if (!apiKey && !baseUrl && !model && proxy === undefined && runtime === undefined) {
           return {
             content: [
               {
@@ -3491,7 +3508,30 @@ export class MCPAdapter {
                 text: JSON.stringify(
                   {
                     success: false,
-                    error: 'At least one of apiKey, baseUrl, model, or proxy is required for set action',
+                    error: 'At least one of apiKey, baseUrl, model, proxy, or runtime is required for set action',
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Validate agent-runtime compatibility before writing
+        // runtime is 'ollama' | '' — truthy check excludes the clear-sentinel ''
+        if (runtime && !isRuntimeSupportedForAgent(runtime, agent)) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    error:
+                      `Runtime '${runtime}' does not support agent '${agent}'. ` +
+                      `Supported agents: ${RUNTIME_AGENT_SUPPORT[runtime].join(', ')}`,
                   },
                   null,
                   2,
@@ -3506,7 +3546,7 @@ export class MCPAdapter {
         // result before returning so that a late failure reports which fields
         // were already saved and which failed.
         type WriteAttempt = {
-          key: 'apiKey' | 'baseUrl' | 'model' | 'proxy';
+          key: 'apiKey' | 'baseUrl' | 'model' | 'proxy' | 'runtime';
           label: string;
           ok: boolean;
           error?: string;
@@ -3553,6 +3593,16 @@ export class MCPAdapter {
           });
         }
 
+        if (runtime !== undefined) {
+          const result = saveAgentConfig(agent, 'runtime', runtime);
+          attempts.push({
+            key: 'runtime',
+            label: runtime === '' ? 'runtime cleared' : `runtime set to ${runtime}`,
+            ok: result.ok,
+            error: result.ok ? undefined : result.error,
+          });
+        }
+
         const failed = attempts.filter((a) => !a.ok);
         if (failed.length > 0) {
           const saved = attempts.filter((a) => a.ok).map((a) => a.key);
@@ -3580,6 +3630,7 @@ export class MCPAdapter {
         const effectiveBaseUrl = baseUrl !== undefined ? baseUrl : currentConfig.baseUrl;
         const effectiveApiKey = apiKey ?? currentConfig.apiKey;
         const effectiveProxy = proxy !== undefined ? proxy : currentConfig.proxy;
+        const effectiveRuntime = runtime !== undefined ? runtime : currentConfig.runtime;
 
         const warnings: string[] = [];
         const baseUrlWarning = this.getClaudeBaseUrlWarning(agent, effectiveBaseUrl, effectiveApiKey);
@@ -3591,6 +3642,11 @@ export class MCPAdapter {
           if (!effectiveApiKey) warnings.push('proxy requires apiKey to be set');
           if (!currentConfig.model && !attempts.some((a) => a.key === 'model'))
             warnings.push('proxy requires model to be set');
+        }
+
+        // Warn when both runtime and proxy are set (runtime takes precedence)
+        if (effectiveRuntime && effectiveProxy) {
+          warnings.push('runtime and proxy are mutually exclusive — runtime takes precedence');
         }
 
         // Probe connectivity when a baseUrl-related field was changed and baseUrl is available.

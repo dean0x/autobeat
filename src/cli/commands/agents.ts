@@ -15,14 +15,19 @@ import {
   AGENT_PROVIDERS,
   checkAgentAuth,
   isAgentProvider,
+  isCommandInPath,
   maskApiKey,
 } from '../../core/agents.js';
 import {
+  isRuntimeSupportedForAgent,
   loadAgentConfig,
   loadConfiguration,
-  resetAgentConfig,
-  saveAgentConfig,
   PROXY_TARGETS,
+  resetAgentConfig,
+  RUNTIME_AGENT_SUPPORT,
+  RUNTIME_TARGETS,
+  saveAgentConfig,
+  type Runtime,
 } from '../../core/configuration.js';
 import { probeUrl } from '../../utils/url-probe.js';
 import * as ui from '../ui.js';
@@ -91,6 +96,12 @@ export async function checkAgents(): Promise<void> {
         ui.info(`  ${ui.dim(line)}`);
       }
     }
+
+    if (agentConfig.runtime) {
+      const ollamaFound = isCommandInPath('ollama');
+      const ollamaStatus = ollamaFound ? ui.cyan('[found]') : '[not found]';
+      ui.info(`  ${ui.dim(`runtime: ${agentConfig.runtime} — ollama CLI ${ollamaStatus}`)}`);
+    }
   }
 
   process.exit(0);
@@ -105,7 +116,7 @@ export async function agentsConfigSet(
   value: string | undefined,
 ): Promise<void> {
   if (!agent || !key || !value) {
-    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model|proxy> <value>');
+    ui.error('Usage: beat agents config set <agent> <apiKey|baseUrl|model|proxy|runtime> <value>');
     process.exit(1);
   }
 
@@ -114,8 +125,8 @@ export async function agentsConfigSet(
     process.exit(1);
   }
 
-  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model' && key !== 'proxy') {
-    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model, proxy`);
+  if (key !== 'apiKey' && key !== 'baseUrl' && key !== 'model' && key !== 'proxy' && key !== 'runtime') {
+    ui.error(`Unknown config key: "${key}". Valid keys: apiKey, baseUrl, model, proxy, runtime`);
     process.exit(1);
   }
 
@@ -131,6 +142,22 @@ export async function agentsConfigSet(
   if (key === 'proxy' && value !== '') {
     if (!(PROXY_TARGETS as readonly string[]).includes(value)) {
       ui.error(`Unsupported proxy target: "${value}". Supported values: ${PROXY_TARGETS.join(', ')}`);
+      process.exit(1);
+    }
+  }
+
+  // Validate runtime is a supported target (empty string clears)
+  if (key === 'runtime' && value !== '') {
+    if (!(RUNTIME_TARGETS as readonly string[]).includes(value)) {
+      ui.error(`Unsupported runtime: "${value}". Supported values: ${RUNTIME_TARGETS.join(', ')}`);
+      process.exit(1);
+    }
+    // Check agent-runtime compatibility
+    if (!isRuntimeSupportedForAgent(value as Runtime, agent)) {
+      ui.error(
+        `Runtime '${value}' does not support agent '${agent}'. ` +
+          `Supported agents: ${RUNTIME_AGENT_SUPPORT[value as Runtime].join(', ')}`,
+      );
       process.exit(1);
     }
   }
@@ -186,6 +213,16 @@ export async function agentsConfigSet(
     if (!config.model) ui.note('proxy requires model to be set', 'Warning');
   }
 
+  // Warn about mutual exclusivity between runtime and proxy
+  if (key === 'runtime' && value !== '') {
+    const config = loadAgentConfig(agent);
+    if (config.proxy) ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
+  }
+  if (key === 'proxy' && value !== '') {
+    const config = loadAgentConfig(agent);
+    if (config.runtime) ui.note('runtime and proxy are mutually exclusive — runtime takes precedence', 'Warning');
+  }
+
   process.exit(0);
 }
 
@@ -217,6 +254,9 @@ export async function agentsConfigShow(agent?: string): Promise<void> {
     }
     if (config.proxy) {
       parts.push(`proxy: ${config.proxy}`);
+    }
+    if (config.runtime) {
+      parts.push(`runtime: ${config.runtime}`);
     }
 
     if (parts.length > 0) {

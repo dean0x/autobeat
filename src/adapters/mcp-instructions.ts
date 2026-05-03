@@ -116,6 +116,20 @@ When proxy is set, a local proxy starts automatically at boot that translates An
 
 Set proxy to "" (empty string) to disable and return to direct Anthropic API access.
 
+### Ollama Runtime (runtime)
+Use \`runtime\` to run agents through Ollama for local model execution:
+1. ConfigureAgent action: "set", agent: "claude", runtime: "ollama"
+2. ConfigureAgent action: "set", agent: "claude", model: "qwen3.6"
+
+When runtime is "ollama", spawns are wrapped with \`ollama launch\`, which handles
+model routing and API compatibility. Ollama must be installed and running.
+
+Supported agents: claude, codex. Gemini CLI is not supported by ollama launch.
+
+Set runtime to "" (empty string) to disable and return to direct API access.
+
+Note: runtime and proxy are mutually exclusive — runtime takes precedence.
+
 Model resolution order (highest priority wins):
 1. Per-task \`model\` field (DelegateTask, pipeline step, etc.)
 2. Agent config default (\`ConfigureAgent\` set model)

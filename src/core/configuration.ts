@@ -240,11 +240,41 @@ export const PROXY_TARGETS = ['openai'] as const satisfies readonly string[];
  */
 export type ProxyTarget = (typeof PROXY_TARGETS)[number];
 
+/**
+ * Supported runtime targets as a const tuple.
+ * Runtimes wrap the agent CLI command (e.g. 'ollama launch claude ...').
+ * Empty string is the "clear" sentinel accepted at save boundaries; it is
+ * NOT included here because stored config never holds an empty string.
+ */
+export const RUNTIME_TARGETS = ['ollama'] as const satisfies readonly string[];
+
+/**
+ * Union type derived from RUNTIME_TARGETS — no manual sync required.
+ */
+export type Runtime = (typeof RUNTIME_TARGETS)[number];
+
+/**
+ * Which agent providers each runtime supports.
+ * Gemini CLI is not supported by 'ollama launch'.
+ */
+export const RUNTIME_AGENT_SUPPORT: Readonly<Record<Runtime, readonly AgentProvider[]>> = Object.freeze({
+  ollama: ['claude', 'codex'],
+});
+
+/**
+ * Returns true when the given runtime supports the given agent provider.
+ * Put here (not agents.ts) to avoid circular imports: configuration.ts → agents.ts.
+ */
+export function isRuntimeSupportedForAgent(runtime: Runtime, provider: AgentProvider): boolean {
+  return (RUNTIME_AGENT_SUPPORT[runtime] as readonly string[]).includes(provider);
+}
+
 export interface AgentConfig {
   readonly apiKey?: string;
   readonly baseUrl?: string;
   readonly model?: string;
   readonly proxy?: ProxyTarget;
+  readonly runtime?: Runtime;
 }
 
 /**
@@ -268,6 +298,9 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
     proxy: (PROXY_TARGETS as readonly string[]).includes(record.proxy as string)
       ? (record.proxy as ProxyTarget)
       : undefined,
+    runtime: (RUNTIME_TARGETS as readonly string[]).includes(record.runtime as string)
+      ? (record.runtime as Runtime)
+      : undefined,
   };
 }
 
@@ -280,7 +313,7 @@ export function loadAgentConfig(provider: AgentProvider): AgentConfig {
  */
 export function saveAgentConfig(
   provider: AgentProvider,
-  key: 'apiKey' | 'baseUrl' | 'model' | 'proxy',
+  key: 'apiKey' | 'baseUrl' | 'model' | 'proxy' | 'runtime',
   value: string,
 ): ConfigWriteResult {
   const existing = loadConfigFile();
