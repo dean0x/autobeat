@@ -2,9 +2,10 @@
 
 ## Latest Release
 
-- **[v1.4.0](./RELEASE_NOTES_v1.4.0.md)** — System Prompts & Custom Orchestrators (2026-04-22)
+- **[v1.5.0](./RELEASE_NOTES_v1.5.0.md)** — Cross-Platform Agents & Interactive Orchestration (2026-05-08)
 
 ## Previous Releases
+- [v1.4.0](./RELEASE_NOTES_v1.4.0.md) — System Prompts & Custom Orchestrators (2026-04-22)
 - [v1.3.1](./RELEASE_NOTES_v1.3.1.md) — Preflight Script Hardening (2026-04-16)
 - [v1.3.0](./RELEASE_NOTES_v1.3.0.md) — Dashboard Redesign, Eval Redesign & Reliability (2026-04-16)
 - [v1.2.0](./RELEASE_NOTES_v1.2.0.md) — Terminal Dashboard & Agent Config Passthrough (2026-04-10)

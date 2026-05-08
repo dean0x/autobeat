@@ -2,7 +2,25 @@
 
 This document lists all features that are **currently implemented and working** in Autobeat.
 
-Last Updated: April 2026 (2026-04-22)
+Last Updated: May 2026 (2026-05-08)
+
+## ✅ Cross-Platform Agents & Interactive Orchestration (v1.5.0)
+
+- **API translation proxy**: HTTP proxy translating Anthropic Messages API to OpenAI Chat Completions; enables Claude on any OpenAI-compatible backend (OpenRouter, Together, vLLM, etc.)
+- **Proxy configuration**: `beat agents config set <agent> proxy openai` CLI and `ConfigureAgent` MCP tool with `proxy` parameter
+- **Translation architecture**: Codecs (bidirectional format translation), middleware (streaming, errors, headers), IR (format-agnostic message passing)
+- **Ollama runtime integration**: Wraps agent spawns with `ollama launch` for local LLM execution; `beat agents config set <agent> runtime ollama`
+- **Proxy/runtime mutual exclusivity**: Setting proxy clears runtime and vice versa
+- **Model schema relaxed**: Model names accept `/`, `:`, `@` separators for Ollama-style identifiers (e.g., `llama3:8b`)
+- **Interactive orchestrator mode**: `beat orchestrate --interactive/-i "<goal>"` — foreground TTY with SIGINT coordination and PID tracking
+- **Dashboard layout overhaul**: Responsive 3-tile top row (Tasks, Workers, Orchestrations), full-width entity browser, full entity names, degraded modes for narrow terminals
+- **Pipeline management MCP tools**: `PipelineStatus`, `ListPipelines`, `CancelPipeline` for first-class pipeline entities
+- **Skills/docs alignment**: Skill content updated to cover v1.2.0–v1.4.0 features
+
+### Database (v1.5.0)
+
+- **Migration v24**: `pipelines` table — first-class pipeline entities with steps, status, foreign keys, and indexes
+- **Migration v25**: `orchestrations.mode` (CHECK: standard/interactive) and `orchestrations.pid` columns
 
 ## ✅ System Prompts & Custom Orchestrators (v1.4.0)
 

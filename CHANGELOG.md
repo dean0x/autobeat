@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.5.0] - 2026-05-08
+
+### Added
+- **API translation proxy**: HTTP proxy translating Anthropic Messages API to OpenAI Chat Completions; enables Claude on OpenAI-compatible backends. `beat agents config set <agent> proxy openai` (#152)
+- **Ollama runtime integration**: Wraps agent spawns with `ollama launch` for local LLM execution. `beat agents config set <agent> runtime ollama`. Translate → proxy rename (#157)
+- **Interactive orchestrator mode**: `beat orchestrate --interactive/-i "<goal>"` — foreground TTY with SIGINT coordination and PID tracking (#159)
+- **Dashboard layout overhaul**: Responsive 3-tile top row, full-width entity browser, full entity names, degraded modes (#153)
+- **Pipeline management MCP tools**: `PipelineStatus`, `ListPipelines`, `CancelPipeline` (#153)
+- **ConfigureAgent extensions**: `proxy` and `runtime` parameters (#152, #157)
+
+### Changed
+- **Model schema relaxed**: Model names accept `/`, `:`, `@` separators for Ollama-style identifiers (#157)
+
+### Documentation
+- Skills/docs alignment with v1.2.0–v1.4.0 features (#158)
+
+### Database
+- **Migration v24**: `pipelines` table — first-class pipeline entities with steps, status, FKs, indexes
+- **Migration v25**: `orchestrations.mode` (CHECK: standard/interactive) and `orchestrations.pid` columns
+
+---
+
 ## [1.4.0] - 2026-04-22
 
 ### Added

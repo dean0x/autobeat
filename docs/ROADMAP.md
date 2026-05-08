@@ -1,12 +1,17 @@
 # Autobeat Development Roadmap
 
-## Current Status: v1.4.0 RELEASED (2026-04-22)
+## Current Status: v1.5.0 RELEASED (2026-05-08)
 
-System prompt support across all three agent adapters (Claude, Codex, Gemini) and custom orchestrator scaffolding (`beat orchestrate init` + `InitCustomOrchestrator` MCP tool). Includes database migration v23.
+API translation proxy enables Claude on OpenAI-compatible backends. Ollama runtime wraps agent spawns for local LLM execution. Interactive orchestrator mode brings foreground TTY orchestration. Dashboard layout overhauled with 3-tile responsive design. Skills/docs aligned with v1.2.0–v1.4.0 features. Database migrations v24-v25.
 
 ---
 
 ## Released Versions
+
+### v1.5.0 - Cross-Platform Agents & Interactive Orchestration ✅
+**Status**: **RELEASED** (2026-05-08)
+
+API translation proxy (Anthropic→OpenAI Chat Completions), Ollama runtime integration, interactive orchestrator mode (`--interactive/-i`), dashboard layout overhaul (3-tile top row, entity browser), pipeline management MCP tools, skills/docs alignment. Database migrations v24-v25.
 
 ### v1.4.0 - System Prompts & Custom Orchestrators ✅
 **Status**: **RELEASED** (2026-04-22)
