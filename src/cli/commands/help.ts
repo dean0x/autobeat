@@ -70,6 +70,24 @@ ${bold('Agent Commands:')}
   ${cyan('agents config show')} <agent>               Show stored config for an agent
   ${cyan('agents config reset')} <agent>              Remove stored config for an agent
 
+${bold('Orchestrate Commands:')}
+  ${cyan('orchestrate')} <goal> [options]       Start orchestration (detached by default)
+    -f, --foreground               Block and wait for completion
+    -i, --interactive              Launch interactive terminal session
+    -w, --working-directory DIR    Working directory for workers
+    -a, --agent AGENT              AI agent to use (claude, codex, gemini)
+    -m, --model MODEL              Model override (e.g. claude-opus-4-5)
+    --max-depth N                  Max delegation depth (1-10, default: 3)
+    --max-workers N                Max concurrent workers (1-20, default: 5)
+    --max-iterations N             Max orchestrator iterations (1-200, default: 50)
+    --system-prompt TEXT           Custom system prompt
+
+  ${cyan('orchestrate init')} <goal> [options]  Initialize custom orchestrator scaffolding
+    --template standard|interactive  Template type (default: standard)
+  ${cyan('orchestrate status')} <id>            Show orchestration details
+  ${cyan('orchestrate list')} [--status <s>]    List orchestrations
+  ${cyan('orchestrate cancel')} <id> [reason]   Cancel orchestration
+
 ${bold('Pipeline Commands:')}
   ${cyan('pipeline')} <prompt> [<prompt>]...   Create chained one-time schedules
     Example: pipeline "set up db" "run migrations" "seed data"
@@ -116,6 +134,12 @@ ${bold('Examples:')}
   beat schedule create "deploy" --at "2025-03-01T09:00:00Z"
   beat schedule list --status active
   beat schedule pause <id>
+
+  # Orchestration (multi-agent coordination)
+  beat orchestrate "refactor auth module"               # Detached
+  beat orchestrate "build feature X" --foreground       # Blocking
+  beat orchestrate -i "design API"                      # Interactive session
+  beat orchestrate init "migrate to v2"                 # Scaffold custom orchestrator
 
   # Pipeline (sequential chained tasks)
   beat pipeline "setup db" "run migrations" "seed data"
