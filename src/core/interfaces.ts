@@ -884,7 +884,14 @@ export interface OrchestrationService {
       userPrompt: string;
     }>
   >;
-  updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<void>>;
+  /**
+   * Store the child process PID for remote cancel support.
+   *
+   * @returns ok(true) if PID was stored (orchestration still RUNNING),
+   *   ok(false) if status already transitioned (e.g., remote cancel won the race —
+   *   caller should kill the child process since cancel couldn't reach it without a PID).
+   */
+  updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<boolean>>;
   /**
    * Finalize an interactive orchestration after the child process exits (or spawn failure).
    * Determines terminal status from outcome, updates DB, emits lifecycle event.

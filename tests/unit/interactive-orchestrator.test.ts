@@ -656,6 +656,8 @@ describe('cancelOrchestration - interactive mode', () => {
 
     const pidResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 99999);
     expect(pidResult.ok).toBe(true);
+    if (!pidResult.ok) return;
+    expect(pidResult.value).toBe(true);
 
     const cancelResult = await service.cancelOrchestration(createResult.value.orchestration.id);
     expect(cancelResult.ok).toBe(true);
@@ -892,6 +894,8 @@ describe('updateInteractiveOrchestrationPid - PID validation', () => {
 
     const updateResult = await service.updateInteractiveOrchestrationPid(createResult.value.orchestration.id, 12345);
     expect(updateResult.ok).toBe(true);
+    if (!updateResult.ok) return;
+    expect(updateResult.value).toBe(true);
   });
 
   it('should reject PID of zero', async () => {
@@ -937,13 +941,37 @@ describe('updateInteractiveOrchestrationPid - PID validation', () => {
     createdStateFiles.push(createResult.value.orchestration.stateFilePath);
     const id = createResult.value.orchestration.id;
 
-    const updateResult = await service.updateInteractiveOrchestrationPid(id, 99999);
-    expect(updateResult.ok).toBe(true);
+    const pidResult = await service.updateInteractiveOrchestrationPid(id, 99999);
+    expect(pidResult.ok).toBe(true);
+    if (!pidResult.ok) return;
+    expect(pidResult.value).toBe(true);
 
     const dbResult = await orchestrationRepo.findById(id);
     expect(dbResult.ok).toBe(true);
     if (!dbResult.ok) return;
     expect(dbResult.value!.pid).toBe(99999);
+  });
+
+  it('should return false when orchestration already cancelled', async () => {
+    const createResult = await service.createInteractiveOrchestration({ goal: 'Test cancel race' });
+    expect(createResult.ok).toBe(true);
+    if (!createResult.ok) return;
+    createdStateFiles.push(createResult.value.orchestration.stateFilePath);
+    const id = createResult.value.orchestration.id;
+
+    const cancelResult = await service.cancelOrchestration(id);
+    expect(cancelResult.ok).toBe(true);
+
+    const pidResult = await service.updateInteractiveOrchestrationPid(id, 12345);
+    expect(pidResult.ok).toBe(true);
+    if (!pidResult.ok) return;
+    expect(pidResult.value).toBe(false);
+
+    const dbResult = await orchestrationRepo.findById(id);
+    expect(dbResult.ok).toBe(true);
+    if (!dbResult.ok) return;
+    expect(dbResult.value!.pid).toBeUndefined();
+    expect(dbResult.value!.status).toBe('cancelled');
   });
 });
 

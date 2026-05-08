@@ -414,7 +414,7 @@ export class OrchestrationManagerService implements OrchestrationService {
     return ok({ orchestration, systemPrompt: systemPromptWithAddendum, userPrompt: finalUserPrompt });
   }
 
-  async updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<void>> {
+  async updateInteractiveOrchestrationPid(id: OrchestratorId, pid: number): Promise<Result<boolean>> {
     if (!Number.isInteger(pid) || pid <= 0) {
       return err(
         new AutobeatError(ErrorCode.INVALID_INPUT, `Invalid PID: ${pid}. PID must be a positive integer.`, { pid }),
@@ -433,7 +433,7 @@ export class OrchestrationManagerService implements OrchestrationService {
         pid,
       });
     }
-    return ok(undefined);
+    return ok(updateResult.value);
   }
 
   async finalizeInteractiveOrchestration(

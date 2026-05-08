@@ -154,15 +154,27 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
 
     const child = spawnResult.value.process;
 
+    // Register exit listener immediately — before any code that could trigger child exit
+    // (race-detected SIGTERM or double-Ctrl+C SIGKILL). Node.js exit events fire once;
+    // a listener registered after exit would hang forever.
+    const exitPromise = new Promise<number | null>((resolve) => {
+      child.on('exit', (code: number | null) => resolve(code));
+    });
+
+    let cancelled = false;
+
     const pidResult = await orchestrationService.updateInteractiveOrchestrationPid(
       orchestration.id,
       spawnResult.value.pid,
     );
     if (!pidResult.ok) {
       ui.info(`Warning: failed to store PID for remote cancel: ${pidResult.error.message}`);
+    } else if (!pidResult.value) {
+      ui.info('Orchestration was cancelled during startup — terminating child process.');
+      cancelled = true;
+      child.kill('SIGTERM');
     }
 
-    let cancelled = false;
     let sigintCount = 0;
     const originalSigintHandlers = process.listeners('SIGINT');
     process.removeAllListeners('SIGINT');
@@ -176,9 +188,7 @@ export async function handleOrchestrateInteractive(parsed: OrchestrateInteractiv
 
     ui.info('Launching interactive session...\n');
 
-    const exitCode = await new Promise<number | null>((resolve) => {
-      child.on('exit', (code: number | null) => resolve(code));
-    });
+    const exitCode = await exitPromise;
 
     process.removeAllListeners('SIGINT');
     for (const handler of originalSigintHandlers) {
