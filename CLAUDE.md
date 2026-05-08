@@ -133,7 +133,8 @@ npm run test:core && npm run test:handlers && npm run test:services && \
   npm run test:implementations && npm run test:cli && \
   npm run test:dashboard && npm run test:scheduling && \
   npm run test:checkpoints && npm run test:error-scenarios && \
-  npm run test:orchestration && npm run test:integration
+  npm run test:orchestration && npm run test:translation && \
+  npm run test:integration
 ```
 
 CI runs the full `npm run test:all` in the release workflow — do not attempt it from Claude Code.
@@ -246,6 +247,8 @@ Safety nets that exist in the codebase but are not part of the manual release st
 - `workers.last_heartbeat`, loops eval columns: `eval_type`, `judge_agent`, `judge_prompt`, `eval_prompt` (migration v21)
 - CHECK constraints on `eval_type` and `judge_agent` in loops table (migration v22)
 - `tasks.system_prompt` column: nullable TEXT for per-task system prompt injection (migration v23)
+- `pipelines` table: first-class pipeline entities with steps, status, FKs, indexes (migration v24)
+- `orchestrations.mode` and `orchestrations.pid` columns for interactive orchestrator mode (migration v25)
 
 ### Dependencies
 
@@ -256,7 +259,7 @@ When adding task dependencies:
 
 ### MCP Tools
 
-All tools use PascalCase: `DelegateTask`, `TaskStatus`, `TaskLogs`, `CancelTask`, `RetryTask`, `ResumeTask`, `CreatePipeline`, `CreateLoop`, `LoopStatus`, `ListLoops`, `CancelLoop`, `PauseLoop`, `ResumeLoop`, `ScheduleTask`, `SchedulePipeline`, `ScheduleLoop`, `ListSchedules`, `ScheduleStatus`, `PauseSchedule`, `ResumeSchedule`, `CancelSchedule`, `CreateOrchestrator`, `OrchestratorStatus`, `ListOrchestrators`, `CancelOrchestrator`, `InitCustomOrchestrator`, `ListAgents`, `ConfigureAgent`
+All tools use PascalCase: `DelegateTask`, `TaskStatus`, `TaskLogs`, `CancelTask`, `RetryTask`, `ResumeTask`, `CreatePipeline`, `PipelineStatus`, `ListPipelines`, `CancelPipeline`, `CreateLoop`, `LoopStatus`, `ListLoops`, `CancelLoop`, `PauseLoop`, `ResumeLoop`, `ScheduleTask`, `SchedulePipeline`, `ScheduleLoop`, `ListSchedules`, `ScheduleStatus`, `PauseSchedule`, `ResumeSchedule`, `CancelSchedule`, `CreateOrchestrator`, `OrchestratorStatus`, `ListOrchestrators`, `CancelOrchestrator`, `InitCustomOrchestrator`, `ListAgents`, `ConfigureAgent`
 
 `DelegateTask` accepts an optional `metadata.orchestratorId` field for orchestrator attribution. Long-running MCP servers should pass this so sub-tasks are attributed to the calling orchestration even when the process ID changes across restarts.
 
@@ -301,6 +304,12 @@ Quick reference for common operations:
 | Keyboard handlers | `src/cli/dashboard/keyboard/` |
 | Orchestrator prompt builder | `src/services/orchestrator-prompt.ts` |
 | Orchestrator scaffolding | `src/core/orchestrator-scaffold.ts` |
+| Translation proxy | `src/translation/proxy/` |
+| Translation codecs | `src/translation/codecs/` |
+| Translation middleware | `src/translation/middleware/` |
+| Pipeline repository | `src/implementations/pipeline-repository.ts` |
+| Pipeline handler | `src/services/handlers/pipeline-handler.ts` |
+| Interactive orchestrator | `src/cli/commands/orchestrate-interactive.ts` |
 
 ## Documentation Structure
 
