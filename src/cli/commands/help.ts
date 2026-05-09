@@ -29,6 +29,8 @@ ${bold('Task Commands:')}
     -p, --priority P0|P1|P2    Task priority (P0=critical, P1=high, P2=normal)
     -w, --working-directory D  Working directory for task execution
     -a, --agent AGENT          AI agent to use (claude, codex, gemini)
+    -m, --model MODEL          Model override (e.g. claude-sonnet-4-5-20250514)
+    --system-prompt TEXT        System prompt to inject into the agent
     --deps TASK_IDS            Comma-separated task IDs this task depends on (alias: --depends-on)
     -c, --continue TASK_ID     Continue from a dependency's checkpoint (alias: --continue-from)
     -t, --timeout MS           Task timeout in milliseconds
@@ -66,7 +68,7 @@ ${bold('Schedule Commands:')}
 ${bold('Agent Commands:')}
   ${cyan('agents list')}                List available AI agents
   ${cyan('agents check')}               Check agent auth status and readiness
-  ${cyan('agents config set')} <agent> apiKey <key>   Store an API key for an agent
+  ${cyan('agents config set')} <agent> <key> <value>  Set agent config (apiKey, baseUrl, model, proxy, runtime)
   ${cyan('agents config show')} <agent>               Show stored config for an agent
   ${cyan('agents config reset')} <agent>              Remove stored config for an agent
 
@@ -106,6 +108,8 @@ ${bold('Loop Commands:')}
 
   ${cyan('loop list')} [--status running|completed|failed|cancelled]
   ${cyan('loop status')} <loop-id> [--history] [--history-limit N]
+  ${cyan('loop pause')} <loop-id>                Pause an active loop
+  ${cyan('loop resume')} <loop-id>               Resume a paused loop
   ${cyan('loop cancel')} <loop-id> [--cancel-tasks] [reason]
 
 ${bold('Configuration:')}
