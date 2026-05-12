@@ -1728,11 +1728,10 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(iter1!.status).toBe('fail');
     });
 
-    it('OPTIMIZE: TaskFailed resets to gitStartCommitSha (undefined overrideTarget path)', async () => {
-      // I4: Prove that OPTIMIZE TaskFailed still uses the loop's default reset target
-      // (gitStartCommitSha when no bestIterationCommitSha exists) via the undefined
-      // overrideTarget path in resetIterationGitState. The strategy-conditional at line 268
-      // passes undefined for OPTIMIZE, delegating to getResetTargetSha().
+    it('OPTIMIZE: TaskFailed resets to gitStartCommitSha when no bestIterationCommitSha', async () => {
+      // I4: Prove that OPTIMIZE TaskFailed uses gitStartCommitSha (not preIterationCommitSha)
+      // when no bestIterationCommitSha exists. getResetTargetSha() falls through to the default
+      // branch — preIterationCommitSha is the RETRY-only path.
       const loop = await createGitLoop({
         strategy: LoopStrategy.OPTIMIZE,
         evalDirection: OptimizeDirection.MAXIMIZE,
@@ -1756,7 +1755,7 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(iters.ok).toBe(true);
       const iteration = iters.value.find((i) => i.iterationNumber === 1);
       expect(iteration).toBeDefined();
-      // preIterationCommitSha must NOT have been used (that is the RETRY-only override path)
+      // preIterationCommitSha must NOT have been used — that is the RETRY-only path
       expect(vi.mocked(resetToCommit)).not.toHaveBeenCalledWith('/tmp', iteration!.preIterationCommitSha);
       expect(iteration!.status).toBe('fail');
     });
