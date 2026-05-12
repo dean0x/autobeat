@@ -643,6 +643,9 @@ export interface Loop {
   readonly completedAt?: number;
 }
 
+/** All possible statuses for a single loop iteration lifecycle. */
+export type IterationStatus = 'running' | 'pass' | 'fail' | 'keep' | 'discard' | 'crash' | 'cancelled' | 'progress';
+
 /**
  * Loop iteration record - tracks individual iteration execution
  * ARCHITECTURE: Immutable record of each iteration attempt and outcome
@@ -653,7 +656,7 @@ export interface LoopIteration {
   readonly iterationNumber: number;
   readonly taskId?: TaskId; // Optional: NULL after ON DELETE SET NULL when task is cleaned up
   readonly pipelineTaskIds?: readonly TaskId[];
-  readonly status: 'running' | 'pass' | 'fail' | 'keep' | 'discard' | 'crash' | 'cancelled';
+  readonly status: IterationStatus;
   readonly score?: number;
   readonly exitCode?: number;
   readonly errorMessage?: string;

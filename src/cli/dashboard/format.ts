@@ -61,6 +61,7 @@ export function statusColor(status: string): string {
   switch (status) {
     case 'running':
     case 'planning':
+    case 'progress':
       return 'cyan';
     case 'active':
     case 'completed':
@@ -91,6 +92,7 @@ const STATUS_ICONS: Record<string, string> = {
   paused: '⏸',
   blocked: '⊖', // gray — blocked by dependency
   expired: '○', // gray — schedule expired
+  progress: '◉', // work committed, exit condition not yet met
 };
 
 /**
