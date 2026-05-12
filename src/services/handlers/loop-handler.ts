@@ -1110,7 +1110,14 @@ export class LoopHandler extends BaseEventHandler {
   }
 
   /**
-   * Check termination conditions (maxIterations, maxConsecutiveFailures)
+   * Check termination conditions (maxIterations, maxConsecutiveFailures).
+   *
+   * DECISION: For RETRY loops, maxConsecutiveFailures only counts consecutive crashes
+   * (TaskFailed events). Successful task completions that don't satisfy the exit condition
+   * are 'progress' — they reset the crash counter to 0. This means maxIterations is the
+   * sole budget for how many attempts a RETRY loop gets; maxConsecutiveFailures guards
+   * against agent instability (repeated crashes), not slow convergence.
+   *
    * @returns true if loop was terminated, false if it should continue
    */
   private async checkTerminationConditions(loop: Loop, consecutiveFailures: number): Promise<boolean> {
