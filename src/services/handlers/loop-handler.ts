@@ -868,7 +868,7 @@ export class LoopHandler extends BaseEventHandler {
         loop,
         iteration,
         'progress', // work preserved — exit condition not yet satisfied
-        loop.consecutiveFailures, // do NOT increment consecutive failures (task succeeded)
+        0, // task succeeded — consecutiveFailures reset to 0 (matches DB update below)
         { consecutiveFailures: 0 },
         {
           exitCode: evalResult.exitCode,
