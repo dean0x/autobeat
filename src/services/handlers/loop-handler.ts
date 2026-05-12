@@ -259,14 +259,9 @@ export class LoopHandler extends BaseEventHandler {
         // Task FAILED — record failure, check limits
         const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
-        // Git reset: RETRY resets to preIterationCommitSha to preserve prior 'progress' commits.
-        // OPTIMIZE uses the loop's default reset target (bestIterationCommitSha or gitStartCommitSha).
-        await this.resetIterationGitState(
-          loop,
-          iteration,
-          'task failure',
-          loop.strategy === LoopStrategy.RETRY ? iteration.preIterationCommitSha : undefined,
-        );
+        // Git reset: strategy-aware via getResetTargetSha.
+        // RETRY resets to preIterationCommitSha; OPTIMIZE to best/start commit.
+        await this.resetIterationGitState(loop, iteration, 'task failure');
 
         // Atomic: iteration fail + consecutiveFailures in single transaction
         const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
@@ -1440,13 +1435,17 @@ export class LoopHandler extends BaseEventHandler {
   }
 
   /**
-   * Determine the default commit SHA to reset to after a failed/discarded iteration.
-   * Used when no overrideTarget is provided (i.e., OPTIMIZE strategy or iteration discard).
-   * - Optimize: reset to best iteration's gitCommitSha if available, fallback to gitStartCommitSha
-   * - Retry callers pass overrideTarget = preIterationCommitSha directly (bypasses this method)
+   * Determine the commit SHA to reset to after a failed/discarded iteration.
+   * Strategy-aware: each strategy has its own reset semantics.
+   * - RETRY: reset to preIterationCommitSha to preserve accumulated 'progress' commits
+   * - OPTIMIZE: reset to bestIterationCommitSha if available, fallback to gitStartCommitSha
+   * - Default: reset to gitStartCommitSha
    * @returns SHA to reset to, or undefined if no git tracking
    */
-  private getResetTargetSha(loop: Loop): string | undefined {
+  private getResetTargetSha(loop: Loop, iteration: LoopIteration): string | undefined {
+    if (loop.strategy === LoopStrategy.RETRY) {
+      return iteration.preIterationCommitSha ?? loop.gitStartCommitSha;
+    }
     if (loop.strategy === LoopStrategy.OPTIMIZE && loop.bestIterationCommitSha) {
       return loop.bestIterationCommitSha;
     }
@@ -1458,25 +1457,23 @@ export class LoopHandler extends BaseEventHandler {
    * No-op when the iteration has no preIterationCommitSha (non-git loop).
    * Logs warnings on failure but never throws — git reset is best-effort.
    *
-   * DECISION: RETRY task failures (hard crash/killed process) reset to preIterationCommitSha rather
-   * than gitStartCommitSha so that accumulated 'progress' commits from prior iterations are preserved.
-   * The overrideTarget parameter allows callers to specify the exact reset point.
+   * DECISION: Reset target is determined by strategy via getResetTargetSha:
+   * - RETRY: resets to preIterationCommitSha to preserve accumulated 'progress' commits
+   * - OPTIMIZE: resets to bestIterationCommitSha (or gitStartCommitSha as fallback)
    *
    * @param loop - The loop owning the iteration
    * @param iteration - The iteration that failed/was discarded
    * @param context - Human-readable label for log messages (e.g., "task failure", "pipeline step failure")
-   * @param overrideTarget - Optional SHA to reset to instead of the loop's default reset target
    */
   private async resetIterationGitState(
     loop: Loop,
     iteration: LoopIteration,
     context: string,
-    overrideTarget?: string,
   ): Promise<void> {
     if (!iteration.preIterationCommitSha) return;
 
     try {
-      const resetTarget = overrideTarget ?? this.getResetTargetSha(loop);
+      const resetTarget = this.getResetTargetSha(loop, iteration);
       if (!resetTarget) return;
 
       const resetResult = await resetToCommit(loop.workingDirectory, resetTarget);
@@ -1614,14 +1611,9 @@ export class LoopHandler extends BaseEventHandler {
 
     await this.cancelRemainingPipelineTasks(iteration.pipelineTaskIds, taskId, loopId);
 
-    // Git reset: for RETRY, reset to preIterationCommitSha to preserve prior progress commits.
-    // For OPTIMIZE, use the loop's default reset target (best iteration or gitStartCommitSha).
-    await this.resetIterationGitState(
-      loop,
-      iteration,
-      'pipeline step failure',
-      loop.strategy === LoopStrategy.RETRY ? iteration.preIterationCommitSha : undefined,
-    );
+    // Git reset: strategy-aware via getResetTargetSha.
+    // RETRY resets to preIterationCommitSha; OPTIMIZE to best/start commit.
+    await this.resetIterationGitState(loop, iteration, 'pipeline step failure');
 
     // Atomic: iteration fail + consecutiveFailures in single transaction
     const newConsecutiveFailures = loop.consecutiveFailures + 1;
@@ -1856,14 +1848,9 @@ export class LoopHandler extends BaseEventHandler {
     if (task.status === TaskStatus.FAILED) {
       const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
-      // Git reset: for RETRY, reset to preIterationCommitSha to preserve prior progress commits.
-      // For OPTIMIZE, use the loop's default reset target.
-      await this.resetIterationGitState(
-        loop,
-        latestIteration,
-        'recovered task failure',
-        loop.strategy === LoopStrategy.RETRY ? latestIteration.preIterationCommitSha : undefined,
-      );
+      // Git reset: strategy-aware via getResetTargetSha.
+      // RETRY resets to preIterationCommitSha; OPTIMIZE to best/start commit.
+      await this.resetIterationGitState(loop, latestIteration, 'recovered task failure');
 
       // Atomic: iteration fail + consecutiveFailures in single transaction
       const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
