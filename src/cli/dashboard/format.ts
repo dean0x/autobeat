@@ -61,6 +61,7 @@ export function statusColor(status: string): string {
   switch (status) {
     case 'running':
     case 'planning':
+    case 'progress':
       return 'cyan';
     case 'active':
     case 'completed':
