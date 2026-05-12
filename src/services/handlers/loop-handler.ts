@@ -259,10 +259,14 @@ export class LoopHandler extends BaseEventHandler {
         // Task FAILED — record failure, check limits
         const newConsecutiveFailures = loop.consecutiveFailures + 1;
 
-        // Git reset: revert to preIterationCommitSha (not gitStartCommitSha) so accumulated
-        // 'progress' commits from prior successful-but-not-passing iterations are preserved.
-        // The failing task's own uncommitted changes are discarded, but prior iteration progress is kept.
-        await this.resetIterationGitState(loop, iteration, 'task failure', iteration.preIterationCommitSha);
+        // Git reset: RETRY resets to preIterationCommitSha to preserve prior 'progress' commits.
+        // OPTIMIZE uses the loop's default reset target (bestIterationCommitSha or gitStartCommitSha).
+        await this.resetIterationGitState(
+          loop,
+          iteration,
+          'task failure',
+          loop.strategy === LoopStrategy.RETRY ? iteration.preIterationCommitSha : undefined,
+        );
 
         // Atomic: iteration fail + consecutiveFailures in single transaction
         const updatedLoop = updateLoop(loop, { consecutiveFailures: newConsecutiveFailures });
