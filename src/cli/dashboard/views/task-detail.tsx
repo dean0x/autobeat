@@ -171,7 +171,6 @@ export const TaskDetail: React.FC<TaskDetailProps> = React.memo(
         {outputConfig?.visible && stream !== undefined && metadataHeight > 0 ? (
           <DetailOutputPanel
             stream={stream}
-            taskStatus={task.status}
             isActive={task.status === TaskStatus.QUEUED || task.status === TaskStatus.RUNNING}
             terminalRows={outputConfig.terminalRows}
             metadataHeight={metadataHeight}

@@ -476,7 +476,6 @@ export const OrchestrationDetail: React.FC<OrchestrationDetailProps> = React.mem
         {childOutputConfig?.visible && selectedChildStream !== undefined && metadataHeight > 0 ? (
           <DetailOutputPanel
             stream={selectedChildStream}
-            taskStatus={selectedChild?.status ?? ''}
             isActive={selectedChild?.status === TaskStatus.QUEUED || selectedChild?.status === TaskStatus.RUNNING}
             terminalRows={childOutputConfig.terminalRows}
             metadataHeight={metadataHeight}

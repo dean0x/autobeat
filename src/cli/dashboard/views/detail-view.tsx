@@ -39,10 +39,10 @@ function resolveTaskDependencyInfo(
         })
       : undefined;
 
-  const rawDependents = allTasks
+  const dependentsList = allTasks
     ?.filter((t) => t.dependsOn?.includes(taskId as TaskId))
     .map((t) => ({ taskId: t.id, status: t.status }));
-  const dependents = rawDependents && rawDependents.length > 0 ? rawDependents : undefined;
+  const dependents = dependentsList && dependentsList.length > 0 ? dependentsList : undefined;
 
   return { dependencies, dependents };
 }

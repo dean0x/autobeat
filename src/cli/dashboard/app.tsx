@@ -28,6 +28,7 @@ import { useTerminalSize } from './use-terminal-size.js';
 import { DetailView } from './views/detail-view.js';
 import { MetricsView } from './views/metrics-view.js';
 import { OrchestrationDetail } from './views/orchestration-detail.js';
+import type { WorkspaceNavState } from './workspace-types.js';
 import { createInitialWorkspaceNavState } from './workspace-types.js';
 
 interface AppProps {
@@ -94,13 +95,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     }
   }, []);
   const setWorkspaceNav = useCallback(
-    (
-      updaterOrValue:
-        | import('./workspace-types.js').WorkspaceNavState
-        | ((
-            prev: import('./workspace-types.js').WorkspaceNavState,
-          ) => import('./workspace-types.js').WorkspaceNavState),
-    ) => {
+    (updaterOrValue: WorkspaceNavState | ((prev: WorkspaceNavState) => WorkspaceNavState)) => {
       if (typeof updaterOrValue === 'function') {
         dispatch({ type: 'UPDATE_WORKSPACE_NAV', updater: updaterOrValue });
       } else {

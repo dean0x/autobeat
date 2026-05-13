@@ -3358,9 +3358,7 @@ describe('includeEvalResponse flag via callTool()', () => {
     const response = JSON.parse(result.content[0].text);
     expect(response.success).toBe(true);
     expect(response.iterations).toHaveLength(1);
-    expect(response.iterations[0].evalResponse).toBe(
-      '{"decision":"pass","score":0.9,"reasoning":"Excellent output"}',
-    );
+    expect(response.iterations[0].evalResponse).toBe('{"decision":"pass","score":0.9,"reasoning":"Excellent output"}');
   });
 
   it('should exclude evalResponse from iteration objects when includeEvalResponse is omitted (default)', async () => {

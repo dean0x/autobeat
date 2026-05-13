@@ -72,8 +72,6 @@ export function useElementHeight(): [React.RefObject<DOMElement | null>, number]
 interface DetailOutputPanelProps {
   /** The output stream to render */
   readonly stream: OutputStreamState;
-  /** Task status — drives the "Waiting for output..." vs "No output captured" empty state */
-  readonly taskStatus: string;
   /** Whether this stream belongs to a queued or running task */
   readonly isActive: boolean;
   /** Terminal rows available (used in tooSmall guard) */
