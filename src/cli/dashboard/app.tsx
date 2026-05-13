@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useReducer } from 'react';
 import type { TaskId } from '../../core/domain.js';
 import type { OutputRepository, ResourceMonitor } from '../../core/interfaces.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
+import type { DetailOutputConfig } from './components/detail-output-panel.js';
 import { Footer } from './components/footer.js';
 import { Header } from './components/header.js';
 import { computeMetricsLayout, computeWorkspaceLayout } from './layout.js';
@@ -165,7 +166,8 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
   // Workspace uses childTaskIds; detail uses a single-element array.
   const streamTaskIds =
     view.kind === 'workspace' ? childTaskIds : detailStreamTaskId !== null ? [detailStreamTaskId] : [];
-  const streamTaskStatuses: ReadonlyMap<TaskId, string> = view.kind === 'workspace' ? childTaskStatuses : EMPTY_STATUS_MAP;
+  const streamTaskStatuses: ReadonlyMap<TaskId, string> =
+    view.kind === 'workspace' ? childTaskStatuses : EMPTY_STATUS_MAP;
 
   const { streams } = useTaskOutputStream(
     outputRepository ?? ctx.outputRepository,
@@ -242,6 +244,12 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     }
 
     if (view.kind === 'detail') {
+      const detailOutputConfig: DetailOutputConfig = {
+        visible: nav.detailOutputVisible,
+        autoTail: nav.detailOutputAutoTail,
+        scrollOffset: nav.detailOutputScrollOffset,
+        terminalRows: terminalSize.rows,
+      };
       return (
         <DetailView
           entityType={view.entityType}
@@ -254,10 +262,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
           orchestrationChildrenTotal={data?.orchestrationChildrenTotal}
           loopIterationSelectedNumber={nav.loopIterationSelectedNumber}
           taskStreams={streams}
-          detailOutputVisible={nav.detailOutputVisible}
-          detailOutputAutoTail={nav.detailOutputAutoTail}
-          detailOutputScrollOffset={nav.detailOutputScrollOffset}
-          terminalRows={terminalSize.rows}
+          detailOutputConfig={detailOutputConfig}
         />
       );
     }

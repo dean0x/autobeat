@@ -7,6 +7,7 @@
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DetailOutputConfig } from '../../../../src/cli/dashboard/components/detail-output-panel.js';
 import { formatElapsed } from '../../../../src/cli/dashboard/format.js';
 import type { DashboardData } from '../../../../src/cli/dashboard/types.js';
 import { DetailView } from '../../../../src/cli/dashboard/views/detail-view.js';
@@ -42,6 +43,14 @@ import type { ScheduleExecution } from '../../../../src/core/interfaces.js';
 // ============================================================================
 // Test fixtures
 // ============================================================================
+
+/** Stable no-op output config for tests that don't exercise the output panel */
+const NO_OUTPUT_CONFIG: DetailOutputConfig = {
+  visible: false,
+  autoTail: true,
+  scrollOffset: 0,
+  terminalRows: 24,
+};
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -509,7 +518,13 @@ describe('OrchestrationDetail', () => {
 describe('DetailView', () => {
   it('shows entity-not-found when data is null', () => {
     const { lastFrame } = render(
-      <DetailView entityType="loops" entityId="loop-missing" data={null} scrollOffset={0} />,
+      <DetailView
+        entityType="loops"
+        entityId="loop-missing"
+        data={null}
+        scrollOffset={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
     );
     expect(lastFrame()).toContain('Entity not found');
   });
@@ -517,7 +532,13 @@ describe('DetailView', () => {
   it('shows entity-not-found when entity ID does not match', () => {
     const data = makeDashboardData({ loops: [makeLoop()] });
     const { lastFrame } = render(
-      <DetailView entityType="loops" entityId="loop-does-not-exist" data={data} scrollOffset={0} />,
+      <DetailView
+        entityType="loops"
+        entityId="loop-does-not-exist"
+        data={data}
+        scrollOffset={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
     );
     expect(lastFrame()).toContain('Entity not found');
   });
@@ -525,7 +546,15 @@ describe('DetailView', () => {
   it('dispatches to LoopDetail for loops entityType', () => {
     const loop = makeLoop();
     const data = makeDashboardData({ loops: [loop] });
-    const { lastFrame } = render(<DetailView entityType="loops" entityId={loop.id} data={data} scrollOffset={0} />);
+    const { lastFrame } = render(
+      <DetailView
+        entityType="loops"
+        entityId={loop.id}
+        data={data}
+        scrollOffset={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
+    );
     expect(lastFrame()).toContain('Loop Detail');
     expect(lastFrame()).toContain(loop.id);
   });
@@ -533,7 +562,15 @@ describe('DetailView', () => {
   it('dispatches to TaskDetail for tasks entityType', () => {
     const task = makeTask();
     const data = makeDashboardData({ tasks: [task] });
-    const { lastFrame } = render(<DetailView entityType="tasks" entityId={task.id} data={data} scrollOffset={0} />);
+    const { lastFrame } = render(
+      <DetailView
+        entityType="tasks"
+        entityId={task.id}
+        data={data}
+        scrollOffset={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
+    );
     expect(lastFrame()).toContain('Task Detail');
     expect(lastFrame()).toContain(task.id);
   });
@@ -542,7 +579,13 @@ describe('DetailView', () => {
     const schedule = makeSchedule();
     const data = makeDashboardData({ schedules: [schedule] });
     const { lastFrame } = render(
-      <DetailView entityType="schedules" entityId={schedule.id} data={data} scrollOffset={0} />,
+      <DetailView
+        entityType="schedules"
+        entityId={schedule.id}
+        data={data}
+        scrollOffset={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
     );
     expect(lastFrame()).toContain('Schedule Detail');
     expect(lastFrame()).toContain(schedule.id);
@@ -552,7 +595,13 @@ describe('DetailView', () => {
     const orch = makeOrchestration();
     const data = makeDashboardData({ orchestrations: [orch] });
     const { lastFrame } = render(
-      <DetailView entityType="orchestrations" entityId={orch.id} data={data} scrollOffset={0} />,
+      <DetailView
+        entityType="orchestrations"
+        entityId={orch.id}
+        data={data}
+        scrollOffset={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
     );
     expect(lastFrame()).toContain('Orchestration Detail');
     expect(lastFrame()).toContain(orch.id);
@@ -565,7 +614,15 @@ describe('DetailView', () => {
       loops: [loop],
       iterations: [iter],
     });
-    const { lastFrame } = render(<DetailView entityType="loops" entityId={loop.id} data={data} scrollOffset={0} />);
+    const { lastFrame } = render(
+      <DetailView
+        entityType="loops"
+        entityId={loop.id}
+        data={data}
+        scrollOffset={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
+    );
     expect(lastFrame()).toContain('(1 total)');
   });
 
@@ -577,7 +634,13 @@ describe('DetailView', () => {
       executions: [exec],
     });
     const { lastFrame } = render(
-      <DetailView entityType="schedules" entityId={schedule.id} data={data} scrollOffset={0} />,
+      <DetailView
+        entityType="schedules"
+        entityId={schedule.id}
+        data={data}
+        scrollOffset={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
     );
     expect(lastFrame()).toContain('(1 total)');
   });
@@ -999,7 +1062,14 @@ describe('DetailView — pipeline dispatch', () => {
   it('shows NotFound when pipeline entity is not in data', () => {
     const data = makeDashboardData({ pipelines: [] });
     const { lastFrame } = render(
-      <DetailView entityType="pipelines" entityId="pipeline-missing" data={data} scrollOffset={0} animFrame={0} />,
+      <DetailView
+        entityType="pipelines"
+        entityId="pipeline-missing"
+        data={data}
+        scrollOffset={0}
+        animFrame={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
     );
     expect(lastFrame()).toContain('Entity not found');
   });
@@ -1008,7 +1078,14 @@ describe('DetailView — pipeline dispatch', () => {
     const pipeline = makePipeline();
     const data = makeDashboardData({ pipelines: [pipeline as unknown as Pipeline] });
     const { lastFrame } = render(
-      <DetailView entityType="pipelines" entityId={pipeline.id} data={data} scrollOffset={0} animFrame={0} />,
+      <DetailView
+        entityType="pipelines"
+        entityId={pipeline.id}
+        data={data}
+        scrollOffset={0}
+        animFrame={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
     );
     expect(lastFrame()).toContain('Pipeline Detail');
   });
@@ -1024,7 +1101,14 @@ describe('DetailView — pipeline dispatch', () => {
       tasks: [task],
     });
     const { lastFrame } = render(
-      <DetailView entityType="pipelines" entityId={pipeline.id} data={data} scrollOffset={0} animFrame={0} />,
+      <DetailView
+        entityType="pipelines"
+        entityId={pipeline.id}
+        data={data}
+        scrollOffset={0}
+        animFrame={0}
+        detailOutputConfig={NO_OUTPUT_CONFIG}
+      />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Pipeline Detail');

@@ -9,21 +9,20 @@
  *  - Usage section: token/cost summary from task_usage table
  *
  * #165 additions:
- *  - Ref-based metadata height measurement via Ink's measureElement()
- *  - Output stream rendering below metadata when outputVisible=true
- *  - computeDetailOutputLayout() for adaptive viewport sizing
+ *  - Ref-based metadata height measurement via useElementHeight() (shared hook)
+ *  - Output stream rendering below metadata via DetailOutputPanel (shared component)
+ *  - Output config grouped via DetailOutputConfig interface
  */
 
-import type { DOMElement } from 'ink';
-import { Box, measureElement, Text } from 'ink';
-import React, { useEffect, useRef, useState } from 'react';
+import { Box, Text } from 'ink';
+import React from 'react';
 import type { Task, TaskUsage } from '../../../core/domain.js';
 import { TaskStatus } from '../../../core/domain.js';
+import type { DetailOutputConfig } from '../components/detail-output-panel.js';
+import { DetailOutputPanel, useElementHeight } from '../components/detail-output-panel.js';
 import { Field, LongField, StatusField } from '../components/field.js';
-import { OutputStreamView } from '../components/output-stream-view.js';
 import { StatusBadge } from '../components/status-badge.js';
 import { formatElapsed, relativeTime, statusIcon, truncateCell } from '../format.js';
-import { computeDetailOutputLayout } from '../layout.js';
 import type { OutputStreamState } from '../use-task-output-stream.js';
 
 interface TaskDependencyRef {
@@ -42,29 +41,12 @@ interface TaskDetailProps {
   readonly usage?: TaskUsage;
   /** #165: live output stream for this task */
   readonly stream?: OutputStreamState;
-  /** #165: whether the output panel is visible */
-  readonly outputVisible?: boolean;
-  /** #165: whether the output auto-tails */
-  readonly outputAutoTail?: boolean;
-  /** #165: scroll offset when in paused mode */
-  readonly outputScrollOffset?: number;
-  /** #165: terminal row count for layout computation */
-  readonly terminalRows?: number;
+  /** #165: grouped output panel configuration */
+  readonly outputConfig?: DetailOutputConfig;
 }
 
 export const TaskDetail: React.FC<TaskDetailProps> = React.memo(
-  ({
-    task,
-    animFrame,
-    dependencies,
-    dependents,
-    usage,
-    stream,
-    outputVisible = true,
-    outputAutoTail = true,
-    outputScrollOffset = 0,
-    terminalRows = 24,
-  }) => {
+  ({ task, animFrame, dependencies, dependents, usage, stream, outputConfig }) => {
     // Compute elapsed for running tasks
     const elapsedDisplay =
       task.status === 'running' && task.startedAt !== undefined ? formatElapsed(task.startedAt) : undefined;
@@ -72,19 +54,8 @@ export const TaskDetail: React.FC<TaskDetailProps> = React.memo(
     const errorMsg = task.error instanceof Error ? task.error.message : undefined;
 
     // Ref-based metadata height measurement for adaptive output viewport (#165)
-    const metadataRef = useRef<DOMElement>(null);
-    const [metadataHeight, setMetadataHeight] = useState(0);
-
-    useEffect(() => {
-      if (metadataRef.current) {
-        const { height } = measureElement(metadataRef.current);
-        if (height !== metadataHeight) {
-          setMetadataHeight(height);
-        }
-      }
-    });
-
-    const outputLayout = computeDetailOutputLayout({ rows: terminalRows, metadataHeight });
+    // DECISION: useElementHeight intentionally omits a dependency array — see detail-output-panel.tsx
+    const [metadataRef, metadataHeight] = useElementHeight();
 
     return (
       <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -197,34 +168,16 @@ export const TaskDetail: React.FC<TaskDetailProps> = React.memo(
         </Box>
 
         {/* Output stream section (#165) */}
-        {outputVisible && stream !== undefined && metadataHeight > 0 ? (
-          outputLayout.tooSmall ? (
-            <Box marginTop={0}>
-              <Text dimColor>(terminal too small for output)</Text>
-            </Box>
-          ) : (
-            <Box flexDirection="column" marginTop={0}>
-              <Text dimColor>{'─'.repeat(20)}</Text>
-              {stream.lines.length === 0 ? (
-                <Box height={Math.min(3, outputLayout.outputViewportHeight)}>
-                  <Text dimColor>
-                    {task.status === TaskStatus.QUEUED || task.status === TaskStatus.RUNNING
-                      ? 'Waiting for output...'
-                      : stream.totalBytes === 0
-                        ? 'No output captured'
-                        : 'Loading output...'}
-                  </Text>
-                </Box>
-              ) : (
-                <OutputStreamView
-                  stream={stream}
-                  viewportHeight={outputLayout.outputViewportHeight}
-                  scrollOffset={outputScrollOffset}
-                  autoTail={outputAutoTail}
-                />
-              )}
-            </Box>
-          )
+        {outputConfig?.visible && stream !== undefined && metadataHeight > 0 ? (
+          <DetailOutputPanel
+            stream={stream}
+            taskStatus={task.status}
+            isActive={task.status === TaskStatus.QUEUED || task.status === TaskStatus.RUNNING}
+            terminalRows={outputConfig.terminalRows}
+            metadataHeight={metadataHeight}
+            scrollOffset={outputConfig.scrollOffset}
+            autoTail={outputConfig.autoTail}
+          />
         ) : null}
       </Box>
     );

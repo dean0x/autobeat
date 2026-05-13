@@ -20,23 +20,27 @@
  * so the workspace is an enriched orchestration detail, not a separate view.
  * When viewMode='grid', orchestration is determined from orchestrations[committedOrchestratorIndex]
  * and the TaskPanel grid is rendered inline with OrchestratorNav.
+ *
+ * #165 additions:
+ *  - Ref-based metadata height measurement via useElementHeight() (shared hook)
+ *  - Selected child output stream via DetailOutputPanel (shared component)
+ *  - Output config grouped via DetailOutputConfig interface
  */
 
-import type { DOMElement } from 'ink';
-import { Box, measureElement, Text } from 'ink';
-import React, { useEffect, useRef, useState } from 'react';
+import { Box, Text } from 'ink';
+import React from 'react';
 import type { Orchestration, OrchestratorChild, TaskId, TaskUsage } from '../../../core/domain.js';
 import { TaskStatus } from '../../../core/domain.js';
+import type { DetailOutputConfig } from '../components/detail-output-panel.js';
+import { DetailOutputPanel, useElementHeight } from '../components/detail-output-panel.js';
 import { EmptyWorkspace } from '../components/empty-workspace.js';
 import { Field, LongField, StatusField } from '../components/field.js';
 import { OrchestratorNav } from '../components/orchestrator-nav.js';
-import { OutputStreamView } from '../components/output-stream-view.js';
 import { ScrollableList } from '../components/scrollable-list.js';
 import { StatusBadge } from '../components/status-badge.js';
 import { TaskPanel } from '../components/task-panel.js';
 import { relativeTime, truncateCell } from '../format.js';
 import type { WorkspaceLayout } from '../layout.js';
-import { computeDetailOutputLayout } from '../layout.js';
 import type { OutputStreamState } from '../use-task-output-stream.js';
 import type { WorkspaceNavState } from '../workspace-types.js';
 
@@ -71,14 +75,8 @@ interface OrchestrationDetailProps {
   readonly taskStreams?: ReadonlyMap<TaskId, OutputStreamState>;
   /** Workspace layout — required for grid mode */
   readonly workspaceLayout?: WorkspaceLayout;
-  /** #165: whether to show the selected child's output stream in list mode */
-  readonly childOutputVisible?: boolean;
-  /** #165: whether the output auto-tails */
-  readonly childOutputAutoTail?: boolean;
-  /** #165: scroll offset for paused output mode */
-  readonly childOutputScrollOffset?: number;
-  /** #165: terminal row count for layout computation */
-  readonly terminalRows?: number;
+  /** #165: grouped output panel configuration for the selected child stream */
+  readonly childOutputConfig?: DetailOutputConfig;
 }
 
 // ============================================================================
@@ -363,10 +361,7 @@ export const OrchestrationDetail: React.FC<OrchestrationDetailProps> = React.mem
     workspaceNav,
     taskStreams,
     workspaceLayout,
-    childOutputVisible = false,
-    childOutputAutoTail = true,
-    childOutputScrollOffset = 0,
-    terminalRows = 24,
+    childOutputConfig,
   }) => {
     // Grid mode: render workspace panel layout
     if (
@@ -398,24 +393,15 @@ export const OrchestrationDetail: React.FC<OrchestrationDetailProps> = React.mem
     const totalPages = childrenTotal !== undefined ? Math.ceil(childrenTotal / ORCHESTRATION_CHILDREN_PAGE_SIZE) : 1;
 
     // Ref-based metadata height measurement for adaptive output viewport (#165)
-    const metadataRef = useRef<DOMElement>(null);
-    const [metadataHeight, setMetadataHeight] = useState(0);
-
-    useEffect(() => {
-      if (metadataRef.current) {
-        const { height } = measureElement(metadataRef.current);
-        if (height !== metadataHeight) {
-          setMetadataHeight(height);
-        }
-      }
-    });
-
-    const outputLayout = computeDetailOutputLayout({ rows: terminalRows, metadataHeight });
+    // DECISION: useElementHeight intentionally omits a dependency array — see detail-output-panel.tsx
+    const [metadataRef, metadataHeight] = useElementHeight();
 
     // Resolve the selected child's stream for output rendering
     const selectedChild = children[selectedIndex];
     const selectedChildStream =
-      childOutputVisible && selectedChild && taskStreams ? taskStreams.get(selectedChild.taskId as TaskId) : undefined;
+      childOutputConfig?.visible && selectedChild && taskStreams
+        ? taskStreams.get(selectedChild.taskId as TaskId)
+        : undefined;
 
     return (
       <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -487,34 +473,17 @@ export const OrchestrationDetail: React.FC<OrchestrationDetailProps> = React.mem
         </Box>
 
         {/* Selected child output stream (#165) */}
-        {childOutputVisible && selectedChildStream !== undefined && metadataHeight > 0 ? (
-          outputLayout.tooSmall ? (
-            <Box marginTop={0}>
-              <Text dimColor>(terminal too small for output)</Text>
-            </Box>
-          ) : (
-            <Box flexDirection="column" marginTop={0}>
-              <Text dimColor>{`─── Output: ${selectedChild?.taskId.slice(0, 12) ?? ''} ${'─'.repeat(8)}`}</Text>
-              {selectedChildStream.lines.length === 0 ? (
-                <Box height={Math.min(3, outputLayout.outputViewportHeight)}>
-                  <Text dimColor>
-                    {selectedChild?.status === TaskStatus.QUEUED || selectedChild?.status === TaskStatus.RUNNING
-                      ? 'Waiting for output...'
-                      : selectedChildStream.totalBytes === 0
-                        ? 'No output captured'
-                        : 'Loading output...'}
-                  </Text>
-                </Box>
-              ) : (
-                <OutputStreamView
-                  stream={selectedChildStream}
-                  viewportHeight={outputLayout.outputViewportHeight}
-                  scrollOffset={childOutputScrollOffset}
-                  autoTail={childOutputAutoTail}
-                />
-              )}
-            </Box>
-          )
+        {childOutputConfig?.visible && selectedChildStream !== undefined && metadataHeight > 0 ? (
+          <DetailOutputPanel
+            stream={selectedChildStream}
+            taskStatus={selectedChild?.status ?? ''}
+            isActive={selectedChild?.status === TaskStatus.QUEUED || selectedChild?.status === TaskStatus.RUNNING}
+            terminalRows={childOutputConfig.terminalRows}
+            metadataHeight={metadataHeight}
+            scrollOffset={childOutputConfig.scrollOffset}
+            autoTail={childOutputConfig.autoTail}
+            separatorLabel={selectedChild?.taskId.slice(0, 12)}
+          />
         ) : null}
       </Box>
     );

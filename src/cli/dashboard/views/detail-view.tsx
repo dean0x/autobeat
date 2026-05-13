@@ -7,6 +7,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { Task, TaskId } from '../../../core/domain.js';
+import type { DetailOutputConfig } from '../components/detail-output-panel.js';
 import type { DashboardData, PanelId } from '../types.js';
 import type { OutputStreamState } from '../use-task-output-stream.js';
 import { LoopDetail } from './loop-detail.js';
@@ -62,14 +63,8 @@ interface DetailViewProps {
   readonly loopIterationSelectedNumber?: number | null;
   /** #165: live output streams map — keyed by TaskId */
   readonly taskStreams?: ReadonlyMap<TaskId, OutputStreamState>;
-  /** #165: whether the output panel is visible */
-  readonly detailOutputVisible?: boolean;
-  /** #165: whether output auto-tails */
-  readonly detailOutputAutoTail?: boolean;
-  /** #165: scroll offset for paused output mode */
-  readonly detailOutputScrollOffset?: number;
-  /** #165: terminal row count for output layout computation */
-  readonly terminalRows?: number;
+  /** #165: grouped output panel configuration — required; app.tsx always provides explicit values */
+  readonly detailOutputConfig: DetailOutputConfig;
 }
 
 const NotFound: React.FC<{ entityType: PanelId; entityId: string }> = ({ entityType, entityId }) => (
@@ -90,10 +85,7 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
     orchestrationChildrenTotal,
     loopIterationSelectedNumber = null,
     taskStreams,
-    detailOutputVisible = true,
-    detailOutputAutoTail = true,
-    detailOutputScrollOffset = 0,
-    terminalRows = 24,
+    detailOutputConfig,
   }) => {
     switch (entityType) {
       case 'loops': {
@@ -124,10 +116,7 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
             dependencies={dependencies}
             dependents={dependents}
             stream={taskStream}
-            outputVisible={detailOutputVisible}
-            outputAutoTail={detailOutputAutoTail}
-            outputScrollOffset={detailOutputScrollOffset}
-            terminalRows={terminalRows}
+            outputConfig={detailOutputConfig}
           />
         );
       }
@@ -156,10 +145,7 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
             currentPage={orchestrationChildPage}
             childrenTotal={orchestrationChildrenTotal}
             taskStreams={taskStreams}
-            childOutputVisible={detailOutputVisible}
-            childOutputAutoTail={detailOutputAutoTail}
-            childOutputScrollOffset={detailOutputScrollOffset}
-            terminalRows={terminalRows}
+            childOutputConfig={detailOutputConfig}
           />
         );
       }
