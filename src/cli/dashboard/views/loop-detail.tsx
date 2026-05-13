@@ -174,10 +174,10 @@ export function renderConvergenceLine(
  * Try to parse evalResponse as JSON and extract structured fields.
  * Returns null if not JSON or missing expected fields.
  */
-function parseEvalResponseJson(raw: string): { decision?: string; score?: number; reasoning?: string } | null {
+export function parseEvalResponseJson(raw: string): { decision?: string; score?: number; reasoning?: string } | null {
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null) return null;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
     const obj = parsed as Record<string, unknown>;
     return {
       decision: typeof obj.decision === 'string' ? obj.decision : undefined,

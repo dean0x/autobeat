@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { resolveIterationIndex } from '../../../../src/cli/dashboard/keyboard/helpers.js';
-import { renderConvergenceLine } from '../../../../src/cli/dashboard/views/loop-detail.js';
+import { parseEvalResponseJson, renderConvergenceLine } from '../../../../src/cli/dashboard/views/loop-detail.js';
 import type { LoopIteration } from '../../../../src/core/domain.js';
 import type { LoopId, TaskId } from '../../../../src/core/types.js';
 
@@ -166,5 +166,60 @@ describe('renderConvergenceLine', () => {
     const result = renderConvergenceLine(iters, 'maximize');
     // chronological: 1→, 3↑, 2↓, 5↑, 4↓
     expect(result).toBe('1.0→ 3.0↑ 2.0↓ 5.0↑ 4.0↓');
+  });
+});
+
+// ============================================================================
+// parseEvalResponseJson
+// ============================================================================
+
+describe('parseEvalResponseJson', () => {
+  it('returns structured object with all fields for valid JSON', () => {
+    const raw = JSON.stringify({ decision: 'pass', score: 0.95, reasoning: 'Looks good' });
+    const result = parseEvalResponseJson(raw);
+    expect(result).toEqual({ decision: 'pass', score: 0.95, reasoning: 'Looks good' });
+  });
+
+  it('returns object with only score field when only score is present', () => {
+    const raw = JSON.stringify({ score: 0.7 });
+    const result = parseEvalResponseJson(raw);
+    expect(result).toEqual({ score: 0.7, decision: undefined, reasoning: undefined });
+  });
+
+  it('coerces score from string to number', () => {
+    const raw = JSON.stringify({ decision: 'fail', score: '0.87', reasoning: 'Too slow' });
+    const result = parseEvalResponseJson(raw);
+    expect(result).not.toBeNull();
+    expect(result?.score).toBe(0.87);
+  });
+
+  it('returns null for invalid JSON string', () => {
+    expect(parseEvalResponseJson('not valid json {')).toBeNull();
+  });
+
+  it('returns null for empty string', () => {
+    expect(parseEvalResponseJson('')).toBeNull();
+  });
+
+  it('returns null for JSON array (non-object)', () => {
+    expect(parseEvalResponseJson(JSON.stringify([1, 2, 3]))).toBeNull();
+  });
+
+  it('returns null for JSON number (non-object)', () => {
+    expect(parseEvalResponseJson(JSON.stringify(42))).toBeNull();
+  });
+
+  it('returns null for JSON null', () => {
+    expect(parseEvalResponseJson(JSON.stringify(null))).toBeNull();
+  });
+
+  it('omits fields with wrong types rather than coercing them', () => {
+    const raw = JSON.stringify({ decision: 123, score: true, reasoning: null });
+    const result = parseEvalResponseJson(raw);
+    // decision is not a string, score is not number/parseable string, reasoning is not string
+    expect(result).not.toBeNull();
+    expect(result?.decision).toBeUndefined();
+    expect(result?.score).toBeUndefined();
+    expect(result?.reasoning).toBeUndefined();
   });
 });
