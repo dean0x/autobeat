@@ -273,10 +273,13 @@ export const LoopDetail: React.FC<LoopDetailProps> = React.memo(
     const selectedIteration = iterations !== undefined && iterations.length > 0 ? iterations[selectedIndex] : undefined;
 
     // Convergence trend — only for optimize loops with 2+ scored iterations
-    const scoredIterations = iterations?.filter((i) => i.score !== undefined && i.status !== 'progress') ?? [];
-    const showTrend = loop.strategy === 'optimize' && scoredIterations.length >= 2;
-    const convergenceLine =
-      showTrend && iterations !== undefined ? renderConvergenceLine(iterations, loop.evalDirection) : '';
+    // Memoized to avoid re-running the filter + renderConvergenceLine on every animFrame tick
+    const { showTrend, convergenceLine } = React.useMemo(() => {
+      const scoredIterations = iterations?.filter((i) => i.score !== undefined && i.status !== 'progress') ?? [];
+      const trend = loop.strategy === 'optimize' && scoredIterations.length >= 2;
+      const line = trend && iterations !== undefined ? renderConvergenceLine(iterations, loop.evalDirection) : '';
+      return { showTrend: trend, convergenceLine: line };
+    }, [iterations, loop.strategy, loop.evalDirection]);
 
     return (
       <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
