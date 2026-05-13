@@ -72,6 +72,11 @@ export type DetailReturnTarget =
       readonly kind: 'orchestrations';
       readonly entityId: OrchestratorId;
       readonly originalReturnTo: 'main' | 'workspace';
+    }
+  | {
+      readonly kind: 'loops';
+      readonly entityId: LoopId;
+      readonly originalReturnTo: 'main' | 'workspace';
     };
 
 /**
@@ -138,6 +143,14 @@ export interface NavState {
   readonly orchestrationChildSelectedTaskId: string | null;
   /** 0-based page number within the orchestration detail children list */
   readonly orchestrationChildPage: number;
+  /** Whether the output stream panel is visible in task/orchestration detail (#165) */
+  readonly detailOutputVisible: boolean;
+  /** Whether output auto-tails (true) or is paused for manual scrolling (false) (#165) */
+  readonly detailOutputAutoTail: boolean;
+  /** Scroll offset when output is in paused mode (#165) */
+  readonly detailOutputScrollOffset: number;
+  /** iterationNumber of the highlighted row in loop detail (null = first row) (#168) */
+  readonly loopIterationSelectedNumber: number | null;
 }
 
 /**

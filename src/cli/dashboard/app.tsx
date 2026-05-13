@@ -56,6 +56,10 @@ const INITIAL_NAV: NavState = {
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
+  detailOutputVisible: true,
+  detailOutputAutoTail: true,
+  detailOutputScrollOffset: 0,
+  loopIterationSelectedNumber: null,
 };
 
 const INITIAL_DASHBOARD_STATE: DashboardState = {
