@@ -95,9 +95,9 @@ describe('Footer', () => {
       expect(lastFrame()).toContain('Esc back');
     });
 
-    it('contains "↑↓ scroll" hint', () => {
+    it('contains "↑↓ select" hint', () => {
       const { lastFrame } = render(<Footer viewKind="detail" />);
-      expect(lastFrame()).toContain('↑↓ scroll');
+      expect(lastFrame()).toContain('↑↓ select');
     });
 
     it('does not render main-view hints', () => {

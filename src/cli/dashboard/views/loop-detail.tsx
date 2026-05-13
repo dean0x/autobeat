@@ -57,7 +57,7 @@ function makeRenderIterationRow(
     const feedbackRaw = iter.evalFeedback ?? '';
     const hasEvalResponse = Boolean(iter.evalResponse);
     const feedbackDisplay =
-      (iter.status === 'fail' || iter.status === 'crash')
+      iter.status === 'fail' || iter.status === 'crash'
         ? truncateCell(iter.errorMessage ?? '—', 30)
         : truncateCell(feedbackRaw || '—', 30);
     const evalBadge = hasEvalResponse ? ' [eval]' : '';
@@ -88,7 +88,11 @@ function makeRenderIterationRow(
           <Text dimColor>{duration.padEnd(8, ' ')}</Text>
           <Text> </Text>
           <Text dimColor>{feedbackDisplay}</Text>
-          {hasEvalResponse && <Text dimColor color="cyan">{evalBadge}</Text>}
+          {hasEvalResponse && (
+            <Text dimColor color="cyan">
+              {evalBadge}
+            </Text>
+          )}
         </Box>
         {/* Git diff summary — shown as dimColor line below the row when present */}
         {iter.gitDiffSummary !== undefined && (
@@ -170,9 +174,7 @@ export function renderConvergenceLine(
  * Try to parse evalResponse as JSON and extract structured fields.
  * Returns null if not JSON or missing expected fields.
  */
-function parseEvalResponseJson(
-  raw: string,
-): { decision?: string; score?: number; reasoning?: string } | null {
+function parseEvalResponseJson(raw: string): { decision?: string; score?: number; reasoning?: string } | null {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return null;
@@ -202,11 +204,7 @@ interface SelectedIterationEvalProps {
  */
 function SelectedIterationEval({ iter }: SelectedIterationEvalProps): React.ReactElement | null {
   const hasContent =
-    iter.evalFeedback ||
-    iter.evalResponse ||
-    iter.exitCode !== undefined ||
-    iter.errorMessage ||
-    iter.gitDiffSummary;
+    iter.evalFeedback || iter.evalResponse || iter.exitCode !== undefined || iter.errorMessage || iter.gitDiffSummary;
 
   if (!hasContent) return null;
 
@@ -280,7 +278,8 @@ export const LoopDetail: React.FC<LoopDetailProps> = React.memo(
       iterations !== undefined &&
       iterations.filter((i) => i.score !== undefined && i.status !== 'progress').length >= 2;
 
-    const convergenceLine = showTrend && iterations !== undefined ? renderConvergenceLine(iterations, loop.evalDirection) : '';
+    const convergenceLine =
+      showTrend && iterations !== undefined ? renderConvergenceLine(iterations, loop.evalDirection) : '';
 
     return (
       <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -319,7 +318,9 @@ export const LoopDetail: React.FC<LoopDetailProps> = React.memo(
         {/* Convergence trend — between config fields and iteration table (#168) */}
         {showTrend && convergenceLine !== '' ? (
           <Box marginTop={0}>
-            <Text dimColor bold>Score Trend  </Text>
+            <Text dimColor bold>
+              Score Trend{' '}
+            </Text>
             <Text dimColor>{convergenceLine}</Text>
           </Box>
         ) : null}

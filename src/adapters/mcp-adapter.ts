@@ -470,7 +470,11 @@ const LoopStatusSchema = z.object({
   includeSystemPrompt: z.boolean().optional().default(false).describe('Include system prompt in response'),
   // DECISION (#168): evalResponse is omitted by default — raw eval text can be large (up to 16KB).
   // Callers that need audit data for score analysis must explicitly opt in.
-  includeEvalResponse: z.boolean().optional().default(false).describe('Include raw eval response text per iteration (default: false)'),
+  includeEvalResponse: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Include raw eval response text per iteration (default: false)'),
 });
 
 const ListLoopsSchema = z.object({

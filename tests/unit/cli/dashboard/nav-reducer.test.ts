@@ -24,6 +24,10 @@ const INITIAL_NAV: NavState = {
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
+  detailOutputVisible: true,
+  detailOutputAutoTail: true,
+  detailOutputScrollOffset: 0,
+  loopIterationSelectedNumber: null,
 };
 
 function makeState(overrides: Partial<DashboardState> = {}): DashboardState {
@@ -181,5 +185,76 @@ describe('immutability', () => {
     // Only animFrame changed — nav and workspaceNav should be same reference
     expect(next.nav).toBe(state.nav);
     expect(next.workspaceNav).toBe(state.workspaceNav);
+  });
+});
+
+// ============================================================================
+// NavState new fields — output state + loop iteration (#165 + #168)
+// ============================================================================
+
+describe('NavState — new output + iteration fields', () => {
+  it('SET_VIEW to detail does NOT reset detailOutputVisible', () => {
+    // DECISION: Reducers must NOT reset nav state on SET_VIEW so that Esc-return
+    // from a drilled-through detail preserves the user's previous output state.
+    const state = makeState({
+      nav: { ...INITIAL_NAV, detailOutputVisible: false, detailOutputAutoTail: false },
+    });
+    const next = dashboardReducer(state, {
+      type: 'SET_VIEW',
+      view: { kind: 'detail', entityType: 'tasks', entityId: 'task-1' as never, returnTo: 'main' },
+    });
+    expect(next.nav.detailOutputVisible).toBe(false);
+    expect(next.nav.detailOutputAutoTail).toBe(false);
+  });
+
+  it('SET_VIEW to detail does NOT reset loopIterationSelectedNumber', () => {
+    const state = makeState({
+      nav: { ...INITIAL_NAV, loopIterationSelectedNumber: 5 },
+    });
+    const next = dashboardReducer(state, {
+      type: 'SET_VIEW',
+      view: { kind: 'detail', entityType: 'loops', entityId: 'loop-1' as never, returnTo: 'main' },
+    });
+    expect(next.nav.loopIterationSelectedNumber).toBe(5);
+  });
+
+  it('SET_VIEW preserves all nav state fields', () => {
+    const customNav: NavState = {
+      ...INITIAL_NAV,
+      detailOutputVisible: false,
+      detailOutputAutoTail: false,
+      detailOutputScrollOffset: 7,
+      loopIterationSelectedNumber: 3,
+    };
+    const state = makeState({ nav: customNav });
+    const next = dashboardReducer(state, { type: 'SET_VIEW', view: { kind: 'main' } });
+    expect(next.nav).toBe(customNav); // referential equality — same object
+  });
+
+  it('UPDATE_NAV can update detailOutputVisible', () => {
+    const state = makeState({ nav: { ...INITIAL_NAV, detailOutputVisible: true } });
+    const next = dashboardReducer(state, {
+      type: 'UPDATE_NAV',
+      updater: (prev) => ({ ...prev, detailOutputVisible: false }),
+    });
+    expect(next.nav.detailOutputVisible).toBe(false);
+  });
+
+  it('UPDATE_NAV can update loopIterationSelectedNumber', () => {
+    const state = makeState({ nav: { ...INITIAL_NAV, loopIterationSelectedNumber: null } });
+    const next = dashboardReducer(state, {
+      type: 'UPDATE_NAV',
+      updater: (prev) => ({ ...prev, loopIterationSelectedNumber: 7 }),
+    });
+    expect(next.nav.loopIterationSelectedNumber).toBe(7);
+  });
+
+  it('UPDATE_NAV can update detailOutputScrollOffset', () => {
+    const state = makeState({ nav: { ...INITIAL_NAV, detailOutputScrollOffset: 0 } });
+    const next = dashboardReducer(state, {
+      type: 'UPDATE_NAV',
+      updater: (prev) => ({ ...prev, detailOutputScrollOffset: 5 }),
+    });
+    expect(next.nav.detailOutputScrollOffset).toBe(5);
   });
 });

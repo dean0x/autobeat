@@ -33,6 +33,7 @@ import { createInitialWorkspaceNavState } from '../../../../src/cli/dashboard/wo
 import type {
   Loop,
   LoopId,
+  LoopIteration,
   Orchestration,
   OrchestratorChild,
   OrchestratorId,
@@ -153,6 +154,10 @@ const INITIAL_NAV: NavState = {
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
+  detailOutputVisible: true,
+  detailOutputAutoTail: true,
+  detailOutputScrollOffset: 0,
+  loopIterationSelectedNumber: null,
 };
 
 // ============================================================================
@@ -206,6 +211,10 @@ function KeyboardWrapper({
       <Text>scroll-loops:{nav.scrollOffsets.loops}</Text>
       <Text>orch-child-sel:{nav.orchestrationChildSelectedTaskId ?? 'null'}</Text>
       <Text>orch-child-page:{nav.orchestrationChildPage}</Text>
+      <Text>out-visible:{nav.detailOutputVisible ? 'true' : 'false'}</Text>
+      <Text>out-tail:{nav.detailOutputAutoTail ? 'true' : 'false'}</Text>
+      <Text>out-scroll:{nav.detailOutputScrollOffset}</Text>
+      <Text>loop-iter-sel:{nav.loopIterationSelectedNumber ?? 'null'}</Text>
     </Box>
   );
 }
@@ -1134,5 +1143,271 @@ describe('useKeyboard — D3 orchestration detail child navigation', () => {
     expect(lastFrame()).toContain('orch-child-sel:task-jk-002');
     await press(stdin, 'k'); // like up
     expect(lastFrame()).toContain('orch-child-sel:task-jk-001');
+  });
+});
+
+// ============================================================================
+// Output controls — task/orchestration detail (#165)
+// ============================================================================
+
+describe('useKeyboard — output controls in detail view (#165)', () => {
+  function taskDetailView(taskId: string) {
+    return {
+      kind: 'detail' as const,
+      entityType: 'tasks' as const,
+      entityId: taskId as TaskId,
+      returnTo: 'main' as const,
+    };
+  }
+
+  function loopDetailView(loopId: string) {
+    return {
+      kind: 'detail' as const,
+      entityType: 'loops' as const,
+      entityId: loopId as LoopId,
+      returnTo: 'main' as const,
+    };
+  }
+
+  it('"o" toggles detailOutputVisible in task detail', async () => {
+    const task = makeTask('task-out-001');
+    const data = makeDashboardData({ tasks: [task] });
+    const nav: NavState = { ...INITIAL_NAV, detailOutputVisible: true };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={taskDetailView('task-out-001')} />,
+    );
+    expect(lastFrame()).toContain('out-visible:true');
+    await press(stdin, 'o');
+    expect(lastFrame()).toContain('out-visible:false');
+    await press(stdin, 'o');
+    expect(lastFrame()).toContain('out-visible:true');
+  });
+
+  it('"o" is a no-op in loop detail (output controls guarded to task/orch only)', async () => {
+    const loop = makeLoop('loop-out-001');
+    const data = makeDashboardData({ loops: [loop] });
+    const nav: NavState = { ...INITIAL_NAV, detailOutputVisible: true };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={loopDetailView('loop-out-001')} />,
+    );
+    expect(lastFrame()).toContain('out-visible:true');
+    await press(stdin, 'o');
+    // loops swallow all keys — visible unchanged but loop detail is active
+    expect(lastFrame()).toContain('detail-type:loops');
+    // visible stays true since 'o' is swallowed without toggling
+    expect(lastFrame()).toContain('out-visible:true');
+  });
+
+  it('"[" scrolls output up and sets auto-tail false', async () => {
+    const task = makeTask('task-scroll-001');
+    const data = makeDashboardData({ tasks: [task] });
+    const nav: NavState = { ...INITIAL_NAV, detailOutputScrollOffset: 3, detailOutputAutoTail: true };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={taskDetailView('task-scroll-001')} />,
+    );
+    await press(stdin, '[');
+    expect(lastFrame()).toContain('out-scroll:2');
+    expect(lastFrame()).toContain('out-tail:false');
+  });
+
+  it('"[" clamps at 0', async () => {
+    const task = makeTask('task-clamp-001');
+    const data = makeDashboardData({ tasks: [task] });
+    const nav: NavState = { ...INITIAL_NAV, detailOutputScrollOffset: 0 };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={taskDetailView('task-clamp-001')} />,
+    );
+    await press(stdin, '[');
+    expect(lastFrame()).toContain('out-scroll:0');
+  });
+
+  it('"]" scrolls output down', async () => {
+    const task = makeTask('task-down-001');
+    const data = makeDashboardData({ tasks: [task] });
+    const nav: NavState = { ...INITIAL_NAV, detailOutputScrollOffset: 5 };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={taskDetailView('task-down-001')} />,
+    );
+    await press(stdin, ']');
+    expect(lastFrame()).toContain('out-scroll:6');
+  });
+
+  it('"G" re-engages auto-tail', async () => {
+    const task = makeTask('task-tail-001');
+    const data = makeDashboardData({ tasks: [task] });
+    const nav: NavState = { ...INITIAL_NAV, detailOutputAutoTail: false, detailOutputScrollOffset: 10 };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={taskDetailView('task-tail-001')} />,
+    );
+    await press(stdin, 'G');
+    expect(lastFrame()).toContain('out-tail:true');
+    expect(lastFrame()).toContain('out-scroll:0');
+  });
+
+  it('"g" jumps to top without auto-tail', async () => {
+    const task = makeTask('task-top-001');
+    const data = makeDashboardData({ tasks: [task] });
+    const nav: NavState = { ...INITIAL_NAV, detailOutputAutoTail: true, detailOutputScrollOffset: 8 };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={taskDetailView('task-top-001')} />,
+    );
+    await press(stdin, 'g');
+    expect(lastFrame()).toContain('out-tail:false');
+    expect(lastFrame()).toContain('out-scroll:0');
+  });
+});
+
+// ============================================================================
+// Loop iteration navigation (#168)
+// ============================================================================
+
+describe('useKeyboard — loop iteration navigation (#168)', () => {
+  function loopDetailView(loopId: string) {
+    return {
+      kind: 'detail' as const,
+      entityType: 'loops' as const,
+      entityId: loopId as LoopId,
+      returnTo: 'main' as const,
+    };
+  }
+
+  function makeIteration(n: number, taskId?: string): LoopIteration {
+    return {
+      id: n,
+      loopId: 'loop-iter-test' as LoopId,
+      iterationNumber: n,
+      taskId: taskId ? (taskId as TaskId) : undefined,
+      status: 'pass',
+      startedAt: Date.now(),
+    } as LoopIteration;
+  }
+
+  it('↓ moves loopIterationSelectedNumber to next iteration', async () => {
+    const loop = makeLoop('loop-nav-001');
+    const iterations: readonly LoopIteration[] = [makeIteration(1, 'task-001'), makeIteration(2, 'task-002')];
+    const data = makeDashboardData({ loops: [loop], iterations });
+    const nav: NavState = { ...INITIAL_NAV, loopIterationSelectedNumber: 1 };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={loopDetailView('loop-nav-001')} />,
+    );
+    expect(lastFrame()).toContain('loop-iter-sel:1');
+    await press(stdin, '\x1B[B'); // down arrow
+    expect(lastFrame()).toContain('loop-iter-sel:2');
+  });
+
+  it('↑ moves loopIterationSelectedNumber to previous iteration', async () => {
+    const loop = makeLoop('loop-nav-002');
+    const iterations: readonly LoopIteration[] = [makeIteration(1, 'task-001'), makeIteration(2, 'task-002')];
+    const data = makeDashboardData({ loops: [loop], iterations });
+    const nav: NavState = { ...INITIAL_NAV, loopIterationSelectedNumber: 2 };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={loopDetailView('loop-nav-002')} />,
+    );
+    await press(stdin, '\x1B[A'); // up arrow
+    expect(lastFrame()).toContain('loop-iter-sel:1');
+  });
+
+  it('Enter on iteration drills into task detail', async () => {
+    const loop = makeLoop('loop-drill-001');
+    const iterations: readonly LoopIteration[] = [makeIteration(1, 'task-drill-001')];
+    const data = makeDashboardData({ loops: [loop], iterations });
+    const nav: NavState = { ...INITIAL_NAV, loopIterationSelectedNumber: 1 };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={loopDetailView('loop-drill-001')} />,
+    );
+    await press(stdin, '\r');
+    expect(lastFrame()).toContain('view:detail');
+    expect(lastFrame()).toContain('detail-type:tasks');
+    expect(lastFrame()).toContain('detail-id:task-drill-001');
+  });
+
+  it('Enter is a no-op when selected iteration has no taskId', async () => {
+    const loop = makeLoop('loop-notask-001');
+    const iterations: readonly LoopIteration[] = [makeIteration(1, undefined)];
+    const data = makeDashboardData({ loops: [loop], iterations });
+    const nav: NavState = { ...INITIAL_NAV, loopIterationSelectedNumber: 1 };
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper initialData={data} initialNav={nav} initialView={loopDetailView('loop-notask-001')} />,
+    );
+    await press(stdin, '\r');
+    // Still in loop detail — no navigation to task detail
+    expect(lastFrame()).toContain('detail-type:loops');
+  });
+
+  it('Esc from task detail returns to loop detail when returnTo is loops variant', async () => {
+    const loop = makeLoop('loop-esc-001');
+    const task = makeTask('task-esc-001');
+    const data = makeDashboardData({ loops: [loop], tasks: [task] });
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialView={{
+          kind: 'detail',
+          entityType: 'tasks',
+          entityId: 'task-esc-001' as TaskId,
+          returnTo: { kind: 'loops', entityId: 'loop-esc-001' as LoopId, originalReturnTo: 'main' },
+        }}
+      />,
+    );
+    expect(lastFrame()).toContain('detail-type:tasks');
+    await press(stdin, '\x1B'); // Escape
+    expect(lastFrame()).toContain('detail-type:loops');
+    expect(lastFrame()).toContain('detail-id:loop-esc-001');
+  });
+});
+
+// ============================================================================
+// main→detail Enter: nav state resets (#165 + #168)
+// ============================================================================
+
+describe('useKeyboard — main→detail Enter resets nav state', () => {
+  it('Enter from main→task resets output state (visible=true)', async () => {
+    const task = makeTask('task-reset-001');
+    const data = makeDashboardData({ tasks: [task] });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      focusedPanel: 'tasks',
+      detailOutputVisible: false,
+      detailOutputAutoTail: false,
+      detailOutputScrollOffset: 7,
+      loopIterationSelectedNumber: 3,
+    };
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} />);
+    await press(stdin, '\r');
+    expect(lastFrame()).toContain('view:detail');
+    expect(lastFrame()).toContain('out-visible:true');
+    expect(lastFrame()).toContain('out-tail:true');
+    expect(lastFrame()).toContain('out-scroll:0');
+    expect(lastFrame()).toContain('loop-iter-sel:null');
+  });
+
+  it('Enter from main→orchestration resets output hidden (visible=false)', async () => {
+    const orch = makeOrchestration('orch-reset-001');
+    const data = makeDashboardData({ orchestrations: [orch] });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      focusedPanel: 'orchestrations',
+      detailOutputVisible: true,
+    };
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} />);
+    await press(stdin, '\r');
+    expect(lastFrame()).toContain('view:detail');
+    // Orchestrations: visible=false (no direct task output concept at orchestration level)
+    expect(lastFrame()).toContain('out-visible:false');
+  });
+
+  it('Enter from main→loop resets loopIterationSelectedNumber to null', async () => {
+    const loop = makeLoop('loop-reset-001');
+    const data = makeDashboardData({ loops: [loop] });
+    const nav: NavState = {
+      ...INITIAL_NAV,
+      focusedPanel: 'loops',
+      loopIterationSelectedNumber: 5,
+    };
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} />);
+    await press(stdin, '\r');
+    expect(lastFrame()).toContain('view:detail');
+    expect(lastFrame()).toContain('detail-type:loops');
+    expect(lastFrame()).toContain('loop-iter-sel:null');
   });
 });
