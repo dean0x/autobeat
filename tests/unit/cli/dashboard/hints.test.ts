@@ -63,10 +63,13 @@ describe('mainHints()', () => {
 });
 
 describe('detailHints()', () => {
-  it('returns base hint string when called with no arguments', () => {
+  it('returns base hint string with output controls when called with no arguments', () => {
     const result = detailHints();
     expect(result).toContain('Esc back');
     expect(result).toContain('↑↓ select');
+    expect(result).toContain('o output');
+    expect(result).toContain('[/] scroll');
+    expect(result).toContain('G tail');
     expect(result).toContain('r refresh');
     expect(result).toContain('q quit');
   });
@@ -75,6 +78,34 @@ describe('detailHints()', () => {
     const result = detailHints();
     expect(result).not.toContain('p pause');
     expect(result).not.toContain('p resume');
+  });
+
+  it('includes output controls for tasks (output streaming applies)', () => {
+    const result = detailHints('tasks', 'running');
+    expect(result).toContain('o output');
+    expect(result).toContain('[/] scroll');
+    expect(result).toContain('G tail');
+  });
+
+  it('includes output controls for orchestrations (output streaming applies)', () => {
+    const result = detailHints('orchestrations', 'running');
+    expect(result).toContain('o output');
+    expect(result).toContain('[/] scroll');
+    expect(result).toContain('G tail');
+  });
+
+  it('omits output controls for schedules (output streaming does not apply)', () => {
+    const result = detailHints('schedules', 'active');
+    expect(result).not.toContain('o output');
+    expect(result).not.toContain('[/] scroll');
+    expect(result).not.toContain('G tail');
+  });
+
+  it('omits output controls for loops (output streaming does not apply)', () => {
+    const result = detailHints('loops', 'running');
+    expect(result).not.toContain('o output');
+    expect(result).not.toContain('[/] scroll');
+    expect(result).not.toContain('G tail');
   });
 
   it('appends p pause for active schedule', () => {

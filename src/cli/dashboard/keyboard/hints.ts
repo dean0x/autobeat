@@ -6,6 +6,7 @@
  * any keyboard refactor only needs to update this one file.
  */
 
+import { LoopStatus, ScheduleStatus } from '../../../core/domain.js';
 import type { PanelId } from '../types.js';
 
 /**
@@ -25,22 +26,26 @@ export function mainHints(hasMutations: boolean, focusedPanel?: PanelId): string
 
 /**
  * Return the footer hint string for the detail view.
- * Output controls (o/[/]/g/G) apply to task and orchestration detail only.
+ * Output controls (o/[/]/G) apply to task and orchestration detail only —
+ * schedules and loops have no output stream, so those hints are omitted.
  * Pause/resume hint is conditional on entity type and status.
- * entityStatus values are compared directly — ScheduleStatus and LoopStatus
- * are already lowercase ('active', 'running', 'paused').
  */
 export function detailHints(entityType?: PanelId, entityStatus?: string): string {
-  const base = 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
+  const baseWithOutput =
+    'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
+  const baseNoOutput = 'Esc back · ↑↓ select · Enter detail · r refresh · q quit';
+
   if (entityType === 'schedules' || entityType === 'loops') {
-    if (entityStatus === 'active' || entityStatus === 'running') {
+    const base = baseNoOutput;
+    if (entityStatus === ScheduleStatus.ACTIVE || entityStatus === LoopStatus.RUNNING) {
       return `${base} · p pause`;
     }
-    if (entityStatus === 'paused') {
+    if (entityStatus === ScheduleStatus.PAUSED || entityStatus === LoopStatus.PAUSED) {
       return `${base} · p resume`;
     }
+    return base;
   }
-  return base;
+  return baseWithOutput;
 }
 
 /**
