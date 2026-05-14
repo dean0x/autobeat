@@ -41,12 +41,12 @@ import {
   TaskId,
   TaskStatus,
 } from '../../../../src/core/domain.js';
+import { AutobeatError, ErrorCode } from '../../../../src/core/errors.js';
 import { InMemoryEventBus } from '../../../../src/core/events/event-bus.js';
 import type { ExitConditionEvaluator } from '../../../../src/core/interfaces.js';
 import { Database } from '../../../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../../../src/implementations/loop-repository.js';
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository.js';
-import { AutobeatError, ErrorCode } from '../../../../src/core/errors.js';
 import { LoopHandler, parseGitDiffChangedLines } from '../../../../src/services/handlers/loop-handler.js';
 import {
   captureGitDiff,
@@ -2859,6 +2859,32 @@ describe('LoopHandler - Behavioral Tests', () => {
       await flushEventLoop();
 
       // convergenceEnabled=false: checkConvergence returns false immediately, loop stays RUNNING
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should NOT converge when iterations are all failed (status=fail)', async () => {
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        gitBranch: 'feat/convergence-test',
+      });
+
+      // Run 3 TaskFailed iterations — each produces status='fail' with no git changes
+      for (let i = 0; i < 3; i++) {
+        const taskId = await getLatestTaskId(loop.id);
+        await eventBus.emit('TaskFailed', {
+          taskId: taskId!,
+          error: { message: 'Task crashed', code: 'SYSTEM_ERROR' },
+          exitCode: 1,
+        });
+        await flushEventLoop();
+      }
+
+      // Failed iterations must not trigger git diff convergence — loop stays RUNNING
       const updatedLoop = await getLoop(loop.id);
       expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
     });

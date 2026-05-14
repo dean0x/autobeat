@@ -54,7 +54,7 @@ import {
 } from '../../utils/git-state.js';
 
 // ── Convergence detection constants ──────────────────────────────────────────
-/** Number of recent iterations to examine when checking for convergence. */
+/** DB query window: fetch this many recent iterations to find CONVERGENCE_MIN_ITERATIONS completed ones (headroom for cancelled/running/failed iterations in between). */
 const CONVERGENCE_WINDOW = 5;
 /** Minimum completed iterations required before convergence can be detected. */
 const CONVERGENCE_MIN_ITERATIONS = 3;
@@ -1216,27 +1216,24 @@ export class LoopHandler extends BaseEventHandler {
     const iterationsResult = await this.loopRepo.getIterations(loop.id, CONVERGENCE_WINDOW, 0);
     if (!iterationsResult.ok) return false;
 
-    // Only consider non-running, non-cancelled completed iterations
-    const completed = iterationsResult.value.filter((it) => it.status !== 'running' && it.status !== 'cancelled');
-    if (completed.length < CONVERGENCE_MIN_ITERATIONS) return false;
+    const all = iterationsResult.value;
 
-    // Take the most recent CONVERGENCE_MIN_ITERATIONS completed iterations
-    const recent = completed.slice(0, CONVERGENCE_MIN_ITERATIONS);
-
-    // Signal 1: Git diff convergence — all recent iterations produced fewer than threshold changed lines.
-    // Only applies to git-enabled loops (gitBranch or gitStartCommitSha set). In that case, each
-    // iteration with preIterationCommitSha set participated in git tracking; missing gitDiffSummary
-    // means the diff captured nothing (0 changed lines), which still counts toward convergence.
-    // Skips entirely for non-git loops (no preIterationCommitSha on any iteration).
+    // Signal 1: Git diff convergence — all recent successful iterations produced fewer
+    // than threshold changed lines. Only counts pass/keep/progress — failed/crashed iterations
+    // produce no meaningful git changes and must not trigger convergence, otherwise a
+    // consistently-failing loop would be marked COMPLETED instead of FAILED.
     const isGitLoop = !!(loop.gitBranch || loop.gitStartCommitSha);
     if (isGitLoop) {
-      const iterationsWithGitTracking = recent.filter(
-        (it) => it.preIterationCommitSha !== undefined && it.preIterationCommitSha !== null,
+      const successful = all.filter(
+        (it) => it.status === 'pass' || it.status === 'keep' || it.status === 'progress',
       );
-      if (iterationsWithGitTracking.length >= CONVERGENCE_MIN_ITERATIONS) {
-        const changedLines = iterationsWithGitTracking.map((it) => parseGitDiffChangedLines(it.gitDiffSummary));
+      const withGitTracking = successful
+        .slice(0, CONVERGENCE_MIN_ITERATIONS)
+        .filter((it) => it.preIterationCommitSha !== undefined && it.preIterationCommitSha !== null);
+      if (withGitTracking.length >= CONVERGENCE_MIN_ITERATIONS) {
+        const changedLines = withGitTracking.map((it) => parseGitDiffChangedLines(it.gitDiffSummary));
         if (changedLines.every((lines) => lines < CONVERGENCE_MAX_CHANGED_LINES)) {
-          const iterNums = iterationsWithGitTracking.map((it) => it.iterationNumber);
+          const iterNums = withGitTracking.map((it) => it.iterationNumber);
           const reason = `Convergence detected: iterations ${iterNums[iterNums.length - 1]}-${iterNums[0]} produced ${[...changedLines].reverse().join(', ')} changed lines (threshold: ${CONVERGENCE_MAX_CHANGED_LINES})`;
           this.logger.info('Git diff convergence detected', {
             loopId: loop.id,
@@ -1249,8 +1246,14 @@ export class LoopHandler extends BaseEventHandler {
       }
     }
 
-    // Signal 2: Score plateau (OPTIMIZE only) — all recent iterations scored identically
+    // Signal 2: Score plateau (OPTIMIZE only) — all recent evaluated iterations scored
+    // identically. Includes discard (same/worse score) since that's a valid evaluation outcome.
+    // Excludes running/cancelled/fail/crash which were never scored.
     if (loop.strategy === LoopStrategy.OPTIMIZE) {
+      const evaluated = all.filter(
+        (it) => it.status === 'pass' || it.status === 'keep' || it.status === 'discard' || it.status === 'progress',
+      );
+      const recent = evaluated.slice(0, CONVERGENCE_MIN_ITERATIONS);
       const scores = recent.map((it) => it.score).filter((s): s is number => s !== undefined);
       if (scores.length >= CONVERGENCE_MIN_ITERATIONS) {
         const allSame = scores.every((s) => Math.abs(s - scores[0]!) < SCORE_EPSILON);
