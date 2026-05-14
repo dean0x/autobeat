@@ -197,7 +197,20 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
         entityId={view.kind === 'detail' ? view.entityId : undefined}
       />
       {renderView()}
-      <Footer viewKind={view.kind} hasMutations={mutations !== undefined} />
+      <Footer
+        viewKind={view.kind}
+        hasMutations={mutations !== undefined}
+        entityType={view.kind === 'detail' ? view.entityType : undefined}
+        entityStatus={
+          view.kind === 'detail'
+            ? view.entityType === 'schedules'
+              ? data?.schedules.find((s) => s.id === view.entityId)?.status
+              : view.entityType === 'loops'
+                ? data?.loops.find((l) => l.id === view.entityId)?.status
+                : undefined
+            : undefined
+        }
+      />
     </Box>
   );
 });

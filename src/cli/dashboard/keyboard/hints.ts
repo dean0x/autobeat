@@ -13,7 +13,7 @@
 export function mainHints(hasMutations: boolean): string {
   const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
   if (hasMutations) {
-    return `${base} · c cancel · d delete (terminal)`;
+    return `${base} · c cancel · d delete (terminal) · p pause/resume`;
   }
   return base;
 }
@@ -21,19 +21,35 @@ export function mainHints(hasMutations: boolean): string {
 /**
  * Return the footer hint string for the detail view.
  * Output controls (o/[/]/g/G) apply to task and orchestration detail only.
+ * Pause/resume hint is conditional on entity type and status.
  */
-export function detailHints(): string {
-  return 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
+export function detailHints(entityType?: string, entityStatus?: string): string {
+  const base = 'Esc back · ↑↓ select · Enter detail · o output · [/] scroll · G tail · r refresh · q quit';
+  if (entityType === 'schedules' || entityType === 'loops') {
+    const lower = entityStatus?.toLowerCase();
+    if (lower === 'active' || lower === 'running') {
+      return `${base} · p pause`;
+    }
+    if (lower === 'paused') {
+      return `${base} · p resume`;
+    }
+  }
+  return base;
 }
 
 /**
  * Return the appropriate hint string for the current view kind.
  */
-export function getHints(viewKind: 'main' | 'detail', hasMutations: boolean): string {
+export function getHints(
+  viewKind: 'main' | 'detail',
+  hasMutations: boolean,
+  entityType?: string,
+  entityStatus?: string,
+): string {
   switch (viewKind) {
     case 'main':
       return mainHints(hasMutations);
     case 'detail':
-      return detailHints();
+      return detailHints(entityType, entityStatus);
   }
 }

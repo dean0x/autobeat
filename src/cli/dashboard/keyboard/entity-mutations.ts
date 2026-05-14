@@ -83,6 +83,50 @@ export async function cancelEntity(
 }
 
 /**
+ * Dispatches pause or resume to the appropriate service based on entity kind and status.
+ *
+ * Only schedules and loops support pause/resume. Other entity kinds are silently ignored.
+ * Schedule: ACTIVE → pause, PAUSED → resume.
+ * Loop: RUNNING → pause, PAUSED → resume.
+ * Terminal statuses and non-pauseable kinds are no-ops.
+ */
+export async function pauseOrResumeEntity(
+  kind: EntityKind,
+  entityId: string,
+  entityStatus: string,
+  mutations: DashboardMutationContext,
+  refreshNow: () => void,
+): Promise<void> {
+  try {
+    switch (kind) {
+      case 'schedule':
+        if (entityStatus === ScheduleStatus.ACTIVE) {
+          await mutations.scheduleService.pauseSchedule(entityId as ScheduleId);
+          refreshNow();
+        } else if (entityStatus === ScheduleStatus.PAUSED) {
+          await mutations.scheduleService.resumeSchedule(entityId as ScheduleId);
+          refreshNow();
+        }
+        break;
+      case 'loop':
+        if (entityStatus === LoopStatus.RUNNING) {
+          await mutations.loopService.pauseLoop(entityId as LoopId);
+          refreshNow();
+        } else if (entityStatus === LoopStatus.PAUSED) {
+          await mutations.loopService.resumeLoop(entityId as LoopId);
+          refreshNow();
+        }
+        break;
+      default:
+        break;
+    }
+  } catch {
+    // Best-effort: service errors are logged internally by each service.
+    // Swallowing here prevents unhandled rejection from crashing the dashboard TUI.
+  }
+}
+
+/**
  * Dispatches delete to the appropriate repository based on entity kind.
  *
  * Restricted to terminal statuses — non-terminal entities are silently ignored

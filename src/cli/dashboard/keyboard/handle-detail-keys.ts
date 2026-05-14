@@ -8,6 +8,7 @@
  */
 
 import { ORCHESTRATION_CHILDREN_PAGE_SIZE } from '../views/orchestration-detail.js';
+import { pauseOrResumeEntity } from './entity-mutations.js';
 import { resolveChildIndex, resolveIterationIndex } from './helpers.js';
 import type { InkKey, KeyHandlerParams } from './types.js';
 
@@ -97,7 +98,32 @@ function handleOutputControls(input: string, params: KeyHandlerParams): boolean 
 }
 
 /**
- * 3. Loop detail: iteration row navigation (#168).
+ * 3. Pause/resume toggle for schedules and loops.
+ *
+ *  - p: pause (active schedule / running loop) or resume (paused schedule / loop)
+ *  - Silently consumed for non-pauseable entity types.
+ */
+function handlePauseResume(input: string, params: KeyHandlerParams): boolean {
+  if (input !== 'p') return false;
+  const { view, mutations, refreshNow, dataRef } = params;
+  if (view.kind !== 'detail' || !mutations) return true;
+
+  if (view.entityType === 'schedules') {
+    const schedule = dataRef.current?.schedules.find((s) => s.id === view.entityId);
+    if (schedule) {
+      void pauseOrResumeEntity('schedule', schedule.id, schedule.status, mutations, refreshNow);
+    }
+  } else if (view.entityType === 'loops') {
+    const loop = dataRef.current?.loops.find((l) => l.id === view.entityId);
+    if (loop) {
+      void pauseOrResumeEntity('loop', loop.id, loop.status, mutations, refreshNow);
+    }
+  }
+  return true;
+}
+
+/**
+ * 4. Loop detail: iteration row navigation (#168).
  *
  *  - ↑/k: move selection up
  *  - ↓/j: move selection down
@@ -326,6 +352,7 @@ export function handleDetailKeys(input: string, key: InkKey, params: KeyHandlerP
   return (
     handleEscReturn(key, params) ||
     handleOutputControls(input, params) ||
+    handlePauseResume(input, params) ||
     handleLoopNavigation(input, key, params) ||
     handleOrchestrationNavigation(input, key, params) ||
     handleGenericScroll(input, key, params)

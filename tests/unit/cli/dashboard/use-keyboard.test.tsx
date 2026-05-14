@@ -537,6 +537,10 @@ function makeMutations(): {
   deleteLoop: ReturnType<typeof vi.fn>;
   deleteTask: ReturnType<typeof vi.fn>;
   deleteSchedule: ReturnType<typeof vi.fn>;
+  pauseSchedule: ReturnType<typeof vi.fn>;
+  resumeSchedule: ReturnType<typeof vi.fn>;
+  pauseLoop: ReturnType<typeof vi.fn>;
+  resumeLoop: ReturnType<typeof vi.fn>;
 } {
   const cancelOrchestration = vi.fn().mockResolvedValue({ ok: true, value: undefined });
   const cancelLoop = vi.fn().mockResolvedValue({ ok: true, value: undefined });
@@ -547,15 +551,24 @@ function makeMutations(): {
   const deleteTask = vi.fn().mockResolvedValue({ ok: true, value: undefined });
   const deleteSchedule = vi.fn().mockResolvedValue({ ok: true, value: undefined });
 
+  const pauseSchedule = vi.fn().mockResolvedValue({ ok: true, value: undefined });
+  const resumeSchedule = vi.fn().mockResolvedValue({ ok: true, value: undefined });
+  const pauseLoop = vi.fn().mockResolvedValue({ ok: true, value: undefined });
+  const resumeLoop = vi.fn().mockResolvedValue({ ok: true, value: undefined });
+
   const mutations: DashboardMutationContext = {
     orchestrationService: {
       cancelOrchestration,
     } as unknown as DashboardMutationContext['orchestrationService'],
     loopService: {
       cancelLoop,
+      pauseLoop,
+      resumeLoop,
     } as unknown as DashboardMutationContext['loopService'],
     scheduleService: {
       cancelSchedule,
+      pauseSchedule,
+      resumeSchedule,
     } as unknown as DashboardMutationContext['scheduleService'],
     taskManager: {
       cancel: cancelTask,
@@ -584,6 +597,10 @@ function makeMutations(): {
     deleteLoop,
     deleteTask,
     deleteSchedule,
+    pauseSchedule,
+    resumeSchedule,
+    pauseLoop,
+    resumeLoop,
   };
 }
 
@@ -764,6 +781,212 @@ describe('useKeyboard — d: delete terminal entity keybinding', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
     expect(deleteSchedule).toHaveBeenCalledWith('sched-done');
+  });
+});
+
+// ============================================================================
+// p: pause/resume keybinding (#167)
+// ============================================================================
+
+describe('useKeyboard — p: pause/resume keybinding', () => {
+  it('"p" pauses an active schedule in main view', async () => {
+    const schedule = makeSchedule('sched-active', ScheduleStatus.ACTIVE);
+    const data = makeDashboardData({
+      schedules: [schedule],
+      scheduleCounts: { total: 1, byStatus: { active: 1 } },
+    });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'schedules' };
+    const { mutations, pauseSchedule } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
+
+    await press(stdin, 'p');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(pauseSchedule).toHaveBeenCalledWith('sched-active');
+  });
+
+  it('"p" resumes a paused schedule in main view', async () => {
+    const schedule = makeSchedule('sched-paused', ScheduleStatus.PAUSED);
+    const data = makeDashboardData({
+      schedules: [schedule],
+      scheduleCounts: { total: 1, byStatus: { paused: 1 } },
+    });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'schedules' };
+    const { mutations, resumeSchedule } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} mutations={mutations} />);
+
+    await press(stdin, 'p');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(resumeSchedule).toHaveBeenCalledWith('sched-paused');
+  });
+
+  it('"p" pauses a running loop in main view', async () => {
+    const loop = makeLoop('loop-run', LoopStatus.RUNNING);
+    const data = makeDashboardData({
+      loops: [loop],
+      loopCounts: { total: 1, byStatus: { running: 1 } },
+    });
+    const { mutations, pauseLoop } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} mutations={mutations} />);
+
+    await press(stdin, 'p');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(pauseLoop).toHaveBeenCalledWith('loop-run');
+  });
+
+  it('"p" resumes a paused loop in main view', async () => {
+    const loop = makeLoop('loop-paused', LoopStatus.PAUSED);
+    const data = makeDashboardData({
+      loops: [loop],
+      loopCounts: { total: 1, byStatus: { paused: 1 } },
+    });
+    const { mutations, resumeLoop } = makeMutations();
+    const { stdin } = render(<KeyboardWrapper initialData={data} mutations={mutations} />);
+
+    await press(stdin, 'p');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(resumeLoop).toHaveBeenCalledWith('loop-paused');
+  });
+
+  it('"p" pauses an active schedule in detail view', async () => {
+    const schedule = makeSchedule('sched-detail', ScheduleStatus.ACTIVE);
+    const data = makeDashboardData({
+      schedules: [schedule],
+    });
+    const { mutations, pauseSchedule } = makeMutations();
+    const { stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialView={{
+          kind: 'detail',
+          entityType: 'schedules',
+          entityId: 'sched-detail' as ScheduleId,
+          returnTo: 'main',
+        }}
+        mutations={mutations}
+      />,
+    );
+
+    await press(stdin, 'p');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(pauseSchedule).toHaveBeenCalledWith('sched-detail');
+  });
+
+  it('"p" resumes a paused schedule in detail view', async () => {
+    const schedule = makeSchedule('sched-detail-p', ScheduleStatus.PAUSED);
+    const data = makeDashboardData({
+      schedules: [schedule],
+    });
+    const { mutations, resumeSchedule } = makeMutations();
+    const { stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialView={{
+          kind: 'detail',
+          entityType: 'schedules',
+          entityId: 'sched-detail-p' as ScheduleId,
+          returnTo: 'main',
+        }}
+        mutations={mutations}
+      />,
+    );
+
+    await press(stdin, 'p');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(resumeSchedule).toHaveBeenCalledWith('sched-detail-p');
+  });
+
+  it('"p" pauses a running loop in detail view', async () => {
+    const loop = makeLoop('loop-detail-run', LoopStatus.RUNNING);
+    const data = makeDashboardData({
+      loops: [loop],
+    });
+    const { mutations, pauseLoop } = makeMutations();
+    const { stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialView={{
+          kind: 'detail',
+          entityType: 'loops',
+          entityId: 'loop-detail-run' as LoopId,
+          returnTo: 'main',
+        }}
+        mutations={mutations}
+      />,
+    );
+
+    await press(stdin, 'p');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(pauseLoop).toHaveBeenCalledWith('loop-detail-run');
+  });
+
+  it('"p" resumes a paused loop in detail view', async () => {
+    const loop = makeLoop('loop-detail-p', LoopStatus.PAUSED);
+    const data = makeDashboardData({
+      loops: [loop],
+    });
+    const { mutations, resumeLoop } = makeMutations();
+    const { stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialView={{
+          kind: 'detail',
+          entityType: 'loops',
+          entityId: 'loop-detail-p' as LoopId,
+          returnTo: 'main',
+        }}
+        mutations={mutations}
+      />,
+    );
+
+    await press(stdin, 'p');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(resumeLoop).toHaveBeenCalledWith('loop-detail-p');
+  });
+
+  it('"p" on task detail is silently consumed (no crash)', async () => {
+    const task = makeTask('task-nop');
+    const data = makeDashboardData({ tasks: [task] });
+    const { mutations, pauseSchedule, resumeSchedule, pauseLoop, resumeLoop } = makeMutations();
+    const { lastFrame, stdin } = render(
+      <KeyboardWrapper
+        initialData={data}
+        initialView={{
+          kind: 'detail',
+          entityType: 'tasks',
+          entityId: 'task-nop' as TaskId,
+          returnTo: 'main',
+        }}
+        mutations={mutations}
+      />,
+    );
+
+    await press(stdin, 'p');
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(pauseSchedule).not.toHaveBeenCalled();
+    expect(resumeSchedule).not.toHaveBeenCalled();
+    expect(pauseLoop).not.toHaveBeenCalled();
+    expect(resumeLoop).not.toHaveBeenCalled();
+    expect(lastFrame()).toContain('view:detail');
+  });
+
+  it('"p" without mutations context is silently consumed', async () => {
+    const schedule = makeSchedule('sched-nomut', ScheduleStatus.ACTIVE);
+    const data = makeDashboardData({ schedules: [schedule] });
+    const nav: NavState = { ...INITIAL_NAV, focusedPanel: 'schedules' };
+    const { lastFrame, stdin } = render(<KeyboardWrapper initialData={data} initialNav={nav} />);
+
+    await press(stdin, 'p');
+    // No crash, stays on main
+    expect(lastFrame()).toContain('view:main');
   });
 });
 
