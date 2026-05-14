@@ -19,6 +19,8 @@ vi.mock('../../../../src/utils/git-state.js', () => ({
   getCurrentCommitSha: vi.fn().mockResolvedValue({ ok: true, value: 'def4567890abcdef1234567890abcdef1234567890' }),
   createAndCheckoutBranch: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
   captureGitDiff: vi.fn().mockResolvedValue({ ok: true, value: ' src/main.ts | 5 +++--\n 1 file changed' }),
+  getRecentGitLog: vi.fn().mockResolvedValue({ ok: true, value: 'abc1234 feat: add auth\ndef5678 fix: login bug' }),
+  getRecentGitDiffStat: vi.fn().mockResolvedValue({ ok: true, value: ' src/auth.ts | 5 +++++\n 1 file changed, 5 insertions(+)' }),
 }));
 
 import type { Loop, LoopIteration } from '../../../../src/core/domain.js';
@@ -41,8 +43,11 @@ import {
   commitAllChanges,
   createAndCheckoutBranch,
   getCurrentCommitSha,
+  getRecentGitDiffStat,
+  getRecentGitLog,
   resetToCommit,
 } from '../../../../src/utils/git-state.js';
+import { parseGitDiffChangedLines } from '../../../../src/services/handlers/loop-handler.js';
 import { createTestConfiguration } from '../../../fixtures/factories.js';
 import { TestLogger } from '../../../fixtures/test-doubles.js';
 import { flushEventLoop } from '../../../utils/event-helpers.js';
@@ -2377,6 +2382,207 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(updatedLoop!.bestScore).toBe(50);
       expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
       expect(updatedLoop!.consecutiveFailures).toBe(0);
+    });
+  });
+
+  describe('parseGitDiffChangedLines', () => {
+    it('parses standard git diff --stat summary line', () => {
+      expect(parseGitDiffChangedLines('3 files changed, 10 insertions(+), 5 deletions(-)')).toBe(15);
+    });
+
+    it('parses insertions only', () => {
+      expect(parseGitDiffChangedLines('1 file changed, 3 insertions(+)')).toBe(3);
+    });
+
+    it('parses deletions only', () => {
+      expect(parseGitDiffChangedLines('2 files changed, 7 deletions(-)')).toBe(7);
+    });
+
+    it('returns 0 for null', () => {
+      expect(parseGitDiffChangedLines(null)).toBe(0);
+    });
+
+    it('returns 0 for undefined', () => {
+      expect(parseGitDiffChangedLines(undefined)).toBe(0);
+    });
+
+    it('returns 0 for empty string', () => {
+      expect(parseGitDiffChangedLines('')).toBe(0);
+    });
+
+    it('returns 0 for unparseable string', () => {
+      expect(parseGitDiffChangedLines('no changes here')).toBe(0);
+    });
+
+    it('handles multi-line diff stat — extracts from last line', () => {
+      const multiLine = ' src/auth.ts | 10 ++++++----\n src/user.ts | 5 +++++\n 2 files changed, 12 insertions(+), 3 deletions(-)';
+      expect(parseGitDiffChangedLines(multiLine)).toBe(15);
+    });
+
+    it('handles single file change', () => {
+      expect(parseGitDiffChangedLines('1 file changed, 1 insertion(+), 1 deletion(-)')).toBe(2);
+    });
+  });
+
+  describe('freshContext git context injection', () => {
+    beforeEach(() => {
+      // Clear call counts to isolate from prior tests in this suite
+      vi.mocked(getRecentGitLog).mockClear();
+      vi.mocked(getRecentGitDiffStat).mockClear();
+
+      vi.mocked(getRecentGitLog).mockResolvedValue({
+        ok: true,
+        value: 'abc1234 feat: add auth\ndef5678 fix: login bug',
+      });
+      vi.mocked(getRecentGitDiffStat).mockResolvedValue({
+        ok: true,
+        value: ' src/auth.ts | 5 +++++\n 1 file changed, 5 insertions(+)',
+      });
+    });
+
+    it('should prepend git context for freshContext loop on iteration > 1', async () => {
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+      });
+
+      // Complete iteration 1
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // At iteration 2, the prompt should have git context prepended
+      const task2Id = await getLatestTaskId(loop.id);
+      if (!task2Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task2Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task2 = taskResult.value;
+      expect(task2).toBeDefined();
+      if (!task2) return;
+
+      // Git context should be prepended
+      expect(task2.prompt).toContain('Iteration 2 Context');
+      expect(task2.prompt).toContain('abc1234 feat: add auth');
+    });
+
+    it('should NOT inject git context for freshContext loop on iteration 1', async () => {
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        prompt: 'Run the tests',
+      });
+
+      // Iteration 1 task — git context should NOT be injected
+      const task1Id = await getLatestTaskId(loop.id);
+      if (!task1Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task1Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task1 = taskResult.value;
+      expect(task1).toBeDefined();
+      if (!task1) return;
+
+      // No git context on first iteration
+      expect(task1.prompt).not.toContain('Iteration');
+      expect(task1.prompt).toContain('Run the tests');
+    });
+
+    it('should NOT inject git context when freshContext is false (uses checkpoint enrichment instead)', async () => {
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: false,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+      });
+
+      // Complete iteration 1
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // getRecentGitLog should not have been called for non-freshContext loop
+      expect(vi.mocked(getRecentGitLog)).not.toHaveBeenCalled();
+    });
+
+    it('should use original prompt when git context fetch fails with an error', async () => {
+      vi.mocked(getRecentGitLog).mockResolvedValue({
+        ok: false,
+        error: new Error('git not found') as never,
+      });
+      vi.mocked(getRecentGitDiffStat).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+        prompt: 'Run the tests',
+      });
+
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Iteration 2 prompt should be original (both git calls returned null/error — no context)
+      const task2Id = await getLatestTaskId(loop.id);
+      if (!task2Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task2Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task2 = taskResult.value;
+      if (!task2) return;
+      expect(task2.prompt).not.toContain('Iteration');
+      expect(task2.prompt).toContain('Run the tests');
+    });
+
+    it('should skip git context when not a git repo (null from getRecentGitLog)', async () => {
+      vi.mocked(getRecentGitLog).mockResolvedValue({ ok: true, value: null });
+      vi.mocked(getRecentGitDiffStat).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/non-git-dir',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+        prompt: 'Run the tests',
+      });
+
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Iteration 2 task should not have git context (both returned null)
+      const task2Id = await getLatestTaskId(loop.id);
+      if (!task2Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task2Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task2 = taskResult.value;
+      if (!task2) return;
+      expect(task2.prompt).not.toContain('Iteration');
+      expect(task2.prompt).toContain('Run the tests');
     });
   });
 });

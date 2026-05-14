@@ -257,6 +257,92 @@ export async function captureGitDiff(
 }
 
 /**
+ * Get the recent git log as a single-line-per-commit summary.
+ * Returns null if not a git repo, no commits exist, or output is empty.
+ * Uses execFile to prevent argument injection.
+ *
+ * @param workingDirectory - Absolute path to the working directory
+ * @param count - Number of recent commits to fetch (must be a positive integer)
+ * @returns Result containing the log string or null if not a git repo / no history
+ */
+export async function getRecentGitLog(
+  workingDirectory: string,
+  count: number,
+): Promise<Result<string | null, AutobeatError>> {
+  if (!Number.isInteger(count) || count <= 0) {
+    return err(
+      new AutobeatError(ErrorCode.INVALID_INPUT, `count must be a positive integer, got: ${count}`, { count }),
+    );
+  }
+  try {
+    const result = await execFileAsync('git', ['log', '--oneline', `-${count}`], {
+      cwd: workingDirectory,
+      timeout: GIT_TIMEOUT_MS,
+    });
+    const log = result.stdout.trim();
+    if (!log) return ok(null);
+    return ok(log);
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      return err(
+        new AutobeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `Failed to get recent git log: command timed out`,
+          { workingDirectory, count },
+        ),
+      );
+    }
+    // Not a git repo or other non-timeout error — return null (not an error)
+    return ok(null);
+  }
+}
+
+/**
+ * Get git diff --stat between HEAD and HEAD~commitCount.
+ * Returns null if not a git repo, not enough commits exist, or output is empty.
+ * Uses execFile to prevent argument injection.
+ *
+ * @param workingDirectory - Absolute path to the working directory
+ * @param commitCount - Number of commits to diff back from HEAD (must be a positive integer)
+ * @returns Result containing the diff stat string or null if not enough commits / not a git repo
+ */
+export async function getRecentGitDiffStat(
+  workingDirectory: string,
+  commitCount: number,
+): Promise<Result<string | null, AutobeatError>> {
+  if (!Number.isInteger(commitCount) || commitCount <= 0) {
+    return err(
+      new AutobeatError(
+        ErrorCode.INVALID_INPUT,
+        `commitCount must be a positive integer, got: ${commitCount}`,
+        { commitCount },
+      ),
+    );
+  }
+  try {
+    const result = await execFileAsync('git', ['diff', '--stat', `HEAD~${commitCount}`], {
+      cwd: workingDirectory,
+      timeout: GIT_TIMEOUT_MS,
+    });
+    const stat = result.stdout.trim();
+    if (!stat) return ok(null);
+    return ok(stat);
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      return err(
+        new AutobeatError(
+          ErrorCode.SYSTEM_ERROR,
+          `Failed to get recent git diff stat: command timed out`,
+          { workingDirectory, commitCount },
+        ),
+      );
+    }
+    // Not a git repo, not enough commits, or other non-timeout error — return null
+    return ok(null);
+  }
+}
+
+/**
  * Get the current HEAD commit SHA
  * Returns the full 40-character hex SHA of the current HEAD commit.
  *

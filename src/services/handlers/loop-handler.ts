@@ -48,8 +48,40 @@ import {
   commitAllChanges,
   createAndCheckoutBranch,
   getCurrentCommitSha,
+  getRecentGitDiffStat,
+  getRecentGitLog,
   resetToCommit,
 } from '../../utils/git-state.js';
+
+// ── Convergence detection constants ──────────────────────────────────────────
+/** Number of recent iterations to examine when checking for convergence. */
+const CONVERGENCE_WINDOW = 5;
+/** Minimum completed iterations required before convergence can be detected. */
+const CONVERGENCE_MIN_ITERATIONS = 3;
+/** Max changed lines per iteration (git diff insertions + deletions) to count as convergence. */
+const CONVERGENCE_MAX_CHANGED_LINES = 10;
+/** Maximum byte size of git context to prepend to freshContext iteration prompts. */
+const MAX_GIT_CONTEXT_BYTES = 4096;
+
+/**
+ * Parse the total changed lines (insertions + deletions) from a git diff --stat summary string.
+ * Extracts from the last non-empty line, which git formats as:
+ *   "N files changed, X insertions(+), Y deletions(-)"
+ *
+ * Exported for unit testing.
+ *
+ * @param summary - The git diff --stat output string (may be multi-line)
+ * @returns Total changed lines, or 0 if the summary cannot be parsed
+ */
+export function parseGitDiffChangedLines(summary: string | undefined | null): number {
+  if (!summary) return 0;
+  const lines = summary.split('\n').filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return 0;
+  const lastLine = lines[lines.length - 1];
+  const insertions = lastLine.match(/(\d+) insertions?\(\+\)/);
+  const deletions = lastLine.match(/(\d+) deletions?\(-\)/);
+  return (insertions ? Number(insertions[1]) : 0) + (deletions ? Number(deletions[1]) : 0);
+}
 
 export interface LoopHandlerDeps {
   readonly loopRepo: LoopRepository & SyncLoopOperations;
@@ -670,6 +702,12 @@ export class LoopHandler extends BaseEventHandler {
     // If !freshContext: fetch previous iteration's checkpoint and enrich prompt (R2)
     if (!loop.freshContext && iterationNumber > 1) {
       prompt = await this.enrichPromptWithCheckpoint(loop, iterationNumber, prompt);
+    }
+
+    // If freshContext + iteration > 1 + workingDirectory: prepend recent git context (R3)
+    // Provides lightweight cross-iteration awareness without full checkpoint overhead.
+    if (loop.freshContext && iterationNumber > 1 && loop.workingDirectory) {
+      prompt = await this.enrichPromptWithGitContext(loop, iterationNumber, prompt);
     }
 
     // Create task from template
@@ -1557,6 +1595,43 @@ export class LoopHandler extends BaseEventHandler {
     }
 
     return contextParts.join('\n');
+  }
+
+  /**
+   * Enrich a freshContext iteration prompt with recent git context.
+   * Prepends commit log and diff stat from the working directory to give the agent
+   * lightweight cross-iteration awareness without a full checkpoint.
+   *
+   * DECISION: Cap at 4KB (MAX_GIT_CONTEXT_BYTES) to prevent prompt bloat.
+   * When both git log and diff stat are null (not a git repo), returns the
+   * original prompt unchanged.
+   */
+  private async enrichPromptWithGitContext(loop: Loop, iterationNumber: number, prompt: string): Promise<string> {
+    const gitLogResult = await getRecentGitLog(loop.workingDirectory, 15);
+    const gitDiffStatResult = await getRecentGitDiffStat(loop.workingDirectory, 5);
+
+    const gitLog = gitLogResult.ok ? gitLogResult.value : null;
+    const gitDiffStat = gitDiffStatResult.ok ? gitDiffStatResult.value : null;
+
+    // Not a git repo or no history — skip enrichment
+    if (!gitLog && !gitDiffStat) return prompt;
+
+    const sections: string[] = [`--- Iteration ${iterationNumber} Context ---`];
+    if (gitLog) sections.push(`Recent commits:\n${gitLog}`);
+    if (gitDiffStat) sections.push(`Recent changes:\n${gitDiffStat}`);
+
+    let gitContext = sections.join('\n\n');
+
+    // Cap at MAX_GIT_CONTEXT_BYTES to prevent prompt bloat
+    if (Buffer.byteLength(gitContext) > MAX_GIT_CONTEXT_BYTES) {
+      const lines = gitContext.split('\n');
+      while (lines.length > 0 && Buffer.byteLength(lines.join('\n')) > MAX_GIT_CONTEXT_BYTES) {
+        lines.pop();
+      }
+      gitContext = lines.join('\n');
+    }
+
+    return `${gitContext}\n\n---\n\n${prompt}`;
   }
 
   /**
