@@ -13,7 +13,7 @@ vi.mock('../../src/utils/git-state.js', () => ({
   validateGitRefName: vi.fn().mockReturnValue({ ok: true, value: undefined }),
 }));
 
-import { existsSync, unlinkSync } from 'fs';
+import { unlinkSync } from 'fs';
 import { LoopId, LoopStatus, OrchestratorId, OrchestratorStatus, updateLoop } from '../../src/core/domain.js';
 import { Database } from '../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../src/implementations/loop-repository.js';
@@ -114,7 +114,6 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
 
       // Agent eval mode: no state file is created
       expect(orch.stateFilePath).toBe('');
-      expect(existsSync(orch.stateFilePath)).toBe(false);
 
       // Verify loop was created with agent eval mode
       const loopResult = await loopRepo.findById(orch.loopId!);
@@ -178,7 +177,7 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
       expect(orch.stateFilePath).toBe('');
     });
 
-    it('loop creation fails: orch row marked FAILED, state file removed', async () => {
+    it('loop creation fails: orch row marked FAILED, no state file created (agent eval mode)', async () => {
       // Make loopService.createLoop fail by making the eventBus fail on LoopCreated
       // Remove the LoopCreated subscriber from the TestEventBus (it was added in beforeEach)
       // and replace with one that returns err
@@ -203,14 +202,14 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
       expect(failedOrch).toBeDefined();
       if (!failedOrch) return;
 
-      // State file should NOT exist (compensation cleaned it up)
-      expect(existsSync(failedOrch.stateFilePath)).toBe(false);
+      // Agent eval mode: no state file was created (stateFilePath is '' for agent eval loops)
+      expect(failedOrch.stateFilePath).toBe('');
 
       // Reset for cleanup
       eventBus.setEmitFailure('LoopCreated', false);
     });
 
-    it('orchestration update fails: loop cancelled, orch row marked FAILED, state file removed', async () => {
+    it('orchestration update fails: loop cancelled, orch row marked FAILED, no state file created (agent eval mode)', async () => {
       // Arrange: replace updateIfStatus on orchRepo to return a DB error Result.
       // This simulates the conditional update failing (e.g. DB constraint or connection error).
       vi.spyOn(orchRepo, 'updateIfStatus').mockResolvedValueOnce({
@@ -235,8 +234,8 @@ describe('Orchestration Lifecycle - Integration Tests', () => {
       expect(failedOrch).toBeDefined();
       if (!failedOrch) return;
 
-      // State file should NOT exist (compensation cleaned it up)
-      expect(existsSync(failedOrch.stateFilePath)).toBe(false);
+      // Agent eval mode: no state file was created (stateFilePath is '' for agent eval loops)
+      expect(failedOrch.stateFilePath).toBe('');
 
       // The loop that was created must now be CANCELLED.
       // Compensation called cancelLoop(loopId) which emits LoopCancelled;

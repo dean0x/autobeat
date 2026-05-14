@@ -46,6 +46,7 @@ import type { ExitConditionEvaluator } from '../../../../src/core/interfaces.js'
 import { Database } from '../../../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../../../src/implementations/loop-repository.js';
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository.js';
+import { AutobeatError, ErrorCode } from '../../../../src/core/errors.js';
 import { LoopHandler, parseGitDiffChangedLines } from '../../../../src/services/handlers/loop-handler.js';
 import {
   captureGitDiff,
@@ -2530,7 +2531,7 @@ describe('LoopHandler - Behavioral Tests', () => {
     it('should use original prompt when git context fetch fails with an error', async () => {
       vi.mocked(getRecentGitLog).mockResolvedValue({
         ok: false,
-        error: new Error('git not found') as never,
+        error: new AutobeatError(ErrorCode.SYSTEM_ERROR, 'git not found'),
       });
       vi.mocked(getRecentGitDiffStat).mockResolvedValue({ ok: true, value: null });
       mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
@@ -2591,6 +2592,55 @@ describe('LoopHandler - Behavioral Tests', () => {
       const task2 = taskResult.value;
       if (!task2) return;
       expect(task2.prompt).not.toContain('Iteration');
+      expect(task2.prompt).toContain('Run the tests');
+    });
+
+    it('should truncate git context to fit within 4096 bytes when log is oversized', async () => {
+      // Build a git log string well over 4096 bytes (~6KB) to exercise binary search truncation
+      const longLine = 'a'.repeat(100);
+      const manyLines = Array.from({ length: 70 }, (_, i) => `abc${i.toString().padStart(4, '0')} feat: ${longLine}`);
+      const oversizedLog = manyLines.join('\n'); // ~7000+ bytes
+      expect(Buffer.byteLength(oversizedLog)).toBeGreaterThan(4096);
+
+      vi.mocked(getRecentGitLog).mockResolvedValue({ ok: true, value: oversizedLog });
+      vi.mocked(getRecentGitDiffStat).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+        prompt: 'Run the tests',
+      });
+
+      // Complete iteration 1 to trigger iteration 2 (where git context is injected)
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      if (!task2Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task2Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task2 = taskResult.value;
+      if (!task2) return;
+
+      // Git context must be present (has meaningful content) but truncated to fit the budget
+      expect(task2.prompt).toContain('Iteration 2 Context');
+      // The git header line must be present (at minimum the first line survived truncation)
+      expect(task2.prompt).toContain('Recent commits:');
+      // Total git context injected before the prompt separator must be within 4096 bytes.
+      // The prompt format is `${gitContext}\n\n---\n\n${originalPrompt}`.
+      const separatorIdx = task2.prompt.indexOf('\n\n---\n\n');
+      expect(separatorIdx).toBeGreaterThan(0);
+      const gitContextInPrompt = task2.prompt.slice(0, separatorIdx);
+      expect(Buffer.byteLength(gitContextInPrompt)).toBeLessThanOrEqual(4096);
+      // Original prompt must survive intact after the separator
       expect(task2.prompt).toContain('Run the tests');
     });
   });
@@ -2746,6 +2796,37 @@ describe('LoopHandler - Behavioral Tests', () => {
       await flushEventLoop();
 
       // Different scores — loop still running
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should NOT apply git diff convergence for non-git loops (no gitBranch set)', async () => {
+      // Override captureGitDiff to return zero-change diff — would trigger convergence for git loops
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      // Non-git loop: no gitBranch and no gitStartCommitSha
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        // gitBranch intentionally omitted — non-git loop
+      });
+
+      // Run 3 failing iterations with zero-change diffs — would converge a git loop
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Non-git loop: git diff convergence check is skipped entirely, loop remains RUNNING
       const updatedLoop = await getLoop(loop.id);
       expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
     });
