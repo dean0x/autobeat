@@ -36,14 +36,13 @@ export function detailHints(entityType?: PanelId, entityStatus?: string): string
   const baseNoOutput = 'Esc back · ↑↓ select · Enter detail · r refresh · q quit';
 
   if (entityType === 'schedules' || entityType === 'loops') {
-    const base = baseNoOutput;
     if (entityStatus === ScheduleStatus.ACTIVE || entityStatus === LoopStatus.RUNNING) {
-      return `${base} · p pause`;
+      return `${baseNoOutput} · p pause`;
     }
     if (entityStatus === ScheduleStatus.PAUSED || entityStatus === LoopStatus.PAUSED) {
-      return `${base} · p resume`;
+      return `${baseNoOutput} · p resume`;
     }
-    return base;
+    return baseNoOutput;
   }
   return baseWithOutput;
 }
