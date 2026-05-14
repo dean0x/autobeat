@@ -48,8 +48,42 @@ import {
   commitAllChanges,
   createAndCheckoutBranch,
   getCurrentCommitSha,
+  getRecentGitDiffStat,
+  getRecentGitLog,
   resetToCommit,
 } from '../../utils/git-state.js';
+
+// ── Convergence detection constants ──────────────────────────────────────────
+/** DB query window: fetch this many recent iterations to find CONVERGENCE_MIN_ITERATIONS completed ones (headroom for cancelled/running/failed iterations in between). */
+const CONVERGENCE_WINDOW = 5;
+/** Minimum completed iterations required before convergence can be detected. */
+const CONVERGENCE_MIN_ITERATIONS = 3;
+/** Max changed lines per iteration (git diff insertions + deletions) to count as convergence. */
+const CONVERGENCE_MAX_CHANGED_LINES = 10;
+/** Maximum byte size of git context to prepend to freshContext iteration prompts. */
+const MAX_GIT_CONTEXT_BYTES = 4096;
+/** Tolerance for floating-point score equality in plateau convergence detection. */
+const SCORE_EPSILON = 1e-9;
+
+/**
+ * Parse the total changed lines (insertions + deletions) from a git diff --stat summary string.
+ * Extracts from the last non-empty line, which git formats as:
+ *   "N files changed, X insertions(+), Y deletions(-)"
+ *
+ * Exported for unit testing.
+ *
+ * @param summary - The git diff --stat output string (may be multi-line)
+ * @returns Total changed lines, or 0 if the summary cannot be parsed
+ */
+export function parseGitDiffChangedLines(summary: string | undefined | null): number {
+  if (!summary) return 0;
+  const lines = summary.split('\n').filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return 0;
+  const lastLine = lines[lines.length - 1];
+  const insertions = lastLine.match(/(\d+) insertions?\(\+\)/);
+  const deletions = lastLine.match(/(\d+) deletions?\(-\)/);
+  return (insertions ? Number(insertions[1]) : 0) + (deletions ? Number(deletions[1]) : 0);
+}
 
 export interface LoopHandlerDeps {
   readonly loopRepo: LoopRepository & SyncLoopOperations;
@@ -672,6 +706,12 @@ export class LoopHandler extends BaseEventHandler {
       prompt = await this.enrichPromptWithCheckpoint(loop, iterationNumber, prompt);
     }
 
+    // If freshContext + iteration > 1 + workingDirectory: prepend recent git context (R3)
+    // Provides lightweight cross-iteration awareness without full checkpoint overhead.
+    if (loop.freshContext && iterationNumber > 1 && loop.workingDirectory) {
+      prompt = await this.enrichPromptWithGitContext(loop, iterationNumber, prompt);
+    }
+
     // Create task from template
     const task = createTask({
       ...loop.taskTemplate,
@@ -1150,6 +1190,85 @@ export class LoopHandler extends BaseEventHandler {
       return true;
     }
 
+    // Convergence detection: check if the loop has stopped making meaningful progress
+    if (await this.checkConvergence(loop)) return true;
+
+    return false;
+  }
+
+  /**
+   * Check whether the loop has converged (stopped making progress).
+   *
+   * Two convergence signals:
+   * 1. Git diff convergence: last CONVERGENCE_MIN_ITERATIONS completed iterations all produced
+   *    fewer than CONVERGENCE_MAX_CHANGED_LINES changed lines in their git diff summaries.
+   * 2. Score plateau (OPTIMIZE only): last CONVERGENCE_MIN_ITERATIONS completed iterations
+   *    all scored identically — the optimizer is stuck.
+   *
+   * DECISION: Uses CONVERGENCE_WINDOW to query iterations and CONVERGENCE_MIN_ITERATIONS
+   * as the minimum required sample. This avoids premature termination on sparse history.
+   *
+   * @returns true if convergence was detected (and loop was completed), false otherwise
+   */
+  private async checkConvergence(loop: Loop): Promise<boolean> {
+    if (loop.convergenceEnabled === false) return false;
+
+    const iterationsResult = await this.loopRepo.getIterations(loop.id, CONVERGENCE_WINDOW, 0);
+    if (!iterationsResult.ok) return false;
+
+    const all = iterationsResult.value;
+
+    // Signal 1: Git diff convergence — all recent successful iterations produced fewer
+    // than threshold changed lines. Only counts pass/keep/progress — failed/crashed iterations
+    // produce no meaningful git changes and must not trigger convergence, otherwise a
+    // consistently-failing loop would be marked COMPLETED instead of FAILED.
+    const isGitLoop = !!(loop.gitBranch || loop.gitStartCommitSha);
+    if (isGitLoop) {
+      const successful = all.filter((it) => it.status === 'pass' || it.status === 'keep' || it.status === 'progress');
+      const withGitTracking = successful
+        .slice(0, CONVERGENCE_MIN_ITERATIONS)
+        .filter((it) => it.preIterationCommitSha !== undefined && it.preIterationCommitSha !== null);
+      if (withGitTracking.length >= CONVERGENCE_MIN_ITERATIONS) {
+        const changedLines = withGitTracking.map((it) => parseGitDiffChangedLines(it.gitDiffSummary));
+        if (changedLines.every((lines) => lines < CONVERGENCE_MAX_CHANGED_LINES)) {
+          const iterNums = withGitTracking.map((it) => it.iterationNumber);
+          const reason = `Convergence detected: iterations ${iterNums[iterNums.length - 1]}-${iterNums[0]} produced ${[...changedLines].reverse().join(', ')} changed lines (threshold: ${CONVERGENCE_MAX_CHANGED_LINES})`;
+          this.logger.info('Git diff convergence detected', {
+            loopId: loop.id,
+            iterationNumbers: iterNums,
+            changedLines,
+          });
+          await this.completeLoop(loop, LoopStatus.COMPLETED, reason);
+          return true;
+        }
+      }
+    }
+
+    // Signal 2: Score plateau (OPTIMIZE only) — all recent evaluated iterations scored
+    // identically. Includes discard (same/worse score) since that's a valid evaluation outcome.
+    // Excludes running/cancelled/fail/crash which were never scored.
+    if (loop.strategy === LoopStrategy.OPTIMIZE) {
+      const evaluated = all.filter(
+        (it) => it.status === 'pass' || it.status === 'keep' || it.status === 'discard' || it.status === 'progress',
+      );
+      const recent = evaluated.slice(0, CONVERGENCE_MIN_ITERATIONS);
+      const scores = recent.map((it) => it.score).filter((s): s is number => s !== undefined);
+      if (scores.length >= CONVERGENCE_MIN_ITERATIONS) {
+        const allSame = scores.every((s) => Math.abs(s - scores[0]!) < SCORE_EPSILON);
+        if (allSame) {
+          const iterNums = recent.map((it) => it.iterationNumber);
+          const reason = `Convergence detected: iterations ${iterNums[iterNums.length - 1]}-${iterNums[0]} all scored ${scores[0]} (plateau)`;
+          this.logger.info('Score plateau convergence detected', {
+            loopId: loop.id,
+            iterationNumbers: iterNums,
+            score: scores[0],
+          });
+          await this.completeLoop(loop, LoopStatus.COMPLETED, reason);
+          return true;
+        }
+      }
+    }
+
     return false;
   }
 
@@ -1557,6 +1676,58 @@ export class LoopHandler extends BaseEventHandler {
     }
 
     return contextParts.join('\n');
+  }
+
+  /**
+   * Enrich a freshContext iteration prompt with recent git context.
+   * Prepends commit log and diff stat from the working directory to give the agent
+   * lightweight cross-iteration awareness without a full checkpoint.
+   *
+   * DECISION: Cap at 4KB (MAX_GIT_CONTEXT_BYTES) to prevent prompt bloat.
+   * When both git log and diff stat are null (not a git repo), returns the
+   * original prompt unchanged.
+   */
+  private async enrichPromptWithGitContext(loop: Loop, iterationNumber: number, prompt: string): Promise<string> {
+    const [gitLogResult, gitDiffStatResult] = await Promise.all([
+      getRecentGitLog(loop.workingDirectory, 15),
+      getRecentGitDiffStat(loop.workingDirectory, 5),
+    ]);
+
+    const gitLog = gitLogResult.ok ? gitLogResult.value : null;
+    const gitDiffStat = gitDiffStatResult.ok ? gitDiffStatResult.value : null;
+
+    // Not a git repo or no history — skip enrichment
+    if (!gitLog && !gitDiffStat) return prompt;
+
+    const sections: string[] = [`--- Iteration ${iterationNumber} Context ---`];
+    if (gitLog) sections.push(`Recent commits:\n${gitLog}`);
+    if (gitDiffStat) sections.push(`Recent changes:\n${gitDiffStat}`);
+
+    let gitContext = sections.join('\n\n');
+
+    // Cap at MAX_GIT_CONTEXT_BYTES to prevent prompt bloat.
+    // Uses binary search on lines array for O(n log n) instead of O(n^2).
+    if (Buffer.byteLength(gitContext) > MAX_GIT_CONTEXT_BYTES) {
+      const lines = gitContext.split('\n');
+      let lo = 0;
+      let hi = lines.length;
+      // Binary search for the maximum number of lines that fit within the byte budget.
+      // Bounded: at most ceil(log2(lines.length)) iterations.
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >>> 1;
+        if (Buffer.byteLength(lines.slice(0, mid).join('\n')) <= MAX_GIT_CONTEXT_BYTES) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      gitContext = lines.slice(0, lo).join('\n');
+      // Guard: binary search may yield lo=0 when every line exceeds the budget.
+      // In that edge case skip enrichment rather than prepending a bare separator.
+      if (!gitContext) return prompt;
+    }
+
+    return `${gitContext}\n\n---\n\n${prompt}`;
   }
 
   /**

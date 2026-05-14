@@ -567,3 +567,145 @@ describe('resetToCommit', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+describe('getRecentGitLog', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should return commit log when in a git repo', async () => {
+    const logOutput = 'abc1234 feat: add auth module\ndef5678 fix: resolve login bug\n';
+    mockExecFileSequence([{ stdout: logOutput }]);
+
+    const { getRecentGitLog } = await import('../../../src/utils/git-state.js');
+    const result = await getRecentGitLog('/workspace', 15);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe(logOutput.trim());
+  });
+
+  it('should return null when not a git repo', async () => {
+    mockExecFileSequence([{ error: new Error('fatal: not a git repository') }]);
+
+    const { getRecentGitLog } = await import('../../../src/utils/git-state.js');
+    const result = await getRecentGitLog('/tmp/not-a-repo', 5);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBeNull();
+  });
+
+  it('should return null when output is empty (no commits)', async () => {
+    mockExecFileSequence([{ stdout: '' }]);
+
+    const { getRecentGitLog } = await import('../../../src/utils/git-state.js');
+    const result = await getRecentGitLog('/workspace', 5);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBeNull();
+  });
+
+  it('should reject non-positive count', async () => {
+    const { getRecentGitLog } = await import('../../../src/utils/git-state.js');
+
+    const result0 = await getRecentGitLog('/workspace', 0);
+    expect(result0.ok).toBe(false);
+
+    const resultNeg = await getRecentGitLog('/workspace', -1);
+    expect(resultNeg.ok).toBe(false);
+  });
+
+  it('should reject non-integer count', async () => {
+    const { getRecentGitLog } = await import('../../../src/utils/git-state.js');
+
+    const result = await getRecentGitLog('/workspace', 1.5);
+    expect(result.ok).toBe(false);
+  });
+
+  it('should include timeout in exec call', async () => {
+    const mock = vi.mocked(execFile);
+    mock.mockClear();
+    mockExecFileSequence([{ stdout: 'abc1234 feat: add auth\n' }]);
+
+    const { getRecentGitLog } = await import('../../../src/utils/git-state.js');
+    await getRecentGitLog('/workspace', 10);
+
+    expect(mock).toHaveBeenCalledTimes(1);
+    const opts = mock.mock.calls[0][2] as Record<string, unknown>;
+    expect(opts).toHaveProperty('timeout');
+    expect(opts.timeout).toBeGreaterThan(0);
+  });
+});
+
+describe('getRecentGitDiffStat', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should return diff stat when in a git repo with enough commits', async () => {
+    const diffOutput = ' src/auth.ts | 5 +++++\n 1 file changed, 5 insertions(+)\n';
+    mockExecFileSequence([{ stdout: diffOutput }]);
+
+    const { getRecentGitDiffStat } = await import('../../../src/utils/git-state.js');
+    const result = await getRecentGitDiffStat('/workspace', 3);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe(diffOutput.trim());
+  });
+
+  it('should return null when not enough commits (git error)', async () => {
+    mockExecFileSequence([{ error: new Error("unknown revision 'HEAD~5'") }]);
+
+    const { getRecentGitDiffStat } = await import('../../../src/utils/git-state.js');
+    const result = await getRecentGitDiffStat('/workspace', 5);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBeNull();
+  });
+
+  it('should return null when output is empty (no changes)', async () => {
+    mockExecFileSequence([{ stdout: '' }]);
+
+    const { getRecentGitDiffStat } = await import('../../../src/utils/git-state.js');
+    const result = await getRecentGitDiffStat('/workspace', 2);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBeNull();
+  });
+
+  it('should reject non-positive commitCount', async () => {
+    const { getRecentGitDiffStat } = await import('../../../src/utils/git-state.js');
+
+    const result0 = await getRecentGitDiffStat('/workspace', 0);
+    expect(result0.ok).toBe(false);
+
+    const resultNeg = await getRecentGitDiffStat('/workspace', -1);
+    expect(resultNeg.ok).toBe(false);
+  });
+
+  it('should reject non-integer commitCount', async () => {
+    const { getRecentGitDiffStat } = await import('../../../src/utils/git-state.js');
+
+    const result = await getRecentGitDiffStat('/workspace', 2.5);
+    expect(result.ok).toBe(false);
+  });
+
+  it('should include timeout in exec call', async () => {
+    const mock = vi.mocked(execFile);
+    mock.mockClear();
+    mockExecFileSequence([{ stdout: ' src/auth.ts | 5 +++++\n 1 file changed\n' }]);
+
+    const { getRecentGitDiffStat } = await import('../../../src/utils/git-state.js');
+    await getRecentGitDiffStat('/workspace', 3);
+
+    expect(mock).toHaveBeenCalledTimes(1);
+    const opts = mock.mock.calls[0][2] as Record<string, unknown>;
+    expect(opts).toHaveProperty('timeout');
+    expect(opts.timeout).toBeGreaterThan(0);
+  });
+});

@@ -18,7 +18,17 @@ vi.mock('../../../../src/utils/git-state.js', () => ({
   resetToCommit: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
   getCurrentCommitSha: vi.fn().mockResolvedValue({ ok: true, value: 'def4567890abcdef1234567890abcdef1234567890' }),
   createAndCheckoutBranch: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
-  captureGitDiff: vi.fn().mockResolvedValue({ ok: true, value: ' src/main.ts | 5 +++--\n 1 file changed' }),
+  // Default returns significant changes (> CONVERGENCE_MAX_CHANGED_LINES=10) so existing tests
+  // do not accidentally trigger convergence detection. Tests that need convergence
+  // override this mock to return low-change diffs.
+  captureGitDiff: vi.fn().mockResolvedValue({
+    ok: true,
+    value: ' src/main.ts | 50 ++++++++++----\n 1 file changed, 35 insertions(+), 15 deletions(-)',
+  }),
+  getRecentGitLog: vi.fn().mockResolvedValue({ ok: true, value: 'abc1234 feat: add auth\ndef5678 fix: login bug' }),
+  getRecentGitDiffStat: vi
+    .fn()
+    .mockResolvedValue({ ok: true, value: ' src/auth.ts | 5 +++++\n 1 file changed, 5 insertions(+)' }),
 }));
 
 import type { Loop, LoopIteration } from '../../../../src/core/domain.js';
@@ -31,16 +41,20 @@ import {
   TaskId,
   TaskStatus,
 } from '../../../../src/core/domain.js';
+import { AutobeatError, ErrorCode } from '../../../../src/core/errors.js';
 import { InMemoryEventBus } from '../../../../src/core/events/event-bus.js';
 import type { ExitConditionEvaluator } from '../../../../src/core/interfaces.js';
 import { Database } from '../../../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../../../src/implementations/loop-repository.js';
 import { SQLiteTaskRepository } from '../../../../src/implementations/task-repository.js';
-import { LoopHandler } from '../../../../src/services/handlers/loop-handler.js';
+import { LoopHandler, parseGitDiffChangedLines } from '../../../../src/services/handlers/loop-handler.js';
 import {
+  captureGitDiff,
   commitAllChanges,
   createAndCheckoutBranch,
   getCurrentCommitSha,
+  getRecentGitDiffStat,
+  getRecentGitLog,
   resetToCommit,
 } from '../../../../src/utils/git-state.js';
 import { createTestConfiguration } from '../../../fixtures/factories.js';
@@ -2377,6 +2391,502 @@ describe('LoopHandler - Behavioral Tests', () => {
       expect(updatedLoop!.bestScore).toBe(50);
       expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
       expect(updatedLoop!.consecutiveFailures).toBe(0);
+    });
+  });
+
+  describe('parseGitDiffChangedLines', () => {
+    it('parses standard git diff --stat summary line', () => {
+      expect(parseGitDiffChangedLines('3 files changed, 10 insertions(+), 5 deletions(-)')).toBe(15);
+    });
+
+    it('parses insertions only', () => {
+      expect(parseGitDiffChangedLines('1 file changed, 3 insertions(+)')).toBe(3);
+    });
+
+    it('parses deletions only', () => {
+      expect(parseGitDiffChangedLines('2 files changed, 7 deletions(-)')).toBe(7);
+    });
+
+    it('returns 0 for null', () => {
+      expect(parseGitDiffChangedLines(null)).toBe(0);
+    });
+
+    it('returns 0 for undefined', () => {
+      expect(parseGitDiffChangedLines(undefined)).toBe(0);
+    });
+
+    it('returns 0 for empty string', () => {
+      expect(parseGitDiffChangedLines('')).toBe(0);
+    });
+
+    it('returns 0 for unparseable string', () => {
+      expect(parseGitDiffChangedLines('no changes here')).toBe(0);
+    });
+
+    it('handles multi-line diff stat — extracts from last line', () => {
+      const multiLine =
+        ' src/auth.ts | 10 ++++++----\n src/user.ts | 5 +++++\n 2 files changed, 12 insertions(+), 3 deletions(-)';
+      expect(parseGitDiffChangedLines(multiLine)).toBe(15);
+    });
+
+    it('handles single file change', () => {
+      expect(parseGitDiffChangedLines('1 file changed, 1 insertion(+), 1 deletion(-)')).toBe(2);
+    });
+  });
+
+  describe('freshContext git context injection', () => {
+    beforeEach(() => {
+      // Clear call counts to isolate from prior tests in this suite
+      vi.mocked(getRecentGitLog).mockClear();
+      vi.mocked(getRecentGitDiffStat).mockClear();
+
+      vi.mocked(getRecentGitLog).mockResolvedValue({
+        ok: true,
+        value: 'abc1234 feat: add auth\ndef5678 fix: login bug',
+      });
+      vi.mocked(getRecentGitDiffStat).mockResolvedValue({
+        ok: true,
+        value: ' src/auth.ts | 5 +++++\n 1 file changed, 5 insertions(+)',
+      });
+    });
+
+    it('should prepend git context for freshContext loop on iteration > 1', async () => {
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+      });
+
+      // Complete iteration 1
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // At iteration 2, the prompt should have git context prepended
+      const task2Id = await getLatestTaskId(loop.id);
+      if (!task2Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task2Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task2 = taskResult.value;
+      expect(task2).toBeDefined();
+      if (!task2) return;
+
+      // Git context should be prepended
+      expect(task2.prompt).toContain('Iteration 2 Context');
+      expect(task2.prompt).toContain('abc1234 feat: add auth');
+    });
+
+    it('should NOT inject git context for freshContext loop on iteration 1', async () => {
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        prompt: 'Run the tests',
+      });
+
+      // Iteration 1 task — git context should NOT be injected
+      const task1Id = await getLatestTaskId(loop.id);
+      if (!task1Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task1Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task1 = taskResult.value;
+      expect(task1).toBeDefined();
+      if (!task1) return;
+
+      // No git context on first iteration
+      expect(task1.prompt).not.toContain('Iteration');
+      expect(task1.prompt).toContain('Run the tests');
+    });
+
+    it('should NOT inject git context when freshContext is false (uses checkpoint enrichment instead)', async () => {
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: false,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+      });
+
+      // Complete iteration 1
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // getRecentGitLog should not have been called for non-freshContext loop
+      expect(vi.mocked(getRecentGitLog)).not.toHaveBeenCalled();
+    });
+
+    it('should use original prompt when git context fetch fails with an error', async () => {
+      vi.mocked(getRecentGitLog).mockResolvedValue({
+        ok: false,
+        error: new AutobeatError(ErrorCode.SYSTEM_ERROR, 'git not found'),
+      });
+      vi.mocked(getRecentGitDiffStat).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+        prompt: 'Run the tests',
+      });
+
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Iteration 2 prompt should be original (both git calls returned null/error — no context)
+      const task2Id = await getLatestTaskId(loop.id);
+      if (!task2Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task2Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task2 = taskResult.value;
+      if (!task2) return;
+      expect(task2.prompt).not.toContain('Iteration');
+      expect(task2.prompt).toContain('Run the tests');
+    });
+
+    it('should skip git context when not a git repo (null from getRecentGitLog)', async () => {
+      vi.mocked(getRecentGitLog).mockResolvedValue({ ok: true, value: null });
+      vi.mocked(getRecentGitDiffStat).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/non-git-dir',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+        prompt: 'Run the tests',
+      });
+
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Iteration 2 task should not have git context (both returned null)
+      const task2Id = await getLatestTaskId(loop.id);
+      if (!task2Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task2Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task2 = taskResult.value;
+      if (!task2) return;
+      expect(task2.prompt).not.toContain('Iteration');
+      expect(task2.prompt).toContain('Run the tests');
+    });
+
+    it('should truncate git context to fit within 4096 bytes when log is oversized', async () => {
+      // Build a git log string well over 4096 bytes (~6KB) to exercise binary search truncation
+      const longLine = 'a'.repeat(100);
+      const manyLines = Array.from({ length: 70 }, (_, i) => `abc${i.toString().padStart(4, '0')} feat: ${longLine}`);
+      const oversizedLog = manyLines.join('\n'); // ~7000+ bytes
+      expect(Buffer.byteLength(oversizedLog)).toBeGreaterThan(4096);
+
+      vi.mocked(getRecentGitLog).mockResolvedValue({ ok: true, value: oversizedLog });
+      vi.mocked(getRecentGitDiffStat).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        freshContext: true,
+        workingDirectory: '/workspace',
+        maxIterations: 5,
+        maxConsecutiveFailures: 5,
+        prompt: 'Run the tests',
+      });
+
+      // Complete iteration 1 to trigger iteration 2 (where git context is injected)
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      if (!task2Id) return;
+
+      const { SQLiteTaskRepository } = await import('../../../../src/implementations/task-repository.js');
+      const taskResult = await (taskRepo as SQLiteTaskRepository).findById(task2Id);
+      expect(taskResult.ok).toBe(true);
+      if (!taskResult.ok) return;
+
+      const task2 = taskResult.value;
+      if (!task2) return;
+
+      // Git context must be present (has meaningful content) but truncated to fit the budget
+      expect(task2.prompt).toContain('Iteration 2 Context');
+      // The git header line must be present (at minimum the first line survived truncation)
+      expect(task2.prompt).toContain('Recent commits:');
+      // Total git context injected before the prompt separator must be within 4096 bytes.
+      // The prompt format is `${gitContext}\n\n---\n\n${originalPrompt}`.
+      const separatorIdx = task2.prompt.indexOf('\n\n---\n\n');
+      expect(separatorIdx).toBeGreaterThan(0);
+      const gitContextInPrompt = task2.prompt.slice(0, separatorIdx);
+      expect(Buffer.byteLength(gitContextInPrompt)).toBeLessThanOrEqual(4096);
+      // Original prompt must survive intact after the separator
+      expect(task2.prompt).toContain('Run the tests');
+    });
+  });
+
+  describe('Convergence detection', () => {
+    beforeEach(() => {
+      // Reset captureGitDiff to the default high-change mock between convergence tests
+      vi.mocked(captureGitDiff).mockResolvedValue({
+        ok: true,
+        value: ' src/main.ts | 50 ++++++++++----\n 1 file changed, 35 insertions(+), 15 deletions(-)',
+      });
+    });
+
+    it('should complete loop when 3 consecutive iterations have zero-change git diffs', async () => {
+      // Override captureGitDiff to return zero-change diff (< CONVERGENCE_MAX_CHANGED_LINES=10)
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null }); // null = no diff summary
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10, // High so consecutive failures don't trigger first
+        gitBranch: 'feat/convergence-test', // Enable git tracking so preIterationCommitSha is set
+      });
+
+      // Run 3 failing iterations — each has null gitDiffSummary (0 changed lines)
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // After 3 iterations with zero-change diffs, convergence should be detected
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.COMPLETED);
+    });
+
+    it('should NOT converge when iterations have meaningful changes (> 10 lines each)', async () => {
+      // Default mock returns 50 changed lines — no convergence
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        gitBranch: 'feat/convergence-test', // Enable git tracking so convergence signal runs
+      });
+
+      // Run 3 failing iterations with significant changes
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Loop should still be running (no convergence with big diffs)
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should NOT converge with fewer than 3 completed iterations', async () => {
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null }); // zero-change
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        gitBranch: 'feat/convergence-test', // Enable git tracking so convergence signal is active
+      });
+
+      // Only 2 iterations
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // With only 2 iterations, convergence cannot be triggered (min 3)
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should complete OPTIMIZE loop when last 3 iterations have identical scores (plateau)', async () => {
+      // All iterations score 75 — plateau
+      mockEvaluator.evaluate.mockResolvedValue({ passed: true, score: 75, exitCode: 0 });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.OPTIMIZE,
+        evalDirection: OptimizeDirection.MAXIMIZE,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+      });
+
+      // Run 3 iterations all scoring 75
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // After 3 identical scores, score plateau convergence should fire
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.COMPLETED);
+    });
+
+    it('should NOT plateau when OPTIMIZE scores differ', async () => {
+      // Scores change each iteration — no plateau
+      let callCount = 0;
+      const scores = [50, 75, 85];
+      mockEvaluator.evaluate.mockImplementation(() => {
+        const score = scores[callCount++ % scores.length];
+        return Promise.resolve({ passed: true, score, exitCode: 0 });
+      });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.OPTIMIZE,
+        evalDirection: OptimizeDirection.MAXIMIZE,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+      });
+
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Different scores — loop still running
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should NOT apply git diff convergence for non-git loops (no gitBranch set)', async () => {
+      // Override captureGitDiff to return zero-change diff — would trigger convergence for git loops
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      // Non-git loop: no gitBranch and no gitStartCommitSha
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        // gitBranch intentionally omitted — non-git loop
+      });
+
+      // Run 3 failing iterations with zero-change diffs — would converge a git loop
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // Non-git loop: git diff convergence check is skipped entirely, loop remains RUNNING
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should NOT converge when convergenceEnabled=false even with zero-change git diffs', async () => {
+      // Zero-change diffs that would normally trigger convergence after 3 iterations
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null });
+      mockEvaluator.evaluate.mockResolvedValue({ passed: false, exitCode: 1 });
+
+      // Git loop with convergence explicitly disabled
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        gitBranch: 'feat/convergence-test', // git tracking active
+        convergenceEnabled: false, // opt-out
+      });
+
+      // Run 3 iterations with zero-change diffs — convergence would normally fire here
+      const task1Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task1Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task2Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task2Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      const task3Id = await getLatestTaskId(loop.id);
+      await eventBus.emit('TaskCompleted', { taskId: task3Id!, exitCode: 0, duration: 100 });
+      await flushEventLoop();
+
+      // convergenceEnabled=false: checkConvergence returns false immediately, loop stays RUNNING
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
+    });
+
+    it('should NOT converge when iterations are all failed (status=fail)', async () => {
+      vi.mocked(captureGitDiff).mockResolvedValue({ ok: true, value: null });
+
+      const loop = await createAndEmitLoop({
+        strategy: LoopStrategy.RETRY,
+        maxIterations: 20,
+        maxConsecutiveFailures: 10,
+        gitBranch: 'feat/convergence-test',
+      });
+
+      // Run 3 TaskFailed iterations — each produces status='fail' with no git changes
+      for (let i = 0; i < 3; i++) {
+        const taskId = await getLatestTaskId(loop.id);
+        await eventBus.emit('TaskFailed', {
+          taskId: taskId!,
+          error: { message: 'Task crashed', code: 'SYSTEM_ERROR' },
+          exitCode: 1,
+        });
+        await flushEventLoop();
+      }
+
+      // Failed iterations must not trigger git diff convergence — loop stays RUNNING
+      const updatedLoop = await getLoop(loop.id);
+      expect(updatedLoop!.status).toBe(LoopStatus.RUNNING);
     });
   });
 });

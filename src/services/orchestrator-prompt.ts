@@ -23,7 +23,8 @@
  */
 export interface OrchestratorPromptParams {
   readonly goal: string;
-  readonly stateFilePath: string;
+  /** Path to the orchestrator state JSON file. Omit or pass empty string for agent eval mode (no state file). */
+  readonly stateFilePath?: string;
   readonly workingDirectory: string;
   readonly maxDepth: number;
   readonly maxWorkers: number;
@@ -47,9 +48,10 @@ export interface DelegationInstructionParams {
 /**
  * Parameters for building state management instruction snippets.
  * stateFilePath is the absolute path to the orchestrator state JSON file.
+ * When empty/omitted (agent eval mode), the snippet returns an empty string.
  */
 export interface StateManagementInstructionParams {
-  readonly stateFilePath: string;
+  readonly stateFilePath?: string;
 }
 
 /**
@@ -116,19 +118,18 @@ AGENT EVAL MODE:
 export function buildStateManagementInstructions(params: StateManagementInstructionParams): string {
   const { stateFilePath } = params;
 
+  // When stateFilePath is absent (agent eval mode), return empty — no state file contract needed.
+  if (!stateFilePath) return '';
+
   return `STATE FILE: ${stateFilePath}
 Read this file at the START of every iteration to understand current progress.
 Write updated state BEFORE exiting each iteration.
 When the goal is complete, set status: "complete" in the state file.
-If you cannot achieve the goal, set status: "failed" with an explanation in the context field.
+If you cannot achieve the goal, set status: "failed" with an explanation.
 
 RESILIENCE:
 - If the state file is missing or corrupted, reconstruct from active tasks
-  (run beat status for each known task ID, rebuild plan from results)
-- Always write the state file BEFORE exiting -- the system reads it to
-  determine if the goal is complete
-- If you cannot achieve the goal, write status: "failed" with an explanation
-  in the context field. The system will terminate after a few iterations.`;
+  (run beat status for each known task ID, rebuild plan from results)`;
 }
 
 /**
@@ -181,9 +182,12 @@ export function buildOrchestratorPrompt(params: OrchestratorPromptParams): {
   // Each appears verbatim in both systemPrompt and operationalContract so that
   // updating one location keeps both in sync.
 
-  const stateFileSection = `STATE FILE: ${stateFilePath}
+  // State file section is conditional: omitted entirely when no state file (agent eval mode).
+  const stateFileSection = stateFilePath
+    ? `STATE FILE: ${stateFilePath}
 Read this file at the START of every iteration to understand current progress.
-Write updated state BEFORE exiting each iteration.`;
+Write updated state BEFORE exiting each iteration.`
+    : '';
 
   const workingDirectorySection = `WORKING DIRECTORY: ${workingDirectory}`;
 
@@ -199,12 +203,44 @@ Write updated state BEFORE exiting each iteration.`;
 
   // ── Full system prompt ────────────────────────────────────────────────────────
 
+  // State file block only appears when stateFilePath is set
+  const stateFileSectionBlock = stateFileSection ? `\n${stateFileSection}\n` : '';
+
+  // DECISION PROTOCOL and RESILIENCE sections differ based on whether a state file is used.
+  const decisionProtocol = stateFilePath
+    ? `DECISION PROTOCOL:
+1. Read state file to understand current progress
+2. Check status of all active tasks (beat status <id> for each)
+3. PLANNING: Decompose goal into subtasks, write plan to state file
+4. EXECUTING: Delegate subtasks (beat run "<prompt>"), record task IDs
+5. MONITORING: Check task status, handle failures
+6. VALIDATION: After implementation, delegate a separate validation task
+7. COMPLETION: When all steps pass validation, set status: "complete"`
+    : `DECISION PROTOCOL:
+1. Check status of all active tasks (beat status <id> for each)
+2. PLANNING: Decompose goal into subtasks
+3. EXECUTING: Delegate subtasks (beat run "<prompt>"), record task IDs
+4. MONITORING: Check task status, handle failures
+5. VALIDATION: After implementation, delegate a separate validation task
+6. COMPLETION: When all delegated tasks pass validation, your work is done`;
+
+  const resilienceSection = stateFilePath
+    ? `RESILIENCE:
+- If the state file is missing or corrupted, reconstruct from active tasks
+  (run beat status for each known task ID, rebuild plan from results)
+- Always write the state file BEFORE exiting -- the system reads it to
+  determine if the goal is complete
+- If you cannot achieve the goal, write status: "failed" with an explanation
+  in the context field. The system will terminate after a few iterations.`
+    : `RESILIENCE:
+- If context is lost, reconstruct from active tasks
+  (run beat status for each known task ID, rebuild plan from results)
+- The system evaluates your output to determine if the goal is achieved`;
+
   const systemPrompt = `ROLE: You are an autonomous software engineering orchestrator. You break down
 complex goals into subtasks, delegate to worker agents, monitor progress,
 and iterate until the goal is achieved.
-
-${stateFileSection}
-
+${stateFileSectionBlock}
 ${workingDirectorySection}
 
 WORKER MANAGEMENT (via beat CLI):
@@ -240,14 +276,7 @@ ${constraintsSection}
 - Prefer sequential work for tasks touching overlapping files
 - Max 3 workers modifying the same module simultaneously
 
-DECISION PROTOCOL:
-1. Read state file to understand current progress
-2. Check status of all active tasks (beat status <id> for each)
-3. PLANNING: Decompose goal into subtasks, write plan to state file
-4. EXECUTING: Delegate subtasks (beat run "<prompt>"), record task IDs
-5. MONITORING: Check task status, handle failures
-6. VALIDATION: After implementation, delegate a separate validation task
-7. COMPLETION: When all steps pass validation, set status: "complete"
+${decisionProtocol}
 
 VALIDATION PATTERN:
 - Every implementation task should have a separate validation task
@@ -267,32 +296,53 @@ WORKER ISOLATION:
 - Pattern: git worktree add ../autobeat-worker-{taskId} -b feature/{desc}
 - Workers should create PRs when done
 
-RESILIENCE:
-- If the state file is missing or corrupted, reconstruct from active tasks
-  (run beat status for each known task ID, rebuild plan from results)
-- Always write the state file BEFORE exiting -- the system reads it to
-  determine if the goal is complete
-- If you cannot achieve the goal, write status: "failed" with an explanation
-  in the context field. The system will terminate after a few iterations.`;
+${resilienceSection}`;
 
   const userPrompt = `YOUR GOAL:\n${goal}`;
 
   // ── Operational contract ──────────────────────────────────────────────────────
   // Minimal operational knowledge the agent needs to function when a custom
   // systemPrompt replaces the auto-generated one. Built from the same shared
-  // fragments as systemPrompt above — covers state file, working dir, CLI
-  // commands, and constraints.
-  const operationalContract = `REQUIRED — ORCHESTRATOR CONTRACT:
-
-${stateFileSection}
+  // fragments as systemPrompt above — covers state file (when present), working
+  // dir, CLI commands, and constraints.
+  const stateFileContractBlock = stateFileSection
+    ? `${stateFileSection}
 When the goal is complete, set status: "complete" in the state file.
 If you cannot achieve the goal, set status: "failed" with an explanation in the context field.
 
-${workingDirectorySection}
+`
+    : '';
+
+  const operationalContract = `REQUIRED — ORCHESTRATOR CONTRACT:
+
+${stateFileContractBlock}${workingDirectorySection}
 
 ${delegationSection}
 
 ${constraintsSection}`;
 
   return { systemPrompt, userPrompt, operationalContract };
+}
+
+/**
+ * Build the goal-aware eval prompt for the agent evaluator in agent eval mode.
+ *
+ * DECISION: Goal is wrapped in XML-style delimiter tags (<goal>…</goal>) to
+ * prevent prompt injection — a user-supplied goal cannot escape the delimiters
+ * and alter the evaluator's instructions.
+ *
+ * ARCHITECTURE: Extracted from OrchestrationManagerService.createOrchestration()
+ * so all prompt construction lives in this module (SRP).
+ */
+export function buildGoalEvalPrompt(goal: string): string {
+  return `You are evaluating whether an orchestration goal has been achieved.
+
+<goal>${goal}</goal>
+
+Review the orchestrator's output from this iteration. Consider:
+- Did the orchestrator indicate the goal is complete?
+- Are there remaining tasks or unresolved issues mentioned?
+- Does the output suggest all planned work has been done?
+
+PASS if the goal appears achieved. FAIL if work remains.`;
 }
