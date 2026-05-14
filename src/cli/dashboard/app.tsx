@@ -105,15 +105,14 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
 
   // Resolve the task ID(s) to stream in detail mode (#165).
   // Task detail: the task itself. Orchestration detail: the selected child (if any).
-  function resolveDetailStreamTaskId(): TaskId | null {
+  const detailStreamTaskId = useMemo((): TaskId | null => {
     if (view.kind !== 'detail' || !outputRepository) return null;
     if (view.entityType === 'tasks') return view.entityId as TaskId;
     if (view.entityType === 'orchestrations' && nav.orchestrationChildSelectedTaskId) {
       return nav.orchestrationChildSelectedTaskId as TaskId;
     }
     return null;
-  }
-  const detailStreamTaskId = resolveDetailStreamTaskId();
+  }, [view, nav.orchestrationChildSelectedTaskId, outputRepository]);
 
   // Live output streaming for task/orchestration detail views
   const streamingEnabled =

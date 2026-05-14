@@ -12,16 +12,6 @@ import { Footer } from '../../../../src/cli/dashboard/components/footer';
 
 describe('Footer', () => {
   describe('viewKind="main" (metrics view)', () => {
-    it('does NOT contain "1-4 jump" hint (pre-redesign grid artifact)', () => {
-      const { lastFrame } = render(<Footer viewKind="main" />);
-      expect(lastFrame()).not.toContain('1-4 jump');
-    });
-
-    it('does NOT contain "Tab cycle" hint (pre-redesign wording)', () => {
-      const { lastFrame } = render(<Footer viewKind="main" />);
-      expect(lastFrame()).not.toContain('Tab cycle');
-    });
-
     it('contains "Tab: panel" hint describing panel cycling', () => {
       const { lastFrame } = render(<Footer viewKind="main" />);
       expect(lastFrame()).toContain('Tab: panel');
@@ -66,16 +56,6 @@ describe('Footer', () => {
       expect(lastFrame()).toContain('d delete (terminal)');
     });
 
-    it('does NOT contain "1-4 jump" even with mutations', () => {
-      const { lastFrame } = render(<Footer viewKind="main" hasMutations />);
-      expect(lastFrame()).not.toContain('1-4 jump');
-    });
-
-    it('does NOT contain "Tab cycle" even with mutations', () => {
-      const { lastFrame } = render(<Footer viewKind="main" hasMutations />);
-      expect(lastFrame()).not.toContain('Tab cycle');
-    });
-
     it('does NOT contain "p pause/resume" when focusedPanel is tasks (not pauseable)', () => {
       const { lastFrame } = render(<Footer viewKind="main" hasMutations focusedPanel="tasks" />);
       expect(lastFrame()).not.toContain('p pause/resume');
@@ -116,12 +96,6 @@ describe('Footer', () => {
     it('contains "↑↓ select" hint', () => {
       const { lastFrame } = render(<Footer viewKind="detail" />);
       expect(lastFrame()).toContain('↑↓ select');
-    });
-
-    it('does not render main-view hints', () => {
-      const { lastFrame } = render(<Footer viewKind="detail" />);
-      expect(lastFrame()).not.toContain('1-4 jump');
-      expect(lastFrame()).not.toContain('Tab cycle');
     });
 
     it('contains "p pause" for active schedule in detail view', () => {

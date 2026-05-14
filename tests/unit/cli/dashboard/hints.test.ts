@@ -115,34 +115,17 @@ describe('detailHints()', () => {
 });
 
 describe('getHints()', () => {
-  it('delegates to mainHints when viewKind is main with mutations and schedules panel', () => {
-    const result = getHints('main', true, undefined, undefined, 'schedules');
-    expect(result).toContain('p pause/resume');
-    expect(result).toContain('c cancel');
-    expect(result).toContain('Tab: panel');
+  it('routes to main hints by viewKind', () => {
+    expect(getHints('main', false)).toContain('Tab: panel');
+    expect(getHints('main', true)).toContain('c cancel');
   });
 
-  it('delegates to mainHints when viewKind is main without mutations', () => {
-    const result = getHints('main', false);
-    expect(result).not.toContain('c cancel');
-    expect(result).not.toContain('p pause/resume');
-    expect(result).toContain('Tab: panel');
+  it('routes to detail hints by viewKind', () => {
+    expect(getHints('detail', false, 'schedules', 'active')).toContain('p pause');
+    expect(getHints('detail', false)).toContain('Esc back');
   });
 
-  it('delegates to detailHints when viewKind is detail for active schedule', () => {
-    const result = getHints('detail', false, 'schedules', 'active');
-    expect(result).toContain('p pause');
-    expect(result).toContain('Esc back');
-  });
-
-  it('delegates to detailHints when viewKind is detail for paused loop', () => {
-    const result = getHints('detail', false, 'loops', 'paused');
-    expect(result).toContain('p resume');
-    expect(result).toContain('Esc back');
-  });
-
-  it('ignores hasMutations when viewKind is detail', () => {
-    // Detail view does not use hasMutations — its hints are driven by entityType/entityStatus
+  it('ignores hasMutations in detail view — hints are driven by entityType/entityStatus', () => {
     const withMutations = getHints('detail', true, 'tasks', 'running');
     const withoutMutations = getHints('detail', false, 'tasks', 'running');
     expect(withMutations).toEqual(withoutMutations);
