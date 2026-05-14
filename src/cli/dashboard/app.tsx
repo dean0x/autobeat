@@ -11,8 +11,10 @@
 
 import { Box, useApp } from 'ink';
 import React, { useCallback, useEffect, useReducer } from 'react';
+import type { TaskId } from '../../core/domain.js';
 import type { OutputRepository, ResourceMonitor } from '../../core/interfaces.js';
 import type { ReadOnlyContext } from '../read-only-context.js';
+import type { DetailOutputConfig } from './components/detail-output-panel.js';
 import { Footer } from './components/footer.js';
 import { Header } from './components/header.js';
 import { computeMetricsLayout, computeWorkspaceLayout } from './layout.js';
@@ -26,6 +28,7 @@ import { useTerminalSize } from './use-terminal-size.js';
 import { DetailView } from './views/detail-view.js';
 import { MetricsView } from './views/metrics-view.js';
 import { OrchestrationDetail } from './views/orchestration-detail.js';
+import type { WorkspaceNavState } from './workspace-types.js';
 import { createInitialWorkspaceNavState } from './workspace-types.js';
 
 interface AppProps {
@@ -56,6 +59,10 @@ const INITIAL_NAV: NavState = {
   scrollOffsets: { loops: 0, tasks: 0, schedules: 0, orchestrations: 0, pipelines: 0 },
   orchestrationChildSelectedTaskId: null,
   orchestrationChildPage: 0,
+  detailOutputVisible: true,
+  detailOutputAutoTail: true,
+  detailOutputScrollOffset: 0,
+  loopIterationSelectedNumber: null,
 };
 
 const INITIAL_DASHBOARD_STATE: DashboardState = {
@@ -64,6 +71,9 @@ const INITIAL_DASHBOARD_STATE: DashboardState = {
   workspaceNav: createInitialWorkspaceNavState(),
   animFrame: 0,
 };
+
+/** Stable empty map used in detail mode to avoid allocating a new Map on every render. */
+const EMPTY_STATUS_MAP: ReadonlyMap<TaskId, string> = new Map();
 
 /**
  * Root dashboard component.
@@ -85,13 +95,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     }
   }, []);
   const setWorkspaceNav = useCallback(
-    (
-      updaterOrValue:
-        | import('./workspace-types.js').WorkspaceNavState
-        | ((
-            prev: import('./workspace-types.js').WorkspaceNavState,
-          ) => import('./workspace-types.js').WorkspaceNavState),
-    ) => {
+    (updaterOrValue: WorkspaceNavState | ((prev: WorkspaceNavState) => WorkspaceNavState)) => {
       if (typeof updaterOrValue === 'function') {
         dispatch({ type: 'UPDATE_WORKSPACE_NAV', updater: updaterOrValue });
       } else {
@@ -130,16 +134,40 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
   const childTaskIds = data?.workspaceData?.childTaskIds ?? [];
   const childTaskStatuses = data?.workspaceData?.childTaskStatuses ?? new Map();
 
-  // Live output streaming — only enabled when in workspace view and outputRepository is available
-  // Phase C prep: a future `o` toggle in task detail would also enable streaming here.
-  // That requires keyboard handler changes (handle-detail-keys) deferred to a later phase.
-  // TODO: When grid/detail mode is fully wired via the 'v' toggle, also enable streaming
-  // for orchestration detail in grid mode (view.kind === 'detail' && view.entityType === 'orchestrations').
-  const streamingEnabled = view.kind === 'workspace' && outputRepository !== undefined;
+  // Resolve the task ID(s) to stream in detail mode (#165).
+  // Task detail: the task itself. Orchestration detail: the selected child (if any).
+  function resolveDetailStreamTaskId(): TaskId | null {
+    if (view.kind !== 'detail' || !outputRepository) return null;
+    if (view.entityType === 'tasks') return view.entityId as TaskId;
+    if (view.entityType === 'orchestrations' && nav.orchestrationChildSelectedTaskId) {
+      return nav.orchestrationChildSelectedTaskId as TaskId;
+    }
+    return null;
+  }
+  const detailStreamTaskId = resolveDetailStreamTaskId();
+
+  // Live output streaming:
+  //  - Workspace: always enabled when outputRepository is present
+  //  - Task/orchestration detail: enabled when outputVisible flag is set and there is a task to stream
+  const streamingEnabled =
+    outputRepository !== undefined &&
+    (view.kind === 'workspace' ||
+      (view.kind === 'detail' &&
+        detailStreamTaskId !== null &&
+        nav.detailOutputVisible &&
+        (view.entityType === 'tasks' || view.entityType === 'orchestrations')));
+
+  // Build unified task ID and status arrays for the output stream hook.
+  // Workspace uses childTaskIds; detail uses a single-element array.
+  const streamTaskIds =
+    view.kind === 'workspace' ? childTaskIds : detailStreamTaskId !== null ? [detailStreamTaskId] : [];
+  const streamTaskStatuses: ReadonlyMap<TaskId, string> =
+    view.kind === 'workspace' ? childTaskStatuses : EMPTY_STATUS_MAP;
+
   const { streams } = useTaskOutputStream(
     outputRepository ?? ctx.outputRepository,
-    childTaskIds,
-    childTaskStatuses,
+    streamTaskIds,
+    streamTaskStatuses,
     streamingEnabled,
   );
 
@@ -211,6 +239,12 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     }
 
     if (view.kind === 'detail') {
+      const detailOutputConfig: DetailOutputConfig = {
+        visible: nav.detailOutputVisible,
+        autoTail: nav.detailOutputAutoTail,
+        scrollOffset: nav.detailOutputScrollOffset,
+        terminalRows: terminalSize.rows,
+      };
       return (
         <DetailView
           entityType={view.entityType}
@@ -221,6 +255,9 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
           orchestrationChildSelectedTaskId={nav.orchestrationChildSelectedTaskId}
           orchestrationChildPage={nav.orchestrationChildPage}
           orchestrationChildrenTotal={data?.orchestrationChildrenTotal}
+          loopIterationSelectedNumber={nav.loopIterationSelectedNumber}
+          taskStreams={streams}
+          detailOutputConfig={detailOutputConfig}
         />
       );
     }

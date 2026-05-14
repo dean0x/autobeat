@@ -83,6 +83,24 @@ export function panelToEntityKind(panelId: PanelId): EntityKind {
 }
 
 /**
+ * Resolve the currently selected iteration index from an iterationNumber.
+ * Returns 0 when no number is set, when the number is not found, or when the
+ * iterations array is empty. Mirrors resolveChildIndex but for loop iterations.
+ *
+ * DECISION (#168): Loop iteration selection mirrors the D3 orchestration
+ * drill-through pattern — selection is tracked by iterationNumber (stable
+ * domain key) rather than array index (changes when new iterations arrive).
+ */
+export function resolveIterationIndex(
+  selectedNumber: number | null,
+  iterations: readonly { iterationNumber: number }[],
+): number {
+  if (selectedNumber === null) return 0;
+  const idx = iterations.findIndex((i) => i.iterationNumber === selectedNumber);
+  return idx >= 0 ? idx : 0;
+}
+
+/**
  * Return the currently selected item in the focused panel, or null if data is absent.
  * Applies the active filter before resolving the selection index.
  * Used by the 'c' (cancel) and 'd' (delete) handlers in the main panel.

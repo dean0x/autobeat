@@ -20,11 +20,19 @@
  * so the workspace is an enriched orchestration detail, not a separate view.
  * When viewMode='grid', orchestration is determined from orchestrations[committedOrchestratorIndex]
  * and the TaskPanel grid is rendered inline with OrchestratorNav.
+ *
+ * #165 additions:
+ *  - Ref-based metadata height measurement via useElementHeight() (shared hook)
+ *  - Selected child output stream via DetailOutputPanel (shared component)
+ *  - Output config grouped via DetailOutputConfig interface
  */
 
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { Orchestration, OrchestratorChild, TaskId, TaskUsage } from '../../../core/domain.js';
+import { TaskStatus } from '../../../core/domain.js';
+import type { DetailOutputConfig } from '../components/detail-output-panel.js';
+import { DetailOutputPanel, useElementHeight } from '../components/detail-output-panel.js';
 import { EmptyWorkspace } from '../components/empty-workspace.js';
 import { Field, LongField, StatusField } from '../components/field.js';
 import { OrchestratorNav } from '../components/orchestrator-nav.js';
@@ -63,10 +71,12 @@ interface OrchestrationDetailProps {
   readonly orchestrations?: readonly Orchestration[];
   /** Workspace nav state — required for grid mode (panel focus, page, scroll offsets) */
   readonly workspaceNav?: WorkspaceNavState;
-  /** Live output streams — required for grid mode */
+  /** Live output streams — required for grid mode and selected-child output in list mode (#165) */
   readonly taskStreams?: ReadonlyMap<TaskId, OutputStreamState>;
   /** Workspace layout — required for grid mode */
   readonly workspaceLayout?: WorkspaceLayout;
+  /** #165: grouped output panel configuration for the selected child stream */
+  readonly childOutputConfig?: DetailOutputConfig;
 }
 
 // ============================================================================
@@ -351,6 +361,7 @@ export const OrchestrationDetail: React.FC<OrchestrationDetailProps> = React.mem
     workspaceNav,
     taskStreams,
     workspaceLayout,
+    childOutputConfig,
   }) => {
     // Grid mode: render workspace panel layout
     if (
@@ -381,71 +392,98 @@ export const OrchestrationDetail: React.FC<OrchestrationDetailProps> = React.mem
     const showPaginationFooter = childrenTotal !== undefined && childrenTotal > children.length && children.length > 0;
     const totalPages = childrenTotal !== undefined ? Math.ceil(childrenTotal / ORCHESTRATION_CHILDREN_PAGE_SIZE) : 1;
 
+    // Ref-based metadata height measurement for adaptive output viewport (#165)
+    // DECISION: useElementHeight intentionally omits a dependency array — see detail-output-panel.tsx
+    const [metadataRef, metadataHeight] = useElementHeight();
+
+    // Resolve the selected child's stream for output rendering
+    const selectedChild = children[selectedIndex];
+    const selectedChildStream =
+      childOutputConfig?.visible && selectedChild && taskStreams
+        ? taskStreams.get(selectedChild.taskId as TaskId)
+        : undefined;
+
     return (
       <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
-        {/* Header */}
-        <Box marginBottom={1}>
-          <Text bold>Orchestration Detail</Text>
+        {/* Metadata section — measured for adaptive output viewport */}
+        <Box ref={metadataRef} flexDirection="column">
+          {/* Header */}
+          <Box marginBottom={1}>
+            <Text bold>Orchestration Detail</Text>
+          </Box>
+
+          <Field label="ID">{truncateCell(orchestration.id, 60)}</Field>
+          <StatusField>
+            <StatusBadge status={orchestration.status} animFrame={animFrame} />
+          </StatusField>
+
+          {/* Goal (full, wrapped) */}
+          <LongField label="Goal" value={orchestration.goal} />
+
+          {orchestration.agent ? <Field label="Agent">{orchestration.agent}</Field> : null}
+          {orchestration.model ? <Field label="Model">{orchestration.model}</Field> : null}
+          {orchestration.loopId ? <Field label="Loop ID">{truncateCell(orchestration.loopId, 50)}</Field> : null}
+          <Field label="Max Depth">{String(orchestration.maxDepth)}</Field>
+          <Field label="Max Workers">{String(orchestration.maxWorkers)}</Field>
+          <Field label="Max Iterations">{String(orchestration.maxIterations)}</Field>
+          <Field label="Working Directory">{truncateCell(orchestration.workingDirectory, 50)}</Field>
+          <Field label="State File">{truncateCell(orchestration.stateFilePath, 50)}</Field>
+          <Field label="Created">{relativeTime(orchestration.createdAt)}</Field>
+          <Field label="Updated">{relativeTime(orchestration.updatedAt)}</Field>
+          {orchestration.completedAt !== undefined ? (
+            <Field label="Completed">{relativeTime(orchestration.completedAt)}</Field>
+          ) : null}
+
+          {/* Cost aggregate — only shown when there is actual usage data */}
+          <CostSection costAggregate={costAggregate} />
+
+          {/* Progress indicators — only shown when the orchestration has configuration limits */}
+          <ProgressSection orchestration={orchestration} children={children} childrenTotal={childrenTotal} />
+
+          {/* Children section — only shown when the orchestration has attributed tasks */}
+          {children.length > 0 && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold dimColor>
+                {`Children (${childrenTotal ?? children.length})`}
+              </Text>
+              <ScrollableList
+                items={children}
+                selectedIndex={selectedIndex}
+                scrollOffset={0}
+                viewportHeight={ORCHESTRATION_CHILDREN_PAGE_SIZE}
+                renderItem={renderChildRow}
+                keyExtractor={(child) => child.taskId}
+              />
+              {/* Pagination footer — only shown when multiple pages exist */}
+              {showPaginationFooter && (
+                <Box marginTop={1}>
+                  <Text dimColor>
+                    {`Page ${currentPage + 1} of ${totalPages} · PgUp/PgDn to navigate · ${childrenTotal} total · Enter to drill in`}
+                  </Text>
+                </Box>
+              )}
+              {/* Drill hint on single page */}
+              {!showPaginationFooter && children.length > 0 && (
+                <Box marginTop={1}>
+                  <Text dimColor>Enter to drill into child task detail</Text>
+                </Box>
+              )}
+            </Box>
+          )}
         </Box>
 
-        <Field label="ID">{truncateCell(orchestration.id, 60)}</Field>
-        <StatusField>
-          <StatusBadge status={orchestration.status} animFrame={animFrame} />
-        </StatusField>
-
-        {/* Goal (full, wrapped) */}
-        <LongField label="Goal" value={orchestration.goal} />
-
-        {orchestration.agent ? <Field label="Agent">{orchestration.agent}</Field> : null}
-        {orchestration.model ? <Field label="Model">{orchestration.model}</Field> : null}
-        {orchestration.loopId ? <Field label="Loop ID">{truncateCell(orchestration.loopId, 50)}</Field> : null}
-        <Field label="Max Depth">{String(orchestration.maxDepth)}</Field>
-        <Field label="Max Workers">{String(orchestration.maxWorkers)}</Field>
-        <Field label="Max Iterations">{String(orchestration.maxIterations)}</Field>
-        <Field label="Working Directory">{truncateCell(orchestration.workingDirectory, 50)}</Field>
-        <Field label="State File">{truncateCell(orchestration.stateFilePath, 50)}</Field>
-        <Field label="Created">{relativeTime(orchestration.createdAt)}</Field>
-        <Field label="Updated">{relativeTime(orchestration.updatedAt)}</Field>
-        {orchestration.completedAt !== undefined ? (
-          <Field label="Completed">{relativeTime(orchestration.completedAt)}</Field>
+        {/* Selected child output stream (#165) */}
+        {childOutputConfig?.visible && selectedChildStream !== undefined && metadataHeight > 0 ? (
+          <DetailOutputPanel
+            stream={selectedChildStream}
+            isActive={selectedChild?.status === TaskStatus.QUEUED || selectedChild?.status === TaskStatus.RUNNING}
+            terminalRows={childOutputConfig.terminalRows}
+            metadataHeight={metadataHeight}
+            scrollOffset={childOutputConfig.scrollOffset}
+            autoTail={childOutputConfig.autoTail}
+            separatorLabel={selectedChild?.taskId.slice(0, 12)}
+          />
         ) : null}
-
-        {/* Cost aggregate — only shown when there is actual usage data */}
-        <CostSection costAggregate={costAggregate} />
-
-        {/* Progress indicators — only shown when the orchestration has configuration limits */}
-        <ProgressSection orchestration={orchestration} children={children} childrenTotal={childrenTotal} />
-
-        {/* Children section — only shown when the orchestration has attributed tasks */}
-        {children.length > 0 && (
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold dimColor>
-              {`Children (${childrenTotal ?? children.length})`}
-            </Text>
-            <ScrollableList
-              items={children}
-              selectedIndex={selectedIndex}
-              scrollOffset={0}
-              viewportHeight={ORCHESTRATION_CHILDREN_PAGE_SIZE}
-              renderItem={renderChildRow}
-              keyExtractor={(child) => child.taskId}
-            />
-            {/* Pagination footer — only shown when multiple pages exist */}
-            {showPaginationFooter && (
-              <Box marginTop={1}>
-                <Text dimColor>
-                  {`Page ${currentPage + 1} of ${totalPages} · PgUp/PgDn to navigate · ${childrenTotal} total · Enter to drill in`}
-                </Text>
-              </Box>
-            )}
-            {/* Drill hint on single page */}
-            {!showPaginationFooter && children.length > 0 && (
-              <Box marginTop={1}>
-                <Text dimColor>Enter to drill into child task detail</Text>
-              </Box>
-            )}
-          </Box>
-        )}
       </Box>
     );
   },

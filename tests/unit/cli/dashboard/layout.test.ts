@@ -4,7 +4,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { computeMetricsLayout, computeWorkspaceLayout } from '../../../../src/cli/dashboard/layout.js';
+import {
+  computeDetailOutputLayout,
+  computeMetricsLayout,
+  computeWorkspaceLayout,
+} from '../../../../src/cli/dashboard/layout.js';
 
 // ============================================================================
 // computeMetricsLayout
@@ -287,5 +291,59 @@ describe('computeWorkspaceLayout', () => {
       const layout = computeWorkspaceLayout({ columns: 120, rows: 24, childCount: 1 });
       expect(layout.navWidth).toBe(24);
     });
+  });
+});
+
+// ============================================================================
+// computeDetailOutputLayout (#165)
+// ============================================================================
+
+describe('computeDetailOutputLayout', () => {
+  it('normal terminal (rows=30, meta=15) returns viewport=11, tooSmall=false', () => {
+    // available = 30 - 15 - 4 = 11; 11 >= 5 → tooSmall=false
+    const layout = computeDetailOutputLayout({ rows: 30, metadataHeight: 15 });
+    expect(layout.tooSmall).toBe(false);
+    expect(layout.outputViewportHeight).toBe(11);
+  });
+
+  it('tiny terminal (rows=15, meta=12) returns tooSmall=true', () => {
+    // available = 15 - 12 - 4 = -1; -1 < 5 → tooSmall=true
+    const layout = computeDetailOutputLayout({ rows: 15, metadataHeight: 12 });
+    expect(layout.tooSmall).toBe(true);
+    expect(layout.outputViewportHeight).toBe(0);
+  });
+
+  it('large terminal (rows=80, meta=20) returns viewport=56, tooSmall=false', () => {
+    // available = 80 - 20 - 4 = 56
+    const layout = computeDetailOutputLayout({ rows: 80, metadataHeight: 20 });
+    expect(layout.tooSmall).toBe(false);
+    expect(layout.outputViewportHeight).toBe(56);
+  });
+
+  it('zero metadata (rows=30, meta=0) returns viewport=26, tooSmall=false', () => {
+    // available = 30 - 0 - 4 = 26
+    const layout = computeDetailOutputLayout({ rows: 30, metadataHeight: 0 });
+    expect(layout.tooSmall).toBe(false);
+    expect(layout.outputViewportHeight).toBe(26);
+  });
+
+  it('metadata fills screen (rows=20, meta=18) returns tooSmall=true', () => {
+    // available = 20 - 18 - 4 = -2; -2 < 5 → tooSmall=true
+    const layout = computeDetailOutputLayout({ rows: 20, metadataHeight: 18 });
+    expect(layout.tooSmall).toBe(true);
+    expect(layout.outputViewportHeight).toBe(0);
+  });
+
+  it('boundary: exactly 5 available rows returns tooSmall=false', () => {
+    // available = 9 - 0 - 4 = 5; 5 >= 5 → tooSmall=false
+    const layout = computeDetailOutputLayout({ rows: 9, metadataHeight: 0 });
+    expect(layout.tooSmall).toBe(false);
+    expect(layout.outputViewportHeight).toBe(5);
+  });
+
+  it('boundary: exactly 4 available rows returns tooSmall=true', () => {
+    // available = 8 - 0 - 4 = 4; 4 < 5 → tooSmall=true
+    const layout = computeDetailOutputLayout({ rows: 8, metadataHeight: 0 });
+    expect(layout.tooSmall).toBe(true);
   });
 });

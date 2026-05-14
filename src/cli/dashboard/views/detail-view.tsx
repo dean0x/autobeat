@@ -7,7 +7,9 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import type { Task, TaskId } from '../../../core/domain.js';
+import type { DetailOutputConfig } from '../components/detail-output-panel.js';
 import type { DashboardData, PanelId } from '../types.js';
+import type { OutputStreamState } from '../use-task-output-stream.js';
 import { LoopDetail } from './loop-detail.js';
 import { OrchestrationDetail } from './orchestration-detail.js';
 import { PipelineDetail } from './pipeline-detail.js';
@@ -37,10 +39,10 @@ function resolveTaskDependencyInfo(
         })
       : undefined;
 
-  const rawDependents = allTasks
+  const dependentsList = allTasks
     ?.filter((t) => t.dependsOn?.includes(taskId as TaskId))
     .map((t) => ({ taskId: t.id, status: t.status }));
-  const dependents = rawDependents && rawDependents.length > 0 ? rawDependents : undefined;
+  const dependents = dependentsList && dependentsList.length > 0 ? dependentsList : undefined;
 
   return { dependencies, dependents };
 }
@@ -57,6 +59,12 @@ interface DetailViewProps {
   readonly orchestrationChildPage?: number;
   /** D3 drill-through: total count of children for pagination footer */
   readonly orchestrationChildrenTotal?: number;
+  /** #168: iterationNumber of the highlighted row in loop detail */
+  readonly loopIterationSelectedNumber?: number | null;
+  /** #165: live output streams map — keyed by TaskId */
+  readonly taskStreams?: ReadonlyMap<TaskId, OutputStreamState>;
+  /** #165: grouped output panel configuration — required; app.tsx always provides explicit values */
+  readonly detailOutputConfig: DetailOutputConfig;
 }
 
 const NotFound: React.FC<{ entityType: PanelId; entityId: string }> = ({ entityType, entityId }) => (
@@ -75,13 +83,22 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
     orchestrationChildSelectedTaskId,
     orchestrationChildPage = 0,
     orchestrationChildrenTotal,
+    loopIterationSelectedNumber = null,
+    taskStreams,
+    detailOutputConfig,
   }) => {
     switch (entityType) {
       case 'loops': {
         const loop = data?.loops.find((l) => l.id === entityId);
         if (loop === undefined) return <NotFound entityType={entityType} entityId={entityId} />;
         return (
-          <LoopDetail loop={loop} iterations={data?.iterations} scrollOffset={scrollOffset} animFrame={animFrame} />
+          <LoopDetail
+            loop={loop}
+            iterations={data?.iterations}
+            scrollOffset={scrollOffset}
+            animFrame={animFrame}
+            selectedIterationNumber={loopIterationSelectedNumber}
+          />
         );
       }
       case 'tasks': {
@@ -91,7 +108,17 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
         // TODO(Phase C): usage data requires a dedicated TaskUsage lookup by taskId —
         // DashboardData does not carry per-task usage; fetch from UsageRepository when
         // detail-view extras are extended (similar to orchestrationCostAggregate pattern).
-        return <TaskDetail task={task} animFrame={animFrame} dependencies={dependencies} dependents={dependents} />;
+        const taskStream = taskStreams?.get(entityId as TaskId);
+        return (
+          <TaskDetail
+            task={task}
+            animFrame={animFrame}
+            dependencies={dependencies}
+            dependents={dependents}
+            stream={taskStream}
+            outputConfig={detailOutputConfig}
+          />
+        );
       }
       case 'schedules': {
         const schedule = data?.schedules.find((s) => s.id === entityId);
@@ -117,6 +144,8 @@ export const DetailView: React.FC<DetailViewProps> = React.memo(
             childSelectedTaskId={orchestrationChildSelectedTaskId ?? null}
             currentPage={orchestrationChildPage}
             childrenTotal={orchestrationChildrenTotal}
+            taskStreams={taskStreams}
+            childOutputConfig={detailOutputConfig}
           />
         );
       }

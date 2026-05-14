@@ -3308,6 +3308,110 @@ describe('includeSystemPrompt flag via callTool()', () => {
 });
 
 // ============================================================================
+// includeEvalResponse flag — LoopStatus via callTool()
+// ============================================================================
+
+describe('includeEvalResponse flag via callTool()', () => {
+  let localLoopService: MockLoopService;
+  let adapter: MCPAdapter;
+
+  beforeEach(() => {
+    localLoopService = new MockLoopService();
+    adapter = new MCPAdapter({
+      taskManager: new MockTaskManager(),
+      logger: new MockLogger(),
+      scheduleService: stubScheduleService,
+      loopService: localLoopService,
+      agentRegistry: undefined,
+      config: testConfig,
+    });
+  });
+
+  afterEach(() => {
+    localLoopService.reset();
+  });
+
+  it('should include evalResponse in iteration objects when includeEvalResponse=true', async () => {
+    const loop = localLoopService.makeLoop();
+    const iterations: LoopIteration[] = [
+      {
+        id: 1,
+        loopId: loop.id,
+        iterationNumber: 1,
+        taskId: undefined,
+        status: 'pass',
+        startedAt: Date.now() - 3000,
+        completedAt: Date.now(),
+        score: 0.9,
+        evalResponse: '{"decision":"pass","score":0.9,"reasoning":"Excellent output"}',
+      },
+    ];
+    localLoopService.setGetLoopResult(ok({ loop, iterations }));
+
+    const result = await adapter.callTool('LoopStatus', {
+      loopId: loop.id,
+      includeHistory: true,
+      includeEvalResponse: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const response = JSON.parse(result.content[0].text);
+    expect(response.success).toBe(true);
+    expect(response.iterations).toHaveLength(1);
+    expect(response.iterations[0].evalResponse).toBe('{"decision":"pass","score":0.9,"reasoning":"Excellent output"}');
+  });
+
+  it('should exclude evalResponse from iteration objects when includeEvalResponse is omitted (default)', async () => {
+    const loop = localLoopService.makeLoop();
+    const iterations: LoopIteration[] = [
+      {
+        id: 1,
+        loopId: loop.id,
+        iterationNumber: 1,
+        taskId: undefined,
+        status: 'pass',
+        startedAt: Date.now() - 3000,
+        completedAt: Date.now(),
+        score: 0.9,
+        evalResponse: '{"decision":"pass","score":0.9}',
+      },
+    ];
+    localLoopService.setGetLoopResult(ok({ loop, iterations }));
+
+    const result = await adapter.callTool('LoopStatus', {
+      loopId: loop.id,
+      includeHistory: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const response = JSON.parse(result.content[0].text);
+    expect(response.success).toBe(true);
+    expect(response.iterations).toHaveLength(1);
+    expect('evalResponse' in response.iterations[0]).toBe(false);
+  });
+
+  it('should include evalType, judgeAgent, judgePrompt on loop object in response', async () => {
+    const loop = localLoopService.makeLoop({
+      evalType: 'judge',
+      judgeAgent: 'claude',
+      judgePrompt: 'Score on a scale of 0–1',
+    });
+    localLoopService.setGetLoopResult(ok({ loop }));
+
+    const result = await adapter.callTool('LoopStatus', {
+      loopId: loop.id,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const response = JSON.parse(result.content[0].text);
+    expect(response.success).toBe(true);
+    expect(response.loop.evalType).toBe('judge');
+    expect(response.loop.judgeAgent).toBe('claude');
+    expect(response.loop.judgePrompt).toBe('Score on a scale of 0–1');
+  });
+});
+
+// ============================================================================
 // ConfigureAgent — URL probe integration tests
 // Uses vi.mock (declared at module top) to control probeUrl return values.
 // ============================================================================
