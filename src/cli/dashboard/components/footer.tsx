@@ -10,7 +10,7 @@ import React from 'react';
 import { getHints } from '../keyboard/hints.js';
 
 interface FooterProps {
-  readonly viewKind: 'main' | 'workspace' | 'detail';
+  readonly viewKind: 'main' | 'detail';
   /** When true, adds c: cancel · d: delete mutation hints to the main view help bar */
   readonly hasMutations?: boolean;
 }

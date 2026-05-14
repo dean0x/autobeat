@@ -29,7 +29,6 @@ import type {
   ViewState,
 } from '../../../../src/cli/dashboard/types.js';
 import { useKeyboard } from '../../../../src/cli/dashboard/use-keyboard.js';
-import { createInitialWorkspaceNavState } from '../../../../src/cli/dashboard/workspace-types.js';
 import type {
   Loop,
   LoopId,
@@ -187,13 +186,12 @@ function KeyboardWrapper({
 }: WrapperProps): React.ReactElement {
   const [view, setView] = useState<ViewState>(initialView);
   const [nav, setNav] = useState<NavState>(initialNav);
-  const [workspaceNav, setWorkspaceNav] = useState(createInitialWorkspaceNavState());
   const data = initialData ?? makeDashboardData();
 
   const exit = useCallback(() => onExit?.(), [onExit]);
   const refreshNow = useCallback(() => onRefresh?.(), [onRefresh]);
 
-  useKeyboard({ view, nav, data, setView, setNav, refreshNow, exit, mutations, workspaceNav, setWorkspaceNav });
+  useKeyboard({ view, nav, data, setView, setNav, refreshNow, exit, mutations });
 
   return (
     <Box flexDirection="column">
@@ -605,7 +603,7 @@ describe('useKeyboard — c: cancel keybinding', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
     // Behavioral change (PR #133): main panel cancel now always cascades (cancelAttributedTasks: true)
-    // to match activity and workspace views — consistent UX across all dashboard contexts.
+    // consistent UX across all dashboard contexts.
     expect(cancelOrchestration).toHaveBeenCalledWith('orch-1', 'User cancelled via dashboard', {
       cancelAttributedTasks: true,
     });
@@ -770,58 +768,14 @@ describe('useKeyboard — d: delete terminal entity keybinding', () => {
 });
 
 // ============================================================================
-// Global v/m/w keys — already covered in workspace-keyboard.test.tsx for workspace
-// Spot-check from main view here to confirm no interference with main-view keys
+// Global m key
 // ============================================================================
 
-describe('useKeyboard — global v/m/w no interference in main', () => {
-  it('"v" from main transitions to workspace without crashing', async () => {
-    // This just verifies the key is consumed and we don't crash in the main handler
-    const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} />);
-    expect(lastFrame()).toContain('view:main');
-    await press(stdin, 'v');
-    expect(lastFrame()).toContain('view:workspace');
-  });
-
+describe('useKeyboard — global m key', () => {
   it('"m" from main stays in main', async () => {
     const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} />);
     await press(stdin, 'm');
     expect(lastFrame()).toContain('view:main');
-  });
-
-  it('"w" from main transitions to workspace when orchestrations exist', async () => {
-    const orch = makeOrchestration('orch-1');
-    const data = makeDashboardData({ orchestrations: [orch] });
-    const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} initialData={data} />);
-    await press(stdin, 'w');
-    expect(lastFrame()).toContain('view:workspace');
-  });
-
-  it('"w" from main with empty orchestrations is a no-op (stays on main)', async () => {
-    const data = makeDashboardData({ orchestrations: [] });
-    const { lastFrame, stdin } = render(<KeyboardWrapper initialView={{ kind: 'main' }} initialData={data} />);
-    await press(stdin, 'w');
-    expect(lastFrame()).toContain('view:main');
-  });
-
-  it('"v" from orchestration detail transitions to scoped workspace', async () => {
-    const orch = makeOrchestration('orch-detail-1');
-    const data = makeDashboardData({ orchestrations: [orch] });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper
-        initialData={data}
-        initialView={{
-          kind: 'detail',
-          entityType: 'orchestrations',
-          entityId: 'orch-detail-1' as OrchestratorId,
-          returnTo: 'main',
-        }}
-      />,
-    );
-    expect(lastFrame()).toContain('view:detail');
-    expect(lastFrame()).toContain('detail-type:orchestrations');
-    await press(stdin, 'v');
-    expect(lastFrame()).toContain('view:workspace');
   });
 });
 
@@ -853,10 +807,10 @@ describe('useKeyboard — detail view scroll', () => {
 });
 
 // ============================================================================
-// D1 — m and w keys work from detail view (plan §2)
+// D1 — m key works from detail view
 // ============================================================================
 
-describe('useKeyboard — m/w global keys from detail view (D1)', () => {
+describe('useKeyboard — m key from detail view (D1)', () => {
   it('"m" from detail view dispatches setView({ kind: "main" })', async () => {
     const loop = makeLoop('loop-1');
     const data = makeDashboardData({ loops: [loop] });
@@ -866,28 +820,6 @@ describe('useKeyboard — m/w global keys from detail view (D1)', () => {
     await press(stdin, 'm');
     expect(lastFrame()).toContain('view:main');
   });
-
-  it('"w" from detail view dispatches setView({ kind: "workspace" })', async () => {
-    const loop = makeLoop('loop-1');
-    const orch = makeOrchestration('orch-1');
-    const data = makeDashboardData({ loops: [loop], orchestrations: [orch] });
-    const { lastFrame, stdin } = render(<KeyboardWrapper initialData={data} />);
-    await press(stdin, '\r'); // enter detail
-    expect(lastFrame()).toContain('view:detail');
-    await press(stdin, 'w');
-    expect(lastFrame()).toContain('view:workspace');
-  });
-
-  it('"v" from detail view is still ignored (no state change)', async () => {
-    const loop = makeLoop('loop-1');
-    const data = makeDashboardData({ loops: [loop] });
-    const { lastFrame, stdin } = render(<KeyboardWrapper initialData={data} />);
-    await press(stdin, '\r'); // enter detail
-    expect(lastFrame()).toContain('view:detail');
-    await press(stdin, 'v');
-    // Must remain in detail — v is deliberately ignored from detail
-    expect(lastFrame()).toContain('view:detail');
-  });
 });
 
 // ============================================================================
@@ -896,12 +828,12 @@ describe('useKeyboard — m/w global keys from detail view (D1)', () => {
 
 describe('useKeyboard — D3 orchestration detail child navigation', () => {
   /** Build a detail view state for an orchestration */
-  function orchDetailView(orchId: string, returnTo: 'main' | 'workspace' = 'main') {
+  function orchDetailView(orchId: string) {
     return {
       kind: 'detail' as const,
       entityType: 'orchestrations' as const,
       entityId: orchId as OrchestratorId,
-      returnTo,
+      returnTo: 'main' as const,
     };
   }
 
@@ -1030,22 +962,11 @@ describe('useKeyboard — D3 orchestration detail child navigation', () => {
     const orch = makeOrchestration('orch-xyz');
     const data = makeDashboardData({ orchestrations: [orch] });
     const { lastFrame, stdin } = render(
-      <KeyboardWrapper initialData={data} initialView={orchDetailView('orch-xyz', 'main')} />,
+      <KeyboardWrapper initialData={data} initialView={orchDetailView('orch-xyz')} />,
     );
     expect(lastFrame()).toContain('view:detail');
     await press(stdin, '\x1B');
     expect(lastFrame()).toContain('view:main');
-  });
-
-  it('Esc from orchestration detail (returnTo workspace) goes to workspace', async () => {
-    const orch = makeOrchestration('orch-ws');
-    const data = makeDashboardData({ orchestrations: [orch] });
-    const { lastFrame, stdin } = render(
-      <KeyboardWrapper initialData={data} initialView={orchDetailView('orch-ws', 'workspace')} />,
-    );
-    expect(lastFrame()).toContain('view:detail');
-    await press(stdin, '\x1B');
-    expect(lastFrame()).toContain('view:workspace');
   });
 
   it('PgDn advances orchestrationChildPage and resets selection', async () => {

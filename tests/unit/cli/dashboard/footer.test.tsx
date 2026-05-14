@@ -77,18 +77,6 @@ describe('Footer', () => {
     });
   });
 
-  describe('viewKind="workspace"', () => {
-    it('contains "fullscreen" hint', () => {
-      const { lastFrame } = render(<Footer viewKind="workspace" />);
-      expect(lastFrame()).toContain('fullscreen');
-    });
-
-    it('does not contain main-view "1-4 jump"', () => {
-      const { lastFrame } = render(<Footer viewKind="workspace" />);
-      expect(lastFrame()).not.toContain('1-4 jump');
-    });
-  });
-
   describe('viewKind="detail"', () => {
     it('contains "Esc back" hint', () => {
       const { lastFrame } = render(<Footer viewKind="detail" />);

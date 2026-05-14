@@ -395,7 +395,7 @@ function classifyStatus(rawStatus: string): TaskStreamStatus {
  * doPoll's useCallback does NOT depend on them. This prevents the interval
  * from being torn down and re-established on every render when the caller
  * supplies fresh [] / new Map() references (e.g. from nullish-coalescing
- * fallbacks like `data?.workspaceData?.childTaskIds ?? []`).
+ * fallbacks like `detailStreamTaskId !== null ? [detailStreamTaskId] : []`).
  */
 export function useTaskOutputStream(
   outputRepo: OutputRepository,

@@ -2,11 +2,6 @@
  * Dashboard App root component
  * ARCHITECTURE: Shell — composes data hook, keyboard hook, and view components
  * Pattern: State lives here; pure view components receive data as props
- *
- * DECISION (Phase A): Replaced triple useState (view + nav + workspaceNav) with
- * useReducer(dashboardReducer) so all state transitions are centralised and testable
- * as a pure function. Keyboard handlers retain setView/setNav setter signatures —
- * thin adapters dispatch SET_VIEW / UPDATE_NAV actions so no handler rewrite needed.
  */
 
 import { Box, useApp } from 'ink';
@@ -17,7 +12,7 @@ import type { ReadOnlyContext } from '../read-only-context.js';
 import type { DetailOutputConfig } from './components/detail-output-panel.js';
 import { Footer } from './components/footer.js';
 import { Header } from './components/header.js';
-import { computeMetricsLayout, computeWorkspaceLayout } from './layout.js';
+import { computeMetricsLayout } from './layout.js';
 import { type DashboardState, dashboardReducer } from './nav-reducer.js';
 import type { DashboardMutationContext, NavState, ViewState } from './types.js';
 import { useDashboardData } from './use-dashboard-data.js';
@@ -27,16 +22,13 @@ import { useTaskOutputStream } from './use-task-output-stream.js';
 import { useTerminalSize } from './use-terminal-size.js';
 import { DetailView } from './views/detail-view.js';
 import { MetricsView } from './views/metrics-view.js';
-import { OrchestrationDetail } from './views/orchestration-detail.js';
-import type { WorkspaceNavState } from './workspace-types.js';
-import { createInitialWorkspaceNavState } from './workspace-types.js';
 
 interface AppProps {
   readonly ctx: ReadOnlyContext;
   readonly version: string;
   /**
-   * Optional mutation context. When provided, 'c' and 'd' keybindings are
-   * enabled for cancel/delete operations. Omitted in read-only contexts.
+   * Optional mutation context. When provided, 'c', 'd', and 'p' keybindings are
+   * enabled for cancel/delete/pause/resume operations. Omitted in read-only contexts.
    */
   readonly mutations?: DashboardMutationContext;
   /**
@@ -45,7 +37,7 @@ interface AppProps {
    */
   readonly resourceMonitor?: ResourceMonitor;
   /**
-   * Output repository for live streaming in workspace view.
+   * Output repository for live streaming in detail views.
    * Threaded from index.tsx alongside other repositories.
    */
   readonly outputRepository?: OutputRepository;
@@ -68,7 +60,6 @@ const INITIAL_NAV: NavState = {
 const INITIAL_DASHBOARD_STATE: DashboardState = {
   view: { kind: 'main' },
   nav: INITIAL_NAV,
-  workspaceNav: createInitialWorkspaceNavState(),
   animFrame: 0,
 };
 
@@ -83,7 +74,7 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
   const { exit } = useApp();
 
   const [state, dispatch] = useReducer(dashboardReducer, INITIAL_DASHBOARD_STATE);
-  const { view, nav, workspaceNav, animFrame } = state;
+  const { view, nav, animFrame } = state;
 
   // Adapter setters — keep keyboard handler signatures stable
   const setView = useCallback((v: ViewState) => dispatch({ type: 'SET_VIEW', view: v }), []);
@@ -94,16 +85,6 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
       dispatch({ type: 'SET_NAV', nav: updaterOrValue });
     }
   }, []);
-  const setWorkspaceNav = useCallback(
-    (updaterOrValue: WorkspaceNavState | ((prev: WorkspaceNavState) => WorkspaceNavState)) => {
-      if (typeof updaterOrValue === 'function') {
-        dispatch({ type: 'UPDATE_WORKSPACE_NAV', updater: updaterOrValue });
-      } else {
-        dispatch({ type: 'SET_WORKSPACE_NAV', workspaceNav: updaterOrValue });
-      }
-    },
-    [],
-  );
 
   // Shared animation frame counter — single interval drives all StatusBadge animations
   useEffect(() => {
@@ -122,18 +103,6 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
 
   const { data, error, refreshedAt, refreshNow } = useDashboardData(ctx, view, nav.orchestrationChildPage);
 
-  // Workspace layout — computed from children count when in workspace view
-  const childCount = data?.workspaceData?.children.length ?? 0;
-  const workspaceLayout = computeWorkspaceLayout({
-    columns: terminalSize.columns,
-    rows: terminalSize.rows,
-    childCount,
-  });
-
-  // Workspace task IDs and statuses for streaming
-  const childTaskIds = data?.workspaceData?.childTaskIds ?? [];
-  const childTaskStatuses = data?.workspaceData?.childTaskStatuses ?? new Map();
-
   // Resolve the task ID(s) to stream in detail mode (#165).
   // Task detail: the task itself. Orchestration detail: the selected child (if any).
   function resolveDetailStreamTaskId(): TaskId | null {
@@ -146,28 +115,20 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
   }
   const detailStreamTaskId = resolveDetailStreamTaskId();
 
-  // Live output streaming:
-  //  - Workspace: always enabled when outputRepository is present
-  //  - Task/orchestration detail: enabled when outputVisible flag is set and there is a task to stream
+  // Live output streaming for task/orchestration detail views
   const streamingEnabled =
     outputRepository !== undefined &&
-    (view.kind === 'workspace' ||
-      (view.kind === 'detail' &&
-        detailStreamTaskId !== null &&
-        nav.detailOutputVisible &&
-        (view.entityType === 'tasks' || view.entityType === 'orchestrations')));
+    view.kind === 'detail' &&
+    detailStreamTaskId !== null &&
+    nav.detailOutputVisible &&
+    (view.entityType === 'tasks' || view.entityType === 'orchestrations');
 
-  // Build unified task ID and status arrays for the output stream hook.
-  // Workspace uses childTaskIds; detail uses a single-element array.
-  const streamTaskIds =
-    view.kind === 'workspace' ? childTaskIds : detailStreamTaskId !== null ? [detailStreamTaskId] : [];
-  const streamTaskStatuses: ReadonlyMap<TaskId, string> =
-    view.kind === 'workspace' ? childTaskStatuses : EMPTY_STATUS_MAP;
+  const streamTaskIds = detailStreamTaskId !== null ? [detailStreamTaskId] : [];
 
   const { streams } = useTaskOutputStream(
     outputRepository ?? ctx.outputRepository,
     streamTaskIds,
-    streamTaskStatuses,
+    EMPTY_STATUS_MAP,
     streamingEnabled,
   );
 
@@ -180,8 +141,6 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
     refreshNow,
     exit,
     mutations,
-    workspaceNav,
-    setWorkspaceNav,
     entityBrowserViewportHeight: Math.max(4, metricsLayout.bottomRowHeight - 4),
   });
 
@@ -195,45 +154,6 @@ export const App: React.FC<AppProps> = React.memo(({ ctx, version, mutations, re
           nav={nav}
           resourceMetrics={resourceMetrics}
           resourceError={resourceError}
-        />
-      );
-    }
-
-    if (view.kind === 'workspace') {
-      if (!data) {
-        return null;
-      }
-      // Phase C: workspace folded into OrchestrationDetail with viewMode='grid'
-      // DECISION: Eliminates WorkspaceView as a separate component — detail shows list, workspace shows grid.
-      const orchestrations = data.orchestrations;
-      const committedOrch = orchestrations[workspaceNav.committedOrchestratorIndex] ?? orchestrations[0];
-      const workspaceChildren = data.workspaceData?.children ?? [];
-      // Provide a sentinel orchestration when none exist — GridMode handles the empty state via EmptyWorkspace
-      const sentinelOrch = committedOrch ?? {
-        id: '' as never,
-        goal: '',
-        status: 'planning' as never,
-        agent: undefined,
-        model: undefined,
-        loopId: undefined,
-        maxDepth: 0,
-        maxWorkers: 0,
-        maxIterations: 0,
-        workingDirectory: '',
-        stateFilePath: '',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        completedAt: undefined,
-      };
-      return (
-        <OrchestrationDetail
-          orchestration={sentinelOrch as import('../../core/domain.js').Orchestration}
-          children={workspaceChildren}
-          viewMode="grid"
-          orchestrations={orchestrations}
-          workspaceNav={workspaceNav}
-          taskStreams={streams}
-          workspaceLayout={workspaceLayout}
         />
       );
     }

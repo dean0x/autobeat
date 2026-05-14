@@ -17,7 +17,7 @@ import type { InkKey, KeyHandlerParams } from './types.js';
  * 1. Esc/Backspace — return to the view that opened this detail.
  *
  * D3 drill-through Esc: return to the parent orchestration or loop detail.
- * Otherwise: return to workspace or main.
+ * Otherwise: return to main.
  */
 function handleEscReturn(key: InkKey, params: KeyHandlerParams): boolean {
   const { view, setView } = params;
@@ -41,8 +41,6 @@ function handleEscReturn(key: InkKey, params: KeyHandlerParams): boolean {
       entityId: returnTo.entityId,
       returnTo: returnTo.originalReturnTo,
     });
-  } else if (returnTo === 'workspace') {
-    setView({ kind: 'workspace' });
   } else {
     setView({ kind: 'main' });
   }
@@ -139,7 +137,6 @@ function handleLoopNavigation(input: string, key: InkKey, params: KeyHandlerPara
     const selectedIdx = resolveIterationIndex(nav.loopIterationSelectedNumber, iterations);
     const iter = iterations[selectedIdx];
     if (!iter || !iter.taskId) return true; // guard: no taskId means nothing to drill into
-    const originalReturnTo: 'main' | 'workspace' = view.returnTo === 'workspace' ? 'workspace' : 'main';
     setView({
       kind: 'detail',
       entityType: 'tasks',
@@ -147,7 +144,7 @@ function handleLoopNavigation(input: string, key: InkKey, params: KeyHandlerPara
       returnTo: {
         kind: 'loops',
         entityId: view.entityId,
-        originalReturnTo,
+        originalReturnTo: 'main',
       },
     });
     return true;
@@ -210,7 +207,6 @@ function handleOrchestrationNavigation(input: string, key: InkKey, params: KeyHa
     if (children.length === 0) return true;
     const child = children[resolveChildIndex(nav.orchestrationChildSelectedTaskId, children)];
     if (!child) return true;
-    const originalReturnTo: 'main' | 'workspace' = view.returnTo === 'workspace' ? 'workspace' : 'main';
     setView({
       kind: 'detail',
       entityType: 'tasks',
@@ -218,7 +214,7 @@ function handleOrchestrationNavigation(input: string, key: InkKey, params: KeyHa
       returnTo: {
         kind: 'orchestrations',
         entityId: view.entityId,
-        originalReturnTo,
+        originalReturnTo: 'main',
       },
     });
     return true;
@@ -301,12 +297,12 @@ function handleGenericScroll(input: string, key: InkKey, params: KeyHandlerParam
  *  - Orchestration detail: ↑/↓/j/k move child row selection (by taskId)
  *  - Enter: drill into selected child's task detail (returnTo = orchestration object)
  *  - PgUp/PgDn: navigate pages of children (resets selection to first row on page)
- *  - Esc/Backspace: returns to the view encoded in returnTo (main, workspace, or orchestration)
+ *  - Esc/Backspace: returns to the view encoded in returnTo (main or orchestration)
  *
  * Loop iteration navigation (#168):
  *  - Loop detail: ↑/↓/j/k move iteration selection (by iterationNumber)
  *  - Enter: drill into selected iteration's task detail (returnTo = loop object)
- *  - Esc: returns to the view encoded in returnTo (main, workspace, or loop)
+ *  - Esc: returns to the view encoded in returnTo (main or loop)
  *
  * Output controls (#165 — task/orchestration only):
  *  - o: toggle output stream panel visibility

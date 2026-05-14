@@ -8,22 +8,14 @@
 
 /**
  * Return the footer hint string for the main panel view.
- * Includes panel-jump hint (1-5) and optionally c/d mutation hints.
+ * Includes panel-jump hint (1-5) and optionally c/d/p mutation hints.
  */
 export function mainHints(hasMutations: boolean): string {
-  const base = 'v: workspace · Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
+  const base = 'Tab: panel · ↑↓: select · Enter: detail · 1-5: panel · f: filter · r refresh · q quit';
   if (hasMutations) {
     return `${base} · c cancel · d delete (terminal)`;
   }
   return base;
-}
-
-/**
- * Return the footer hint string for the workspace view (grid mode in OrchestrationDetail).
- * DECISION (Phase C): Workspace is now orchestration detail in grid mode — hints reflect grid navigation.
- */
-export function workspaceHints(): string {
-  return 'v metrics · ↑↓ orch · Enter grid · Tab panel · f fullscreen · [/] scroll · G tail · c/d · Esc back';
 }
 
 /**
@@ -37,12 +29,10 @@ export function detailHints(): string {
 /**
  * Return the appropriate hint string for the current view kind.
  */
-export function getHints(viewKind: 'main' | 'workspace' | 'detail', hasMutations: boolean): string {
+export function getHints(viewKind: 'main' | 'detail', hasMutations: boolean): string {
   switch (viewKind) {
     case 'main':
       return mainHints(hasMutations);
-    case 'workspace':
-      return workspaceHints();
     case 'detail':
       return detailHints();
   }

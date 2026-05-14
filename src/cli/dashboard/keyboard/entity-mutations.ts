@@ -1,8 +1,7 @@
 /**
  * Unified cancel/delete dispatch for keyboard handlers.
  *
- * Extracted to eliminate the 3x duplication of entity-kind routing that existed
- * across activity focus, main panel, and workspace cancel/delete blocks.
+ * Extracted to eliminate duplication of entity-kind routing across cancel/delete blocks.
  */
 
 import type { LoopId, OrchestratorId, PipelineId, ScheduleId, TaskId } from '../../../core/domain.js';
@@ -22,8 +21,7 @@ export type EntityKind = 'task' | 'loop' | 'orchestration' | 'schedule' | 'pipel
  * Design decision: orchestration cancels always cascade (cancelAttributedTasks: true)
  * and loop cancels always cascade (cancelTasks: true). This provides consistent UX
  * across all dashboard views — cancelling an orchestration always stops its child tasks.
- * Previously, main panel cancel did not cascade while activity/workspace did;
- * unified to always-cascade per PR #133 review resolution.
+ * Unified to always-cascade per PR #133 review resolution.
  *
  * Does nothing if the entity is already in a terminal status (no double-cancel).
  */
