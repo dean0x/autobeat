@@ -12,6 +12,8 @@ import { type AgentProvider, resolveDefaultAgent } from '../core/agents.js';
 import type { Configuration } from '../core/configuration.js';
 import {
   createOrchestration,
+  EvalMode,
+  EvalType,
   LoopId,
   LoopStrategy,
   type Orchestration,
@@ -153,22 +155,28 @@ export class OrchestrationManagerService implements OrchestrationService {
     // ========================================================================
 
     // ========================================================================
-    // Input validation + state file setup
+    // DECISION (2026-05-14): Agent eval mode replaces shell exit condition script.
+    // State files are not created for default orchestrations — the loop's agent
+    // evaluator reads the iteration output directly and decides PASS/FAIL based
+    // on goal achievement. This eliminates the RETRY→cannot-write-state-file
+    // termination deadlock (workers run as `claude --print`, cannot write files).
+    // Interactive orchestrations still use state files for user-facing state display.
+    // ========================================================================
+
+    // ========================================================================
+    // Input validation
     // ========================================================================
 
     const validationResult = this.validateAndResolveRequest(request);
     if (!validationResult.ok) return validationResult;
     const { validatedWorkingDirectory, agent } = validationResult.value;
 
-    const stateResult = this.setupStateFiles(request.goal, true);
-    if (!stateResult.ok) return stateResult;
-    const { stateFilePath, exitConditionScript, cleanupFiles } = stateResult.value;
-
     // ========================================================================
     // Create orchestration domain object (PLANNING, loopId=undefined)
+    // No state file for agent eval mode — pass empty string as stateFilePath.
     // ========================================================================
 
-    const orchestration = createOrchestration({ ...request, agent }, stateFilePath, validatedWorkingDirectory);
+    const orchestration = createOrchestration({ ...request, agent }, '', validatedWorkingDirectory);
 
     // Persist orchestration row
     const saveResult = await this.orchestrationRepo.save(orchestration);
@@ -176,7 +184,6 @@ export class OrchestrationManagerService implements OrchestrationService {
       this.logger.error('Failed to save orchestration', saveResult.error, {
         orchestratorId: orchestration.id,
       });
-      cleanupFiles();
       return err(saveResult.error);
     }
 
@@ -213,7 +220,6 @@ export class OrchestrationManagerService implements OrchestrationService {
           error: updateResult.error.message,
         });
       }
-      cleanupFiles();
     };
 
     // ========================================================================
@@ -223,15 +229,30 @@ export class OrchestrationManagerService implements OrchestrationService {
     const { finalSystemPrompt, finalUserPrompt } = this.buildFinalPrompts(
       request,
       orchestration,
-      stateFilePath,
+      '',
       validatedWorkingDirectory,
       agent,
     );
 
+    // Build the goal-aware eval prompt for the agent evaluator.
+    const evalPrompt = `You are evaluating whether an orchestration goal has been achieved.
+
+Goal: "${request.goal}"
+
+Review the orchestrator's output from this iteration. Consider:
+- Did the orchestrator indicate the goal is complete?
+- Are there remaining tasks or unresolved issues mentioned?
+- Does the output suggest all planned work has been done?
+
+PASS if the goal appears achieved. FAIL if work remains.`;
+
     const loopResult = await this.loopService.createLoop({
       strategy: LoopStrategy.RETRY,
       prompt: finalUserPrompt,
-      exitCondition: `node ${JSON.stringify(exitConditionScript!)}`,
+      exitCondition: '',
+      evalMode: EvalMode.AGENT,
+      evalType: EvalType.SCHEMA,
+      evalPrompt,
       maxIterations: orchestration.maxIterations,
       maxConsecutiveFailures: 5,
       freshContext: true,
@@ -281,7 +302,6 @@ export class OrchestrationManagerService implements OrchestrationService {
         loopId: loopResult.value.id,
       });
       await this.loopService.cancelLoop(loopResult.value.id, 'Orchestration cancelled during create', true);
-      cleanupFiles();
       return err(
         new AutobeatError(ErrorCode.INVALID_OPERATION, 'Orchestration was cancelled before create completed', {
           orchestratorId: orchestration.id,
@@ -324,7 +344,7 @@ export class OrchestrationManagerService implements OrchestrationService {
   private buildFinalPrompts(
     request: OrchestratorCreateRequest,
     orchestration: Orchestration,
-    stateFilePath: string,
+    stateFilePath: string | undefined,
     workingDirectory: string,
     agent: AgentProvider,
   ): { finalSystemPrompt: string; finalUserPrompt: string } {
@@ -334,7 +354,7 @@ export class OrchestrationManagerService implements OrchestrationService {
       operationalContract,
     } = buildOrchestratorPrompt({
       goal: request.goal,
-      stateFilePath,
+      stateFilePath: stateFilePath || undefined,
       workingDirectory,
       maxDepth: orchestration.maxDepth,
       maxWorkers: orchestration.maxWorkers,

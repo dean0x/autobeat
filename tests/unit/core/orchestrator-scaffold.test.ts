@@ -104,6 +104,37 @@ describe('scaffoldCustomOrchestrator', () => {
     expect(result.value.suggestedExitCondition).toBe(`node ${JSON.stringify(result.value.exitConditionScript)}`);
   });
 
+  it('suggestedCommand uses --eval-mode agent --strategy retry for standard template', () => {
+    const result = scaffoldCustomOrchestrator({
+      goal: 'Test goal',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.template).toBe('standard');
+    if (result.value.template !== 'standard') return;
+
+    expect(result.value.suggestedCommand).toContain('--eval-mode agent');
+    expect(result.value.suggestedCommand).toContain('--strategy retry');
+    // Old shell eval flag should not be present
+    expect(result.value.suggestedCommand).not.toContain('--until');
+  });
+
+  it('suggestedCommand still generates state file and exit script for scaffold mode', () => {
+    const result = scaffoldCustomOrchestrator({
+      goal: 'Test goal',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.template).toBe('standard');
+    if (result.value.template !== 'standard') return;
+
+    // Scaffold mode still creates state file + exit condition script for users who opted in
+    expect(result.value.stateFilePath).toBeTruthy();
+    expect(result.value.exitConditionScript).toBeTruthy();
+  });
+
   it('defaults maxWorkers to 5 and maxDepth to 3 in constraints snippet', () => {
     const result = scaffoldCustomOrchestrator({
       goal: 'Test goal',

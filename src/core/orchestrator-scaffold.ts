@@ -115,7 +115,7 @@ export function scaffoldCustomOrchestrator(params: ScaffoldParams): Result<Scaff
     const suggestedExitCondition = `node ${JSON.stringify(exitConditionScript)}`;
     const agentFlag = agent ? ` --agent ${agent}` : '';
     const modelFlag = model ? ` --model ${model}` : '';
-    const suggestedCommand = `beat loop${agentFlag}${modelFlag} "<your orchestrator prompt>" --strategy retry --until "${suggestedExitCondition}"`;
+    const suggestedCommand = `beat loop${agentFlag}${modelFlag} "<your orchestrator prompt>" --eval-mode agent --strategy retry`;
 
     return {
       template: 'standard' as const,

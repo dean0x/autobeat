@@ -75,26 +75,30 @@ describe('buildDelegationInstructions', () => {
 describe('buildStateManagementInstructions', () => {
   const stateFilePath = '/home/user/.autobeat/orchestrator-state/state-123.json';
 
+  it('returns empty string when stateFilePath is empty', () => {
+    const result = buildStateManagementInstructions({ stateFilePath: '' });
+    expect(result).toBe('');
+  });
+
+  it('returns empty string when stateFilePath is undefined (optional)', () => {
+    // TypeScript: stateFilePath is optional after the change
+    const result = buildStateManagementInstructions({ stateFilePath: undefined as unknown as string });
+    expect(result).toBe('');
+  });
+
   it('includes the state file path', () => {
     const result = buildStateManagementInstructions({ stateFilePath });
     expect(result).toContain(stateFilePath);
   });
 
-  it('includes read/write timing guidance', () => {
+  it('includes read timing guidance', () => {
     const result = buildStateManagementInstructions({ stateFilePath });
     expect(result).toContain('START of every iteration');
-    expect(result).toContain('BEFORE exiting each iteration');
   });
 
-  it('includes completion signal', () => {
+  it('includes system-evaluates-output note', () => {
     const result = buildStateManagementInstructions({ stateFilePath });
-    expect(result).toContain('status: "complete"');
-  });
-
-  it('includes failure signal', () => {
-    const result = buildStateManagementInstructions({ stateFilePath });
-    expect(result).toContain('status: "failed"');
-    expect(result).toContain('context field');
+    expect(result).toContain('system evaluates your output');
   });
 
   it('includes RESILIENCE section', () => {
@@ -184,7 +188,7 @@ describe('snippet-vs-prompt drift detection', () => {
     }
   });
 
-  it('buildStateManagementInstructions and operationalContract share state-file markers', () => {
+  it('buildStateManagementInstructions and operationalContract share state-file path', () => {
     const snippet = buildStateManagementInstructions({ stateFilePath });
     const { operationalContract } = buildOrchestratorPrompt({
       goal: 'drift test',
@@ -194,15 +198,15 @@ describe('snippet-vs-prompt drift detection', () => {
       maxWorkers,
     });
 
-    const sharedMarkers = [stateFilePath, 'status: "complete"', 'status: "failed"'];
-
-    for (const marker of sharedMarkers) {
-      expect(snippet, `snippet missing marker: "${marker}"`).toContain(marker);
-      expect(operationalContract, `operationalContract missing marker: "${marker}"`).toContain(marker);
-    }
+    // Both must include the state file path when stateFilePath is provided
+    expect(snippet, `snippet missing state file path`).toContain(stateFilePath);
+    expect(operationalContract, `operationalContract missing state file path`).toContain(stateFilePath);
+    // operationalContract still includes completion signals
+    expect(operationalContract).toContain('status: "complete"');
+    expect(operationalContract).toContain('status: "failed"');
   });
 
-  it('buildStateManagementInstructions and systemPrompt share state-file markers', () => {
+  it('buildStateManagementInstructions and systemPrompt share state-file path', () => {
     const snippet = buildStateManagementInstructions({ stateFilePath });
     const { systemPrompt } = buildOrchestratorPrompt({
       goal: 'drift test',
@@ -212,12 +216,9 @@ describe('snippet-vs-prompt drift detection', () => {
       maxWorkers,
     });
 
-    const sharedMarkers = [stateFilePath, 'status: "complete"', 'status: "failed"'];
-
-    for (const marker of sharedMarkers) {
-      expect(snippet, `snippet missing marker: "${marker}"`).toContain(marker);
-      expect(systemPrompt, `systemPrompt missing marker: "${marker}"`).toContain(marker);
-    }
+    // Both must include the state file path when stateFilePath is provided
+    expect(snippet, `snippet missing state file path`).toContain(stateFilePath);
+    expect(systemPrompt, `systemPrompt missing state file path`).toContain(stateFilePath);
   });
 
   it('buildConstraintInstructions and systemPrompt share constraint markers', () => {

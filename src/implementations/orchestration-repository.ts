@@ -35,7 +35,7 @@ const OrchestrationRowSchema = z.object({
   id: z.string().min(1),
   goal: z.string().min(1),
   loop_id: z.string().nullable(),
-  state_file_path: z.string().min(1),
+  state_file_path: z.string(), // Empty string allowed for agent eval mode (no state file)
   working_directory: z.string().min(1),
   agent: z.string().nullable(),
   model: z.string().nullable(),

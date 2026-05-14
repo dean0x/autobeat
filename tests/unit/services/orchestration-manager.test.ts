@@ -4,7 +4,6 @@
  * Pattern: Behavior-driven testing with Result pattern validation
  */
 
-import { unlinkSync } from 'fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock git-state before importing modules that depend on it
@@ -15,7 +14,7 @@ vi.mock('../../../src/utils/git-state.js', () => ({
   validateGitRefName: vi.fn().mockReturnValue({ ok: true, value: undefined }),
 }));
 
-import { OrchestratorId, OrchestratorStatus } from '../../../src/core/domain.js';
+import { EvalMode, EvalType, OrchestratorId, OrchestratorStatus } from '../../../src/core/domain.js';
 import { Database } from '../../../src/implementations/database.js';
 import { SQLiteLoopRepository } from '../../../src/implementations/loop-repository.js';
 import { SQLiteOrchestrationRepository } from '../../../src/implementations/orchestration-repository.js';
@@ -32,8 +31,6 @@ describe('OrchestrationManagerService - Unit Tests', () => {
   let logger: TestLogger;
   let loopService: LoopManagerService;
   let service: OrchestrationManagerService;
-  /** Track state files created during tests for cleanup */
-  const createdStateFiles: string[] = [];
   const config = createTestConfiguration({ defaultAgent: 'claude' });
 
   beforeEach(() => {
@@ -54,32 +51,15 @@ describe('OrchestrationManagerService - Unit Tests', () => {
         await loopRepo.save(loop);
       }
     });
-
-    // Track state files for cleanup
-    eventBus.subscribe('OrchestrationCreated', async (event: Record<string, unknown>) => {
-      const orch = event as { orchestration: { stateFilePath?: string } };
-      if (orch.orchestration?.stateFilePath) {
-        createdStateFiles.push(orch.orchestration.stateFilePath);
-      }
-    });
   });
 
   afterEach(() => {
-    // Clean up state files created during tests
-    for (const filePath of createdStateFiles) {
-      try {
-        unlinkSync(filePath);
-      } catch {
-        // File may not exist (e.g., test for invalid input)
-      }
-    }
-    createdStateFiles.length = 0;
     eventBus.dispose();
     db.close();
   });
 
   describe('createOrchestration()', () => {
-    it('should create orchestration with loop and state file', async () => {
+    it('should create orchestration with loop and correct base fields', async () => {
       const result = await service.createOrchestration({
         goal: 'Build the auth system',
       });
@@ -92,7 +72,6 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       expect(orch.goal).toBe('Build the auth system');
       expect(orch.status).toBe(OrchestratorStatus.RUNNING);
       expect(orch.loopId).toBeDefined();
-      expect(orch.stateFilePath).toContain('.autobeat');
       expect(orch.maxDepth).toBe(3);
       expect(orch.maxWorkers).toBe(5);
       expect(orch.maxIterations).toBe(50);
@@ -110,6 +89,59 @@ describe('OrchestrationManagerService - Unit Tests', () => {
       // Verify the LoopCreated event was emitted
       const loopEvents = eventBus.getEmittedEvents('LoopCreated');
       expect(loopEvents.length).toBe(1);
+    });
+
+    it('should create loop with agent eval mode and SCHEMA eval type', async () => {
+      const result = await service.createOrchestration({
+        goal: 'Build auth system',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+      expect(loopEvents.length).toBe(1);
+      const loop = (loopEvents[0] as { loop: { evalMode?: string; evalType?: string } }).loop;
+      expect(loop.evalMode).toBe(EvalMode.AGENT);
+      expect(loop.evalType).toBe(EvalType.SCHEMA);
+    });
+
+    it('should create loop with empty exitCondition (agent mode uses evalPrompt instead)', async () => {
+      const result = await service.createOrchestration({
+        goal: 'Build auth system',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+      const loop = (loopEvents[0] as { loop: { exitCondition?: string } }).loop;
+      expect(loop.exitCondition).toBe('');
+    });
+
+    it('should create loop with goal-aware evalPrompt', async () => {
+      const goal = 'Build the payment processing module';
+      const result = await service.createOrchestration({ goal });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const loopEvents = eventBus.getEmittedEvents('LoopCreated');
+      const loop = (loopEvents[0] as { loop: { evalPrompt?: string } }).loop;
+      expect(loop.evalPrompt).toBeDefined();
+      expect(loop.evalPrompt).toContain(goal);
+    });
+
+    it('should not create state file for default (non-interactive) orchestrations', async () => {
+      const result = await service.createOrchestration({
+        goal: 'No state file needed',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // stateFilePath should be empty or undefined — no state file for agent-eval mode
+      expect(result.value.stateFilePath).toBeFalsy();
     });
 
     it('should emit OrchestrationCreated event', async () => {
