@@ -96,9 +96,10 @@ export class TmuxSessionManager {
 
     const width = config.width ?? DEFAULT_WIDTH;
     const height = config.height ?? DEFAULT_HEIGHT;
+    const cwdFlag = config.cwd ? ` -c '${config.cwd}'` : '';
 
     const spawnResult = this.deps.exec(
-      `tmux new-session -d -s ${config.name} -x ${width} -y ${height} '${escapeSendKeys(config.command)}'`,
+      `tmux new-session -d -s ${config.name} -x ${width} -y ${height}${cwdFlag} '${escapeSendKeys(config.command)}'`,
     );
 
     if (spawnResult.status !== 0) {
@@ -110,18 +111,25 @@ export class TmuxSessionManager {
       );
     }
 
-    // Inject environment variables
-    if (config.env) {
-      for (const [key, value] of Object.entries(config.env)) {
-        // Validate env var key: must be alphanumeric + underscores (POSIX portable)
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-        // Quote the value to prevent shell interpretation
-        const quotedValue = `'${value.replace(/'/g, "'\\''")}'`;
-        const envResult = this.deps.exec(`tmux set-environment -t ${config.name} ${key} ${quotedValue}`);
-        if (envResult.status !== 0) {
-          // Best-effort: session is created, log the failure but continue
-          // The session itself succeeded — don't roll back for env var failures
-        }
+    // Auto-inject task identity variables so workers can identify their session
+    const taskId = config.name.replace(/^beat-/, '');
+    const spawnTime = new Date().toISOString();
+    const autoVars: Record<string, string> = {
+      AUTOBEAT_TASK_ID: taskId,
+      AUTOBEAT_SPAWN_TIME: spawnTime,
+    };
+
+    // Inject caller-provided env vars, then the auto vars (auto vars win on conflict)
+    const allEnv: Record<string, string> = { ...(config.env ?? {}), ...autoVars };
+    for (const [key, value] of Object.entries(allEnv)) {
+      // Validate env var key: must be alphanumeric + underscores (POSIX portable)
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      // Quote the value to prevent shell interpretation
+      const quotedValue = `'${value.replace(/'/g, "'\\''")}'`;
+      const envResult = this.deps.exec(`tmux set-environment -t ${config.name} ${key} ${quotedValue}`);
+      if (envResult.status !== 0) {
+        // Best-effort: session is created, log the failure but continue
+        // The session itself succeeded — don't roll back for env var failures
       }
     }
 

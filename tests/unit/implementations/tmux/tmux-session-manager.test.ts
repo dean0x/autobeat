@@ -51,6 +51,23 @@ describe('TmuxSessionManager', () => {
     expect(newSession).toContain('new-session -d -s beat-task-123');
     expect(newSession).toContain('-x 220 -y 50');
     expect(newSession).toContain('echo hello');
+    // cwd must be passed via -c flag
+    expect(newSession).toContain("-c '/tmp'");
+  });
+
+  it('includes -c flag when cwd is specified', () => {
+    manager.createSession({ ...validConfig, cwd: '/home/user/project' });
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const newSession = calls.find((c) => c.includes('new-session'));
+    expect(newSession).toContain("-c '/home/user/project'");
+  });
+
+  it('omits -c flag when cwd is not specified', () => {
+    const { cwd: _cwd, ...configWithoutCwd } = validConfig;
+    manager.createSession(configWithoutCwd);
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const newSession = calls.find((c) => c.includes('new-session'));
+    expect(newSession).not.toContain('-c ');
   });
 
   it('rejects session names that lack the beat- prefix', () => {
@@ -63,13 +80,26 @@ describe('TmuxSessionManager', () => {
   it('injects environment variables via tmux set-environment', () => {
     manager.createSession({
       ...validConfig,
-      env: { AUTOBEAT_TASK_ID: 'task-123', MY_VAR: 'hello' },
+      env: { MY_VAR: 'hello' },
     });
     const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
     const envCalls = calls.filter((c) => c.includes('set-environment'));
-    expect(envCalls.length).toBeGreaterThanOrEqual(2);
-    expect(envCalls.some((c) => c.includes('AUTOBEAT_TASK_ID'))).toBe(true);
     expect(envCalls.some((c) => c.includes('MY_VAR'))).toBe(true);
+  });
+
+  it('auto-injects AUTOBEAT_TASK_ID and AUTOBEAT_SPAWN_TIME without caller specifying them', () => {
+    // No env provided — auto vars must still be set
+    manager.createSession(validConfig);
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const envCalls = calls.filter((c) => c.includes('set-environment'));
+    expect(envCalls.some((c) => c.includes('AUTOBEAT_TASK_ID'))).toBe(true);
+    expect(envCalls.some((c) => c.includes('AUTOBEAT_SPAWN_TIME'))).toBe(true);
+    // AUTOBEAT_TASK_ID value should be the task id (strip beat- prefix)
+    const taskIdCall = envCalls.find((c) => c.includes('AUTOBEAT_TASK_ID'));
+    expect(taskIdCall).toContain('task-123');
+    // AUTOBEAT_SPAWN_TIME value should be an ISO timestamp
+    const spawnTimeCall = envCalls.find((c) => c.includes('AUTOBEAT_SPAWN_TIME'));
+    expect(spawnTimeCall).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
   });
 
   it('uses custom dimensions when width/height are provided', () => {
