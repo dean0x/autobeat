@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { TmuxSessionManager } from '../../../src/implementations/tmux/tmux-session-manager.js';
 import type { ExecFn, ExecResult } from '../../../src/implementations/tmux/types.js';
 
 function realExec(cmd: string): ExecResult {
@@ -109,8 +110,8 @@ exit $EXIT_CODE
 SEQ=1
 LINE="hello output"
 MSG_FILE="${messagesDir}/00001-stdout.json"
-printf '{"sequence":%d,"timestamp":"2026-01-01T00:00:00.000Z","type":"stdout","content":"%s"}\\n' "$SEQ" "$LINE" > "${MSG_FILE}.tmp"
-mv "${MSG_FILE}.tmp" "$MSG_FILE"
+printf '{"sequence":%d,"timestamp":"2026-01-01T00:00:00.000Z","type":"stdout","content":"%s"}\\n' "$SEQ" "$LINE" > "\${MSG_FILE}.tmp"
+mv "\${MSG_FILE}.tmp" "$MSG_FILE"
 `;
     const scriptPath = path.join(sentinelDir, 'run.sh');
     fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -168,7 +169,7 @@ next_seq() {
 
 for i in 1 2 3; do
   S=$(next_seq)
-  echo "{\\"sequence\\":$i}" > "${messagesDir}/${S}-stdout.json"
+  echo "{\\"sequence\\":$i}" > "${messagesDir}/\${S}-stdout.json"
 done
 `;
     const scriptPath = path.join(sentinelDir, 'run.sh');
@@ -186,8 +187,6 @@ done
     if (SKIP) return;
 
     // Create a session and kill it externally — verify isAlive returns false
-    const { TmuxSessionManager } =
-      require('../../../src/implementations/tmux/tmux-session-manager.js') as typeof import('../../../src/implementations/tmux/tmux-session-manager.js');
     const manager = new TmuxSessionManager({ exec: realExec as ExecFn });
 
     const sessionName = 'beat-stale-test';

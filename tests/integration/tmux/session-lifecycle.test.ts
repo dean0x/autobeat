@@ -20,13 +20,21 @@ function realExec(cmd: string): ExecResult {
 }
 
 function isTmuxAvailable(): boolean {
-  const r = realExec('which tmux && tmux -V');
-  if (r.status !== 0) return false;
-  // Parse version — must be >= 3.0
-  const match = /(\d+)\.(\d+)/.exec(r.stdout);
+  // Check binary exists and is >= 3.0
+  const versionCheck = realExec('which tmux && tmux -V');
+  if (versionCheck.status !== 0) return false;
+  const match = /(\d+)\.(\d+)/.exec(versionCheck.stdout);
   if (!match) return false;
   const [, major, minor] = match;
-  return (parseInt(major!, 10) === 3 && parseInt(minor!, 10) >= 0) || parseInt(major!, 10) > 3;
+  const versionOk = (parseInt(major!, 10) === 3 && parseInt(minor!, 10) >= 0) || parseInt(major!, 10) > 3;
+  if (!versionOk) return false;
+
+  // Verify the tmux server is functional — not just that the binary exists.
+  // CI environments may have the binary installed but no server/socket support.
+  // Attempt to create and immediately destroy a probe session.
+  const probeSession = 'beat-ci-probe';
+  const probe = realExec(`tmux new-session -d -s ${probeSession} 'exit' && tmux kill-session -t ${probeSession}`);
+  return probe.status === 0;
 }
 
 let SKIP = false;
@@ -34,7 +42,7 @@ let SKIP = false;
 beforeAll(() => {
   SKIP = !isTmuxAvailable();
   if (SKIP) {
-    console.warn('[SKIP] tmux not available or below 3.0 — skipping integration tests');
+    console.warn('[SKIP] tmux not available, below 3.0, or server not functional — skipping integration tests');
   }
 });
 
