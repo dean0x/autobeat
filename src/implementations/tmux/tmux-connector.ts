@@ -29,6 +29,9 @@ type WatchFn = typeof fs.watch;
 /** Debounce window for suppressing fs.watch double-fires (ms) */
 const DEBOUNCE_MS = 50;
 
+/** Maximum number of pending out-of-order messages before forcing delivery */
+const MAX_PENDING_MESSAGES = 100;
+
 export interface TmuxConnectorDeps {
   sessionManager: TmuxSessionManager;
   hooks: TmuxHooks;
@@ -170,8 +173,9 @@ export class TmuxConnector {
       command: manifest.wrapperPath,
     });
     if (!sessionResult.ok) {
-      // Clean up watchers on failure
+      // Clean up watchers and generated session directory on failure
       this.closeSession(session);
+      this.deps.hooks.cleanup(config.taskId, config.sessionsDir);
       return sessionResult;
     }
 
@@ -242,10 +246,11 @@ export class TmuxConnector {
    * Cleans up ALL active sessions. Call on process shutdown.
    */
   dispose(): void {
-    for (const [taskId, session] of this.activeSessions) {
+    const sessions = Array.from(this.activeSessions.entries());
+    this.activeSessions.clear();
+    for (const [, session] of sessions) {
       this.closeSession(session);
       this.deps.sessionManager.destroySession(session.handle.sessionName);
-      this.activeSessions.delete(taskId);
     }
   }
 
@@ -305,6 +310,28 @@ export class TmuxConnector {
         callbacks.onOutput(msg);
       }
       session.nextExpectedSeq++;
+    }
+
+    // Safety cap: if too many pending messages accumulate (gap that won't fill),
+    // skip ahead and deliver what we have to prevent unbounded memory growth
+    if (session.pendingMessages.size > MAX_PENDING_MESSAGES) {
+      this.deps.logger.warn('Pending message buffer exceeded cap, skipping gap', {
+        nextExpectedSeq: session.nextExpectedSeq,
+        pendingCount: session.pendingMessages.size,
+      });
+      // Find the lowest pending sequence and deliver from there
+      const sortedSeqs = Array.from(session.pendingMessages.keys()).sort((a, b) => a - b);
+      session.nextExpectedSeq = sortedSeqs[0]!;
+      // Re-run the delivery loop
+      while (session.pendingMessages.has(session.nextExpectedSeq)) {
+        const msg = session.pendingMessages.get(session.nextExpectedSeq)!;
+        session.pendingMessages.delete(session.nextExpectedSeq);
+        if (!session.deliveredSequences.has(msg.sequence)) {
+          session.deliveredSequences.add(msg.sequence);
+          callbacks.onOutput(msg);
+        }
+        session.nextExpectedSeq++;
+      }
     }
   }
 

@@ -31,9 +31,7 @@ function parseVersion(output: string): [number, number] | null {
 }
 
 function isVersionSufficient(major: number, minor: number): boolean {
-  if (major > MIN_MAJOR) return true;
-  if (major === MIN_MAJOR && minor >= MIN_MINOR) return true;
-  return false;
+  return major > MIN_MAJOR || (major === MIN_MAJOR && minor >= MIN_MINOR);
 }
 
 export class TmuxValidator {

@@ -113,7 +113,11 @@ export class TmuxSessionManager {
     // Inject environment variables
     if (config.env) {
       for (const [key, value] of Object.entries(config.env)) {
-        const envResult = this.deps.exec(`tmux set-environment -t ${config.name} ${key} ${value}`);
+        // Validate env var key: must be alphanumeric + underscores (POSIX portable)
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+        // Quote the value to prevent shell interpretation
+        const quotedValue = `'${value.replace(/'/g, "'\\''")}'`;
+        const envResult = this.deps.exec(`tmux set-environment -t ${config.name} ${key} ${quotedValue}`);
         if (envResult.status !== 0) {
           // Best-effort: session is created, log the failure but continue
           // The session itself succeeded — don't roll back for env var failures
@@ -189,7 +193,7 @@ export class TmuxSessionManager {
     // exit 1 with "no server running" or similar means no sessions at all
     if (result.status !== 0) {
       const combinedOutput = (result.stderr + result.stdout).toLowerCase();
-      if (isSessionNotFound(combinedOutput) || combinedOutput.includes('no server running')) {
+      if (isSessionNotFound(combinedOutput)) {
         return ok([]);
       }
       return err(

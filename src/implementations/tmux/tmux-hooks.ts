@@ -18,9 +18,8 @@ import { AutobeatError, tmuxHookFailed } from '../../core/errors.js';
 import { err, ok, Result } from '../../core/result.js';
 import { SENTINEL_DONE, SENTINEL_EXIT, WrapperConfig, WrapperManifest } from './types.js';
 
-/** Octal permission bits for session directories and scripts */
-const DIR_MODE = 0o700;
-const SCRIPT_MODE = 0o700;
+/** Octal permission bits for session directories and scripts (owner read/write/execute only) */
+const FILE_MODE = 0o700;
 
 export interface TmuxHooksDeps {
   writeFile: (filePath: string, content: string, opts: { mode: number }) => void;
@@ -33,7 +32,7 @@ export interface TmuxHooksDeps {
  * When targets are configured, the final JSON message is forwarded to each.
  */
 function buildCommunicationBlock(config: WrapperConfig): string {
-  const targets = config.communicationTargets;
+  const { communicationTargets: targets } = config;
   if (!targets || targets.length === 0) return '';
 
   const sendLines = targets.map((t) => `  tmux send-keys -t "${t}" -l "$PAYLOAD" Enter`).join('\n');
@@ -64,7 +63,7 @@ SEQ_FILE="$SESSIONS_DIR/.seq"
 
 next_seq() {
   (
-    flock -x 200
+    flock -x 200 2>/dev/null || true
     SEQ=$(cat "$SEQ_FILE" 2>/dev/null || echo 0)
     SEQ=$((SEQ + 1))
     echo $SEQ > "$SEQ_FILE"
@@ -113,13 +112,13 @@ export class TmuxHooks {
 
     try {
       // Create session root directory
-      this.deps.mkdirSync(sessionDir, { recursive: true, mode: DIR_MODE });
+      this.deps.mkdirSync(sessionDir, { recursive: true, mode: FILE_MODE });
       // Create messages subdirectory
-      this.deps.mkdirSync(messagesDir, { recursive: true, mode: DIR_MODE });
+      this.deps.mkdirSync(messagesDir, { recursive: true, mode: FILE_MODE });
 
       // Generate and write wrapper script
       const scriptContent = buildWrapperScript(config);
-      this.deps.writeFile(wrapperPath, scriptContent, { mode: SCRIPT_MODE });
+      this.deps.writeFile(wrapperPath, scriptContent, { mode: FILE_MODE });
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       return err(tmuxHookFailed('generateWrapper', reason, { taskId: config.taskId, sessionDir }));

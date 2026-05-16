@@ -5,12 +5,12 @@
  * and push-based completion detection for the v1.6.0 worker migration.
  */
 
+// Implementations
 export type { SpawnCallbacks, TmuxConnectorDeps } from './tmux-connector.js';
 export { TmuxConnector } from './tmux-connector.js';
 export type { TmuxHooksDeps } from './tmux-hooks.js';
 export { TmuxHooks } from './tmux-hooks.js';
 export { TmuxSessionManager } from './tmux-session-manager.js';
-// Implementations
 export { TmuxValidator } from './tmux-validator.js';
 // Types (type-only re-exports to avoid unnecessary runtime imports)
 export type {
