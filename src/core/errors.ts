@@ -96,6 +96,16 @@ export enum ErrorCode {
   // Orchestrator errors (v0.9.0 Orchestrator Mode)
   /** Orchestration with specified ID does not exist */
   ORCHESTRATION_NOT_FOUND = 'ORCHESTRATION_NOT_FOUND',
+
+  // Tmux errors (v1.6.0 tmux Worker Migration)
+  /** Failed to create, destroy, or communicate with a tmux session */
+  TMUX_SESSION_FAILED = 'TMUX_SESSION_FAILED',
+  /** tmux not installed, version too old, or binary not found */
+  TMUX_VALIDATION_FAILED = 'TMUX_VALIDATION_FAILED',
+  /** Failed to generate wrapper script or create session directory */
+  TMUX_HOOK_FAILED = 'TMUX_HOOK_FAILED',
+  /** Failed to send keys to a tmux session */
+  TMUX_SEND_KEYS_FAILED = 'TMUX_SEND_KEYS_FAILED',
 }
 
 /**
@@ -177,6 +187,36 @@ export const agentNotFound = (provider: string, available: readonly string[]): A
 export const agentMisconfigured = (provider: string, reason: string): AutobeatError =>
   new AutobeatError(ErrorCode.AGENT_MISCONFIGURED, `Agent '${provider}' is misconfigured: ${reason}`, {
     provider,
+    reason,
+  });
+
+export const tmuxSessionFailed = (
+  operation: string,
+  reason: string,
+  context?: Record<string, unknown>,
+): AutobeatError =>
+  new AutobeatError(ErrorCode.TMUX_SESSION_FAILED, `tmux session ${operation} failed: ${reason}`, {
+    operation,
+    reason,
+    ...context,
+  });
+
+export const tmuxValidationFailed = (reason: string, context?: Record<string, unknown>): AutobeatError =>
+  new AutobeatError(ErrorCode.TMUX_VALIDATION_FAILED, `tmux validation failed: ${reason}`, {
+    reason,
+    ...context,
+  });
+
+export const tmuxHookFailed = (operation: string, reason: string, context?: Record<string, unknown>): AutobeatError =>
+  new AutobeatError(ErrorCode.TMUX_HOOK_FAILED, `tmux hook ${operation} failed: ${reason}`, {
+    operation,
+    reason,
+    ...context,
+  });
+
+export const tmuxSendKeysFailed = (sessionName: string, reason: string): AutobeatError =>
+  new AutobeatError(ErrorCode.TMUX_SEND_KEYS_FAILED, `Failed to send keys to session '${sessionName}': ${reason}`, {
+    sessionName,
     reason,
   });
 
