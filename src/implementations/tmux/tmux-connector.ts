@@ -154,7 +154,7 @@ export class TmuxConnector {
     };
 
     // 3. Start fs.watch watchers (BEFORE session launch to avoid race)
-    this.startWatchers(session, manifest.sessionsDir);
+    this.startWatchers(session, manifest.sessionDir);
 
     // 4. Create tmux session running the wrapper
     const sessionResult = this.deps.sessionManager.createSession({

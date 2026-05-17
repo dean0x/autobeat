@@ -85,8 +85,8 @@ describe('TmuxHooks integration — wrapper script generation', () => {
       timeout: 10000,
     });
 
-    const donePath = path.join(result.value.sessionsDir, '.done');
-    const exitPath = path.join(result.value.sessionsDir, '.exit');
+    const donePath = path.join(result.value.sessionDir, '.done');
+    const exitPath = path.join(result.value.sessionDir, '.exit');
 
     expect(fs.existsSync(donePath)).toBe(true);
     expect(fs.existsSync(exitPath)).toBe(false);

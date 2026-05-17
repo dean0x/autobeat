@@ -20,10 +20,19 @@ import {
   SENTINEL_DONE,
   SENTINEL_EXIT,
   SESSION_NAME_REGEX,
+  TASK_ID_REGEX,
   TmuxHooks,
   WrapperConfig,
   WrapperManifest,
 } from './types.js';
+
+/**
+ * Regex that validates a sessions base directory path is safe to embed in a
+ * bash single-quoted string. The path may contain alphanumeric characters,
+ * forward slashes, hyphens, underscores, and dots — no single quotes or other
+ * shell metacharacters.
+ */
+const SAFE_PATH_REGEX = /^[a-zA-Z0-9/_.\-]+$/;
 
 /** Octal permission bits for session directories and scripts (owner read/write/execute only) */
 const FILE_MODE = 0o700;
@@ -73,7 +82,7 @@ set -euo pipefail
 
 command -v jq >/dev/null 2>&1 || { echo "FATAL: jq is required but not found in PATH" >&2; exit 127; }
 
-SESSIONS_DIR="${sessionDir}"
+SESSIONS_DIR='${sessionDir}'
 MESSAGES_DIR="$SESSIONS_DIR/messages"
 SEQ_FILE="$SESSIONS_DIR/.seq"
 
@@ -126,6 +135,24 @@ export class DefaultTmuxHooks implements TmuxHooks {
    * Returns a manifest with all artifact paths.
    */
   generateWrapper(config: WrapperConfig): Result<WrapperManifest, AutobeatError> {
+    // SECURITY: Validate taskId and sessionsDir before embedding in generated scripts.
+    // Both are embedded in the wrapper script; invalid values could cause shell injection.
+    if (!TASK_ID_REGEX.test(config.taskId)) {
+      return err(
+        tmuxHookFailed('generateWrapper', `invalid taskId: ${config.taskId}`, {
+          taskId: config.taskId,
+        }),
+      );
+    }
+    if (!SAFE_PATH_REGEX.test(config.sessionsDir)) {
+      return err(
+        tmuxHookFailed('generateWrapper', `unsafe sessionsDir path: ${config.sessionsDir}`, {
+          taskId: config.taskId,
+          sessionsDir: config.sessionsDir,
+        }),
+      );
+    }
+
     const sessionDir = path.join(config.sessionsDir, config.taskId);
     const messagesDir = path.join(sessionDir, 'messages');
     const wrapperPath = path.join(sessionDir, 'wrapper.sh');
@@ -148,7 +175,7 @@ export class DefaultTmuxHooks implements TmuxHooks {
 
     return ok({
       wrapperPath,
-      sessionsDir: sessionDir,
+      sessionDir,
       sentinelPath,
       messagesDir,
       seqFilePath,

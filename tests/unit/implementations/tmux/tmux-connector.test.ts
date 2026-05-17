@@ -35,7 +35,7 @@ function makeLogger(): Logger {
 function makeManifest(taskId: string, sessionsDir = '/tmp/sessions'): WrapperManifest {
   return {
     wrapperPath: `${sessionsDir}/${taskId}/wrapper.sh`,
-    sessionsDir: `${sessionsDir}/${taskId}`,
+    sessionDir: `${sessionsDir}/${taskId}`,
     sentinelPath: `${sessionsDir}/${taskId}/.done`,
     messagesDir: `${sessionsDir}/${taskId}/messages`,
     seqFilePath: `${sessionsDir}/${taskId}/.seq`,

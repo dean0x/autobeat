@@ -221,7 +221,56 @@ describe('TmuxHooks.generateWrapper()', () => {
     expect(m.sentinelPath).toContain('.done');
     expect(m.messagesDir).toContain('messages');
     expect(m.seqFilePath).toContain('.seq');
-    expect(m.sessionsDir).toContain('task-abc');
+    expect(m.sessionDir).toContain('task-abc');
+  });
+
+  // SECURITY: P0-7 — taskId must be validated before flowing into path.join and the wrapper script
+  it('returns TMUX_HOOK_FAILED for taskId containing shell metacharacters', () => {
+    const result = hooks.generateWrapper({ ...validConfig, taskId: '$(evil)' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('returns TMUX_HOOK_FAILED for taskId containing path traversal', () => {
+    const result = hooks.generateWrapper({ ...validConfig, taskId: '../../etc/passwd' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('returns TMUX_HOOK_FAILED for taskId with uppercase characters', () => {
+    const result = hooks.generateWrapper({ ...validConfig, taskId: 'Task-ABC' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('accepts valid taskId with alphanumeric hyphens and underscores', () => {
+    const result = hooks.generateWrapper({ ...validConfig, taskId: 'task-abc123_ok' });
+    expect(result.ok).toBe(true);
+  });
+
+  // SECURITY: P0-6 — sessionsDir must be validated before embedding in the wrapper script
+  it('returns TMUX_HOOK_FAILED for sessionsDir containing single quotes', () => {
+    const result = hooks.generateWrapper({ ...validConfig, sessionsDir: "/tmp/ses'sions" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  it('returns TMUX_HOOK_FAILED for sessionsDir containing shell metacharacters', () => {
+    const result = hooks.generateWrapper({ ...validConfig, sessionsDir: '/tmp/$(evil)' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+  });
+
+  // SECURITY: P0-6 — SESSIONS_DIR must use single quotes to prevent interpolation
+  it('wrapper script embeds session directory in single quotes', () => {
+    hooks.generateWrapper(validConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).toContain("SESSIONS_DIR='/tmp/sessions/task-abc'");
   });
 
   it('returns TMUX_HOOK_FAILED when writeFile throws', () => {
