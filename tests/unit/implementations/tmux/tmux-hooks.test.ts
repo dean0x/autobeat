@@ -92,6 +92,14 @@ describe('TmuxHooks.generateWrapper()', () => {
     expect(setMinusEIdx).toBeGreaterThan(assignmentIdx);
   });
 
+  it('wrapper uses defensive EXIT_CODE quoting with default value', () => {
+    hooks.generateWrapper(validConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).toContain('EXIT_CODE="${PIPESTATUS[0]:-1}"');
+    expect(content).toContain('[ "$EXIT_CODE" -eq 0 ]');
+    expect(content).toContain('exit "$EXIT_CODE"');
+  });
+
   it('wrapper script contains the agent command', () => {
     hooks.generateWrapper(validConfig);
     const [, content] = writeFile.mock.calls[0] as [string, string];

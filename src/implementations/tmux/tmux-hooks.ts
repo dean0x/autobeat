@@ -16,7 +16,14 @@
 import * as path from 'path';
 import { AutobeatError, tmuxHookFailed } from '../../core/errors.js';
 import { err, ok, Result } from '../../core/result.js';
-import { SENTINEL_DONE, SENTINEL_EXIT, SESSION_NAME_REGEX, TmuxHooks, WrapperConfig, WrapperManifest } from './types.js';
+import {
+  SENTINEL_DONE,
+  SENTINEL_EXIT,
+  SESSION_NAME_REGEX,
+  TmuxHooks,
+  WrapperConfig,
+  WrapperManifest,
+} from './types.js';
 
 /** Octal permission bits for session directories and scripts (owner read/write/execute only) */
 const FILE_MODE = 0o700;
@@ -95,10 +102,10 @@ ${config.agentCommand} ${agentArgs} 2>&1 | while IFS= read -r line; do
   mv "\${MSG_FILE}.tmp" "$MSG_FILE"
 done
 
-EXIT_CODE=\${PIPESTATUS[0]}
+EXIT_CODE="\${PIPESTATUS[0]:-1}"
 set -e
 
-if [ $EXIT_CODE -eq 0 ]; then
+if [ "$EXIT_CODE" -eq 0 ]; then
   echo "$EXIT_CODE" > "$SESSIONS_DIR/${SENTINEL_DONE}.tmp"
   mv "$SESSIONS_DIR/${SENTINEL_DONE}.tmp" "$SESSIONS_DIR/${SENTINEL_DONE}"
 else
@@ -107,7 +114,7 @@ else
 fi
 ${communicationBlock}
 
-exit $EXIT_CODE
+exit "$EXIT_CODE"
 `;
 }
 
