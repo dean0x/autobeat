@@ -7,7 +7,7 @@
  *
  * SECURITY: sendKeys uses `-l` (literal mode) to prevent tmux from
  * interpreting shell metacharacters. Additional escaping is applied for
- * single quotes, backslashes, dollar signs, and backticks inside the literal.
+ * single quotes to prevent breaking the shell quoting context.
  */
 
 import { AutobeatError, tmuxSendKeysFailed, tmuxSessionFailed } from '../../core/errors.js';
@@ -16,10 +16,10 @@ import {
   ExecFn,
   MAX_CONCURRENT_SESSIONS,
   SESSION_NAME_REGEX,
-  TmuxHandle,
   TmuxSessionConfig,
   TmuxSessionInfo,
   TmuxSessionManager,
+  TmuxSessionResult,
 } from './types.js';
 
 /** Default terminal dimensions if not specified */
@@ -38,22 +38,12 @@ function isSessionNotFound(output: string): boolean {
 }
 
 /**
- * Escapes a string for safe use in tmux send-keys literal mode.
- * Even in literal mode (-l), some characters need escaping when the
- * entire string is embedded in a shell command passed to tmux.
+ * Escapes a string for embedding inside a single-quoted shell context.
+ * Only single quotes need escaping — all other characters are literal
+ * inside single quotes per POSIX shell rules.
  */
-function escapeSendKeys(keys: string): string {
-  return (
-    keys
-      // Backslash must come first
-      .replace(/\\/g, '\\\\')
-      // Single quotes break the shell quoting around the tmux command
-      .replace(/'/g, "'\\''")
-      // Dollar signs could be interpolated by the shell wrapping the tmux call
-      .replace(/\$/g, '\\$')
-      // Backticks trigger command substitution in some shells
-      .replace(/`/g, '\\`')
-  );
+function escapeSingleQuoted(value: string): string {
+  return value.replace(/'/g, "'\\''");
 }
 
 function validateSessionName(name: string, operation: string): Result<void, AutobeatError> {
@@ -79,7 +69,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
    * Validates the session name, enforces the concurrent-session limit,
    * spawns the session, then injects any requested environment variables.
    */
-  createSession(config: TmuxSessionConfig): Result<TmuxHandle, AutobeatError> {
+  createSession(config: TmuxSessionConfig): Result<TmuxSessionResult, AutobeatError> {
     const nameCheck = validateSessionName(config.name, 'create');
     if (!nameCheck.ok) return nameCheck;
 
@@ -100,7 +90,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     const cwdFlag = config.cwd ? ` -c '${config.cwd.replace(/'/g, "'\\''")}'` : '';
 
     const spawnResult = this.deps.exec(
-      `tmux new-session -d -s ${config.name} -x ${width} -y ${height}${cwdFlag} '${escapeSendKeys(config.command)}'`,
+      `tmux new-session -d -s ${config.name} -x ${width} -y ${height}${cwdFlag} '${escapeSingleQuoted(config.command)}'`,
     );
 
     if (spawnResult.status !== 0) {
@@ -137,7 +127,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
       this.deps.exec(commands);
     }
 
-    return ok({ sessionName: config.name, taskId, sessionsDir: '' });
+    return ok({ sessionName: config.name, taskId });
   }
 
   /**
@@ -175,7 +165,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     const nameCheck = validateSessionName(name, 'sendKeys');
     if (!nameCheck.ok) return nameCheck;
 
-    const escaped = escapeSendKeys(keys);
+    const escaped = escapeSingleQuoted(keys);
     const result = this.deps.exec(`tmux send-keys -t ${name} -l '${escaped}'`);
 
     if (result.status !== 0) {

@@ -183,16 +183,33 @@ describe('TmuxSessionManager', () => {
     expect(sendKeys).toContain('-l');
   });
 
-  it('sendKeys escapes shell metacharacters ($, backticks, single quotes)', () => {
-    // We just verify the command includes the session name and -l flag
-    // The escaping is covered by checking the raw command contains the escaped form
+  it('sendKeys passes $, backticks through literally and only escapes single quotes', () => {
     manager.sendKeys('beat-task-123', "say $USER `whoami` it's");
     const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
     const sendKeys = calls.find((c) => c.includes('send-keys'));
     expect(sendKeys).toBeDefined();
     expect(sendKeys).toContain('-l');
-    // $ should be escaped
-    expect(sendKeys).not.toMatch(/[^\\]\$USER/);
+    // $ and backticks must pass through literally (no backslash prefix)
+    expect(sendKeys).toContain('$USER');
+    expect(sendKeys).toContain('`whoami`');
+    // Single quote must be escaped as '\'' (break out, escaped quote, re-enter)
+    expect(sendKeys).toContain("'\\''");
+  });
+
+  it('sendKeys passes backslashes through literally (no doubling)', () => {
+    manager.sendKeys('beat-task-123', 'path\\to\\file');
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const sendKeys = calls.find((c) => c.includes('send-keys'));
+    expect(sendKeys).toContain('path\\to\\file');
+    expect(sendKeys).not.toContain('path\\\\to\\\\file');
+  });
+
+  it('createSession with $ in command embeds it literally in single quotes', () => {
+    manager.createSession({ ...validConfig, command: 'echo $HOME' });
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const newSession = calls.find((c) => c.includes('new-session'));
+    expect(newSession).toContain("'echo $HOME'");
+    expect(newSession).not.toContain('\\$');
   });
 
   it('returns TMUX_SEND_KEYS_FAILED when exec fails', () => {
