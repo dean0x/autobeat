@@ -335,7 +335,7 @@ describe('TmuxConnector — sentinel detection', () => {
     expect(onExit).toHaveBeenCalledWith(1, undefined);
   });
 
-  it('sentinel fires onExit within 100ms (timing test)', async () => {
+  it('sentinel fires onExit synchronously when the sentinel file appears', async () => {
     const { watch, fireSentinel } = makeWatchMock();
     const onExit = vi.fn();
     const readFileSync = vi.fn().mockReturnValue('0');
@@ -350,13 +350,10 @@ describe('TmuxConnector — sentinel detection', () => {
     });
 
     await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
-
-    const start = Date.now();
     fireSentinel('.done');
-    const elapsed = Date.now() - start;
 
+    // The callback fires synchronously — assert that it was called, not how fast
     expect(onExit).toHaveBeenCalled();
-    expect(elapsed).toBeLessThan(100);
   });
 });
 
@@ -497,6 +494,68 @@ describe('TmuxConnector — output handling', () => {
 
     await new Promise((r) => setTimeout(r, 200));
     expect(onOutput).toHaveBeenCalledTimes(1);
+    connector.dispose();
+  });
+
+  it('drops messages and warns when pending buffer exceeds MAX_PENDING_MESSAGES (100)', async () => {
+    // Simulate a sequence gap: deliver seq 102..202 before seq 1 so 101+ messages
+    // are buffered without being deliverable. The connector must warn and skip ahead.
+    const received: OutputMessage[] = [];
+    const logger = makeLogger();
+
+    // Build message map: sequences 2..103 (102 messages) — seq 1 is intentionally missing
+    // so nothing delivers until the overflow cap fires.
+    const msgMap: Record<string, OutputMessage> = {};
+    for (let seq = 2; seq <= 103; seq++) {
+      const filename = `${String(seq).padStart(5, '0')}-stdout.json`;
+      msgMap[filename] = buildOutputMsg(seq);
+    }
+
+    const readFileSync = vi.fn().mockImplementation((p: string) => {
+      const base = (p as string).split('/').pop()!;
+      const found = msgMap[base];
+      if (!found) throw new Error(`Unknown file: ${base}`);
+      return JSON.stringify(found);
+    });
+
+    // Use a fresh watch mock — makeWatchMock resets callCount so each connector
+    // gets its own independent sentinel/message pair.
+    const { watch, fireMessage } = makeWatchMock();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger,
+      watch,
+      readFileSync,
+    });
+
+    await connector.spawn(BASE_CONFIG, {
+      onOutput: (m) => received.push(m),
+      onExit: vi.fn(),
+    });
+
+    // Fire 102 out-of-order messages (seq 2..103) without ever firing seq 1.
+    // After the 101st fire the buffer size exceeds MAX_PENDING_MESSAGES (100)
+    // and the connector must skip ahead, log a warning, and drain what it has.
+    for (const filename of Object.keys(msgMap)) {
+      fireMessage(filename);
+    }
+
+    // Allow debounce timers to settle
+    await new Promise((r) => setTimeout(r, 300));
+
+    // The overflow warning must have been emitted
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Pending message buffer exceeded cap'),
+      expect.any(Object),
+    );
+
+    // Messages that were buffered must eventually be delivered (the skip-ahead
+    // drains whatever was sitting in the map).
+    expect(received.length).toBeGreaterThan(0);
+
     connector.dispose();
   });
 });

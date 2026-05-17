@@ -30,12 +30,12 @@ function isTmuxAvailable(): boolean {
   return parseInt(major!, 10) >= 3;
 }
 
-let SKIP = false;
+const tmuxAvailable = isTmuxAvailable();
+
 let tmpDir = '';
 
 beforeAll(() => {
-  SKIP = !isTmuxAvailable();
-  if (SKIP) {
+  if (!tmuxAvailable) {
     console.warn('[SKIP] tmux not available — skipping sentinel integration tests');
     return;
   }
@@ -52,10 +52,8 @@ afterAll(() => {
   }
 });
 
-describe('Sentinel detection integration', () => {
+describe.skipIf(!tmuxAvailable)('Sentinel detection integration', () => {
   it('.done sentinel is created when a script exits 0', () => {
-    if (SKIP) return;
-
     const sentinelDir = path.join(tmpDir, 'done-test');
     fs.mkdirSync(sentinelDir, { recursive: true });
 
@@ -74,8 +72,6 @@ mv "${sentinelDir}/.done.tmp" "${sentinelDir}/.done"
   });
 
   it('.exit sentinel is created when a script exits non-zero', () => {
-    if (SKIP) return;
-
     const sentinelDir = path.join(tmpDir, 'exit-test');
     fs.mkdirSync(sentinelDir, { recursive: true });
 
@@ -100,8 +96,6 @@ exit $EXIT_CODE
   });
 
   it('output JSON file is written with correct structure', () => {
-    if (SKIP) return;
-
     const sentinelDir = path.join(tmpDir, 'output-test');
     const messagesDir = path.join(sentinelDir, 'messages');
     fs.mkdirSync(messagesDir, { recursive: true });
@@ -129,8 +123,6 @@ mv "\${MSG_FILE}.tmp" "$MSG_FILE"
   });
 
   it('atomic write pattern (.tmp → mv) never produces a partial file visible to readers', () => {
-    if (SKIP) return;
-
     const sentinelDir = path.join(tmpDir, 'atomic-test');
     fs.mkdirSync(sentinelDir, { recursive: true });
 
@@ -149,8 +141,6 @@ mv "\${MSG_FILE}.tmp" "$MSG_FILE"
   });
 
   it('sequence numbers increment correctly across multiple messages', () => {
-    if (SKIP) return;
-
     const sentinelDir = path.join(tmpDir, 'seq-test');
     const messagesDir = path.join(sentinelDir, 'messages');
     fs.mkdirSync(messagesDir, { recursive: true });
@@ -182,14 +172,20 @@ done
     expect(files[1]).toBe('00002-stdout.json');
     expect(files[2]).toBe('00003-stdout.json');
   });
+});
+
+describe.skipIf(!tmuxAvailable)('Sentinel detection — session lifecycle', () => {
+  const sessionName = 'beat-stale-test';
+
+  afterAll(() => {
+    // Unconditional cleanup — prevents session leak if test fails mid-way
+    realExec(`tmux kill-session -t ${sessionName} 2>/dev/null || true`);
+  });
 
   it('staleness: session appears dead after external kill', () => {
-    if (SKIP) return;
-
-    // Create a session and kill it externally — verify isAlive returns false
     const manager = new TmuxSessionManager({ exec: realExec as ExecFn });
 
-    const sessionName = 'beat-stale-test';
+    // Clean up any pre-existing session with this name
     realExec(`tmux kill-session -t ${sessionName} 2>/dev/null || true`);
 
     const createResult = manager.createSession({
