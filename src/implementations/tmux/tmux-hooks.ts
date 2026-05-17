@@ -7,7 +7,7 @@
  * a sentinel (.done or .exit) when done — enabling push-based completion
  * detection via fs.watch without polling.
  *
- * SECURITY: All paths embedded in the generated script are double-quoted to
+ * SECURITY: All paths embedded in the generated script are single-quoted to
  * prevent word splitting and glob expansion. The agentCommand and agentArgs
  * are embedded as-is; callers are responsible for ensuring these values come
  * from trusted configuration, not user input.
@@ -17,6 +17,7 @@ import * as path from 'path';
 import { AutobeatError, tmuxHookFailed } from '../../core/errors.js';
 import { err, ok, Result } from '../../core/result.js';
 import {
+  SAFE_PATH_REGEX,
   SENTINEL_DONE,
   SENTINEL_EXIT,
   SESSION_NAME_REGEX,
@@ -25,14 +26,6 @@ import {
   WrapperConfig,
   WrapperManifest,
 } from './types.js';
-
-/**
- * Regex that validates a sessions base directory path is safe to embed in a
- * bash single-quoted string. The path may contain alphanumeric characters,
- * forward slashes, hyphens, underscores, and dots — no single quotes or other
- * shell metacharacters.
- */
-const SAFE_PATH_REGEX = /^[a-zA-Z0-9/_.\-]+$/;
 
 /** Octal permission bits for session directories and scripts (owner read/write/execute only) */
 const FILE_MODE = 0o700;

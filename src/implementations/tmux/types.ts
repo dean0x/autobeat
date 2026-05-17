@@ -227,6 +227,14 @@ export const SESSION_NAME_REGEX = /^beat-[a-z0-9-]+$/;
  */
 export const TASK_ID_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
 
+/**
+ * Regex that validates a sessions base directory path is safe to embed in a
+ * bash single-quoted string. The path may contain alphanumeric characters,
+ * forward slashes, hyphens, underscores, and dots — no single quotes or other
+ * shell metacharacters.
+ */
+export const SAFE_PATH_REGEX = /^[a-zA-Z0-9/_.\-]+$/;
+
 /** Filename of the success sentinel (exit code 0) */
 export const SENTINEL_DONE = '.done' as const;
 
