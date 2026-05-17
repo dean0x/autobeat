@@ -1446,7 +1446,9 @@ describe('TmuxConnector — staleness detection', () => {
     vi.useFakeTimers();
 
     // Watch mock that can handle 4 watch calls (2 sessions × 2 watchers each)
-    const watch = vi.fn().mockImplementation(() => ({ close: vi.fn(), on: vi.fn() })) as unknown as TmuxConnectorDeps['watch'];
+    const watch = vi
+      .fn()
+      .mockImplementation(() => ({ close: vi.fn(), on: vi.fn() })) as unknown as TmuxConnectorDeps['watch'];
 
     const sessionManager: TmuxSessionManager = {
       createSession: vi
@@ -1457,10 +1459,7 @@ describe('TmuxConnector — staleness detection', () => {
       sendKeys: vi.fn().mockReturnValue(ok(undefined)),
       isAlive: vi.fn().mockReturnValue(ok(true)),
       // listSessions is called once per shared timer tick — count calls to verify interval
-      listSessions: vi.fn().mockReturnValue(ok([
-        { name: 'beat-task-fast' },
-        { name: 'beat-task-slow' },
-      ])),
+      listSessions: vi.fn().mockReturnValue(ok([{ name: 'beat-task-fast' }, { name: 'beat-task-slow' }])),
       getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
     } as unknown as TmuxSessionManager;
 
@@ -1483,11 +1482,21 @@ describe('TmuxConnector — staleness detection', () => {
     // Session A: checkIntervalMs=2000, Session B: checkIntervalMs=5000
     // The shared timer must use 2000ms (the minimum)
     connector.spawn(
-      { ...BASE_CONFIG, taskId: 'task-fast', name: 'beat-task-fast', staleness: { checkIntervalMs: 2000, maxSilenceMs: 999999 } },
+      {
+        ...BASE_CONFIG,
+        taskId: 'task-fast',
+        name: 'beat-task-fast',
+        staleness: { checkIntervalMs: 2000, maxSilenceMs: 999999 },
+      },
       { onOutput: vi.fn(), onExit: vi.fn() },
     );
     connector.spawn(
-      { ...BASE_CONFIG, taskId: 'task-slow', name: 'beat-task-slow', staleness: { checkIntervalMs: 5000, maxSilenceMs: 999999 } },
+      {
+        ...BASE_CONFIG,
+        taskId: 'task-slow',
+        name: 'beat-task-slow',
+        staleness: { checkIntervalMs: 5000, maxSilenceMs: 999999 },
+      },
       { onOutput: vi.fn(), onExit: vi.fn() },
     );
 

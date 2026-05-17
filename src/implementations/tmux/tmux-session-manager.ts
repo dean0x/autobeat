@@ -10,8 +10,10 @@
  * single quotes to prevent breaking the shell quoting context.
  */
 
-import { AutobeatError, tmuxSendKeysFailed, tmuxSessionFailed } from '../../core/errors.js';
-import { err, ok, Result } from '../../core/result.js';
+import type { AutobeatError } from '../../core/errors.js';
+import { tmuxSendKeysFailed, tmuxSessionFailed } from '../../core/errors.js';
+import type { Result } from '../../core/result.js';
+import { err, ok } from '../../core/result.js';
 import type { ExecFn, TmuxSessionConfig, TmuxSessionInfo, TmuxSessionManager, TmuxSessionResult } from './types.js';
 import { MAX_CONCURRENT_SESSIONS, SESSION_NAME_REGEX } from './types.js';
 
@@ -108,14 +110,11 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     }
 
     const taskId = config.name.replace(/^beat-/, '');
-    const envInjected = this.injectEnvironment(config.name, taskId, config.env);
-    // injectEnvironment is best-effort — a false return means the env set-environment
-    // command failed (e.g. session exited immediately). The session is still created;
-    // callers that need guaranteed env vars should check the returned flag.
-    if (!envInjected) {
-      // No logger dep on this class; observable only via exec mock in tests.
-      // See: cons-sm-3 — promoting to a logger warn when a logger dep is added.
-    }
+    // injectEnvironment is best-effort — a false return means the set-environment command
+    // failed (e.g. session exited immediately). The session is still created.
+    // No logger dep on this class; observable only via exec mock in tests.
+    // See: cons-sm-3 — promoting to a logger warn when a logger dep is added.
+    this.injectEnvironment(config.name, taskId, config.env);
 
     return ok({ sessionName: config.name });
   }

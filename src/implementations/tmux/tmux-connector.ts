@@ -17,9 +17,11 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { AutobeatError, tmuxSessionFailed } from '../../core/errors.js';
+import type { AutobeatError } from '../../core/errors.js';
+import { tmuxSessionFailed } from '../../core/errors.js';
 import type { Logger } from '../../core/interfaces.js';
-import { err, ok, Result } from '../../core/result.js';
+import type { Result } from '../../core/result.js';
+import { err, ok } from '../../core/result.js';
 import type {
   OutputMessage,
   SpawnCallbacks,
@@ -27,7 +29,6 @@ import type {
   TmuxConnectorPort,
   TmuxHandle,
   TmuxHooks,
-  TmuxSessionInfo,
   TmuxSessionManager,
   TmuxSpawnConfig,
   TmuxValidator,
@@ -158,7 +159,13 @@ export class TmuxConnector implements TmuxConnectorPort {
     if (!manifestResult.ok) return manifestResult;
     const manifest = manifestResult.value;
 
-    return this.createAndRegisterSession(config, manifest.wrapperPath, manifest.messagesDir, manifest.sessionDir, callbacks);
+    return this.createAndRegisterSession(
+      config,
+      manifest.wrapperPath,
+      manifest.messagesDir,
+      manifest.sessionDir,
+      callbacks,
+    );
   }
 
   /**
@@ -443,7 +450,7 @@ export class TmuxConnector implements TmuxConnectorPort {
       return;
     }
 
-    const aliveSessions = new Set<string>(listResult.value.map((s: TmuxSessionInfo) => s.name));
+    const aliveSessions = new Set<string>(listResult.value.map((s) => s.name));
     const now = Date.now();
 
     // Collect stale sessions first so triggerExit does not mutate activeSessions
