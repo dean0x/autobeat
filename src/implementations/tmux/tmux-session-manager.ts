@@ -12,15 +12,23 @@
 
 import { AutobeatError, tmuxSendKeysFailed, tmuxSessionFailed } from '../../core/errors.js';
 import { err, ok, Result } from '../../core/result.js';
-import {
+import type {
   ExecFn,
-  MAX_CONCURRENT_SESSIONS,
-  SESSION_NAME_REGEX,
   TmuxSessionConfig,
   TmuxSessionInfo,
   TmuxSessionManager,
   TmuxSessionResult,
 } from './types.js';
+import { MAX_CONCURRENT_SESSIONS, SESSION_NAME_REGEX } from './types.js';
+
+/**
+ * Dependencies for DefaultTmuxSessionManager.
+ * Follows the *Deps interface convention used by TmuxConnectorDeps and TmuxHooksDeps.
+ */
+export interface TmuxSessionManagerDeps {
+  exec: ExecFn;
+  maxConcurrentSessions?: number;
+}
 
 /** Default terminal dimensions if not specified */
 const DEFAULT_WIDTH = 220;
@@ -60,7 +68,7 @@ function validateSessionName(name: string, operation: string): Result<void, Auto
 export class DefaultTmuxSessionManager implements TmuxSessionManager {
   private readonly maxConcurrentSessions: number;
 
-  constructor(private readonly deps: { exec: ExecFn; maxConcurrentSessions?: number }) {
+  constructor(private readonly deps: TmuxSessionManagerDeps) {
     this.maxConcurrentSessions = deps.maxConcurrentSessions ?? MAX_CONCURRENT_SESSIONS;
   }
 
@@ -106,18 +114,27 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     }
 
     const taskId = config.name.replace(/^beat-/, '');
-    this.injectEnvironment(config.name, taskId, config.env);
+    const envInjected = this.injectEnvironment(config.name, taskId, config.env);
+    // injectEnvironment is best-effort — a false return means the env set-environment
+    // command failed (e.g. session exited immediately). The session is still created;
+    // callers that need guaranteed env vars should check the returned flag.
+    if (!envInjected) {
+      // No logger dep on this class; observable only via exec mock in tests.
+      // See: cons-sm-3 — promoting to a logger warn when a logger dep is added.
+    }
 
-    return ok({ sessionName: config.name, taskId });
+    return ok({ sessionName: config.name });
   }
 
   /**
    * Injects environment variables into an existing session.
    * Auto-vars (AUTOBEAT_TASK_ID, AUTOBEAT_SPAWN_TIME) win on conflict with
    * caller-supplied env. Invalid POSIX key names are silently skipped.
+   * Returns true if exec succeeded (or nothing to inject), false if the
+   * batched set-environment command failed (e.g. session exited immediately).
    * Best-effort — does not roll back the session on failure.
    */
-  private injectEnvironment(sessionName: string, taskId: string, callerEnv: Record<string, string> | undefined): void {
+  private injectEnvironment(sessionName: string, taskId: string, callerEnv: Record<string, string> | undefined): boolean {
     // Auto-inject task identity variables so workers can identify their session
     const autoVars: Record<string, string> = {
       AUTOBEAT_TASK_ID: taskId,
@@ -130,15 +147,16 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     // Filter to valid POSIX env var keys and build a batched command to avoid N+1 spawns
     const validEntries = Object.entries(allEnv).filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key));
 
-    if (validEntries.length > 0) {
-      const commands = validEntries
-        .map(([key, value]) => {
-          return `tmux set-environment -t ${sessionName} ${key} '${escapeSingleQuoted(value)}'`;
-        })
-        .join(' && ');
-      // Best-effort: session is created; don't roll back for env var failures
-      this.deps.exec(commands);
-    }
+    if (validEntries.length === 0) return true;
+
+    const commands = validEntries
+      .map(([key, value]) => {
+        return `tmux set-environment -t ${sessionName} ${key} '${escapeSingleQuoted(value)}'`;
+      })
+      .join(' && ');
+    // Best-effort: session is created; don't roll back for env var failures
+    const result = this.deps.exec(commands);
+    return result.status === 0;
   }
 
   /**
@@ -226,7 +244,12 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
       const parts = trimmed.split(':');
       if (parts.length < 5) continue;
 
-      const [name, createdStr, attachedStr, widthStr, heightStr] = parts as [string, string, string, string, string];
+      const name = parts[0];
+      const createdStr = parts[1];
+      const attachedStr = parts[2];
+      const widthStr = parts[3];
+      const heightStr = parts[4];
+      if (!name || !createdStr || !attachedStr || !widthStr || !heightStr) continue;
 
       // Filter to only beat-* sessions
       if (!SESSION_NAME_REGEX.test(name)) continue;

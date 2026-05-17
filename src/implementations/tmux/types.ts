@@ -61,11 +61,11 @@ export interface TmuxHandle {
 }
 
 /**
- * Result of TmuxSessionManager.createSession() — omits sessionsDir because
- * the session manager doesn't know the sessions directory (it's a higher-level
- * concern owned by TmuxConnector/TmuxSpawnConfig).
+ * Result of TmuxSessionManager.createSession().
+ * Only carries the tmux session name — sessionsDir and taskId are higher-level
+ * concerns owned by TmuxConnector/TmuxSpawnConfig and are not re-derived here.
  */
-export type TmuxSessionResult = Omit<TmuxHandle, 'sessionsDir'>;
+export type TmuxSessionResult = Pick<TmuxHandle, 'sessionName'>;
 
 // ─── Output & messaging ───────────────────────────────────────────────────────
 

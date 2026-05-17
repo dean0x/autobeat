@@ -10,6 +10,7 @@ export type { SpawnCallbacks, TmuxConnectorDeps } from './tmux-connector.js';
 export { TmuxConnector } from './tmux-connector.js';
 export type { TmuxHooksDeps } from './tmux-hooks.js';
 export { DefaultTmuxHooks } from './tmux-hooks.js';
+export type { TmuxSessionManagerDeps } from './tmux-session-manager.js';
 export { DefaultTmuxSessionManager } from './tmux-session-manager.js';
 export type { TmuxValidatorDeps } from './tmux-validator.js';
 export { DefaultTmuxValidator } from './tmux-validator.js';
