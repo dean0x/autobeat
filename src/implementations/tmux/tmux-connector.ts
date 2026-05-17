@@ -379,10 +379,8 @@ export class TmuxConnector {
     this.stopSharedStalenessTimer();
     if (this.activeSessions.size === 0) return;
 
-    // Use the minimum checkIntervalMs so all sessions are checked on time.
-    // Clamp to MIN_CHECK_INTERVAL_MS to prevent tight-loop setInterval.
-    // A for-loop avoids the intermediate array allocation and the spread-args
-    // stack limit that Math.min(...array) hits on large inputs.
+    // Use the minimum checkIntervalMs across all sessions, clamped to the floor.
+    // A for-loop avoids the spread-args stack limit that Math.min(...array) hits on large inputs.
     let minInterval = Number.MAX_SAFE_INTEGER;
     for (const s of this.activeSessions.values()) {
       if (s.stalenessConfig.checkIntervalMs < minInterval) {
@@ -391,9 +389,7 @@ export class TmuxConnector {
     }
     if (minInterval < MIN_CHECK_INTERVAL_MS) minInterval = MIN_CHECK_INTERVAL_MS;
 
-    this.sharedStalenessTimer = setInterval(() => {
-      this.runSharedStalenessCheck();
-    }, minInterval);
+    this.sharedStalenessTimer = setInterval(() => this.runSharedStalenessCheck(), minInterval);
   }
 
   /**
@@ -516,7 +512,7 @@ export class TmuxConnector {
    */
   private forceDeliverRemaining(session: ActiveSession): void {
     if (session.pendingMessages.size === 0) return;
-    const sorted = Array.from(session.pendingMessages.entries()).sort(([a], [b]) => a - b);
+    const sorted = Array.from(session.pendingMessages.entries()).sort((a, b) => a[0] - b[0]);
     for (const [seq, msg] of sorted) {
       session.pendingMessages.delete(seq);
       this.deliverSingle(msg, session, session.callbacks);

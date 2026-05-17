@@ -60,6 +60,42 @@ const BASE_CONFIG: TmuxSpawnConfig = {
 };
 
 /**
+ * A mock of fs.watch that captures the error handler on one specific watcher call (by index).
+ * The other watcher call returns a plain stub with no error capture.
+ * callIndex: 1 = sentinel watcher (first fs.watch call), 2 = messages watcher (second call)
+ */
+function makeWatchWithErrorCapture(callIndex: 1 | 2): {
+  watch: TmuxConnectorDeps['watch'];
+  triggerError: (e: Error) => void;
+} {
+  let errorHandler: ((err: Error) => void) | null = null;
+  let callCount = 0;
+
+  const watch = vi
+    .fn()
+    .mockImplementation((_watchPath: string, _opts: unknown, _callback: (event: string, f: string | null) => void) => {
+      callCount++;
+      if (callCount === callIndex) {
+        return {
+          close: vi.fn(),
+          on: vi.fn().mockImplementation((event: string, handler: (err: Error) => void) => {
+            if (event === 'error') errorHandler = handler;
+          }),
+        };
+      }
+      return { close: vi.fn(), on: vi.fn() };
+    }) as unknown as TmuxConnectorDeps['watch'];
+
+  return {
+    watch,
+    triggerError: (e: Error) => {
+      if (!errorHandler) throw new Error('error handler was never registered');
+      errorHandler(e);
+    },
+  };
+}
+
+/**
  * A mock of fs.watch that captures registered callbacks so tests can fire them
  */
 function makeWatchMock(): {
@@ -403,29 +439,7 @@ describe('TmuxConnector — sentinel detection', () => {
 describe('TmuxConnector — watcher error handler', () => {
   it('logs a warning when the sentinel watcher emits an error event', async () => {
     const logger = makeLogger();
-
-    // Build a watch mock where the sentinel watcher captures its .on('error') handler
-    // so the test can trigger it directly.
-    let sentinelErrorHandler: ((err: Error) => void) | null = null;
-    let callCount = 0;
-    const watch = vi
-      .fn()
-      .mockImplementation(
-        (_watchPath: string, _opts: unknown, _callback: (event: string, f: string | null) => void) => {
-          callCount++;
-          if (callCount === 1) {
-            // First call = sentinel watcher
-            return {
-              close: vi.fn(),
-              on: vi.fn().mockImplementation((event: string, handler: (err: Error) => void) => {
-                if (event === 'error') sentinelErrorHandler = handler;
-              }),
-            };
-          }
-          // Second call = messages watcher
-          return { close: vi.fn(), on: vi.fn() };
-        },
-      ) as unknown as TmuxConnectorDeps['watch'];
+    const { watch, triggerError } = makeWatchWithErrorCapture(1);
 
     const connector = new TmuxConnector({
       validator: makeValidValidator(),
@@ -436,10 +450,7 @@ describe('TmuxConnector — watcher error handler', () => {
     });
 
     await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
-
-    // Simulate the sentinel watcher emitting an error
-    expect(sentinelErrorHandler).not.toBeNull();
-    sentinelErrorHandler!(new Error('ENOSPC: no space left on device'));
+    triggerError(new Error('ENOSPC: no space left on device'));
 
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining('Sentinel watcher error'),
@@ -451,29 +462,7 @@ describe('TmuxConnector — watcher error handler', () => {
 
   it('logs a warning when the messages watcher emits an error event', async () => {
     const logger = makeLogger();
-
-    // Build a watch mock where the messages watcher captures its .on('error') handler
-    // so the test can trigger it directly.
-    let messagesErrorHandler: ((err: Error) => void) | null = null;
-    let callCount = 0;
-    const watch = vi
-      .fn()
-      .mockImplementation(
-        (_watchPath: string, _opts: unknown, _callback: (event: string, f: string | null) => void) => {
-          callCount++;
-          if (callCount === 1) {
-            // First call = sentinel watcher
-            return { close: vi.fn(), on: vi.fn() };
-          }
-          // Second call = messages watcher
-          return {
-            close: vi.fn(),
-            on: vi.fn().mockImplementation((event: string, handler: (err: Error) => void) => {
-              if (event === 'error') messagesErrorHandler = handler;
-            }),
-          };
-        },
-      ) as unknown as TmuxConnectorDeps['watch'];
+    const { watch, triggerError } = makeWatchWithErrorCapture(2);
 
     const connector = new TmuxConnector({
       validator: makeValidValidator(),
@@ -484,10 +473,7 @@ describe('TmuxConnector — watcher error handler', () => {
     });
 
     await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
-
-    // Simulate the messages watcher emitting an error
-    expect(messagesErrorHandler).not.toBeNull();
-    messagesErrorHandler!(new Error('ENOSPC: no space left on device'));
+    triggerError(new Error('ENOSPC: no space left on device'));
 
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining('Messages watcher error'),
