@@ -46,6 +46,8 @@ export interface TmuxConnectorDeps {
   watch: WatchFn;
   /** Injectable readFileSync — defaults to fs.readFileSync; injected in tests */
   readFileSync?: (path: string, encoding: BufferEncoding) => string;
+  /** Injectable readdirSync — defaults to fs.readdirSync; injected in tests */
+  readdirSync?: (dirPath: string) => string[];
 }
 
 export interface SpawnCallbacks {
@@ -70,14 +72,22 @@ interface ActiveSession {
   nextExpectedSeq: number;
   /** Debounce timers keyed by filename */
   debounceTimers: Map<string, ReturnType<typeof setTimeout>>;
+  /** Path to the messages directory for disk-based flush */
+  messagesDir: string;
+  /** Stored callbacks for flush-on-destroy/dispose */
+  callbacks: SpawnCallbacks;
+  /** Re-entrancy guard for flushPendingFiles */
+  flushing: boolean;
 }
 
 export class TmuxConnector {
   private readonly activeSessions = new Map<string, ActiveSession>();
   private readonly readFileSyncFn: (path: string, encoding: BufferEncoding) => string;
+  private readonly readdirSyncFn: (dirPath: string) => string[];
 
   constructor(private readonly deps: TmuxConnectorDeps) {
     this.readFileSyncFn = deps.readFileSync ?? ((p, enc) => fs.readFileSync(p, enc));
+    this.readdirSyncFn = deps.readdirSync ?? ((p) => fs.readdirSync(p));
   }
 
   /**
@@ -121,6 +131,9 @@ export class TmuxConnector {
       pendingMessages: new Map(),
       nextExpectedSeq: 1,
       debounceTimers: new Map(),
+      messagesDir: manifest.messagesDir,
+      callbacks,
+      flushing: false,
     };
 
     // 3a. Start sentinel watcher (BEFORE session launch)
@@ -237,6 +250,7 @@ export class TmuxConnector {
   destroy(handle: TmuxHandle): Result<void, AutobeatError> {
     const session = this.activeSessions.get(handle.taskId);
     if (session) {
+      this.flushPendingFiles(session);
       this.closeSession(session);
       this.activeSessions.delete(handle.taskId);
     }
@@ -262,12 +276,79 @@ export class TmuxConnector {
     const sessions = Array.from(this.activeSessions.values());
     this.activeSessions.clear();
     for (const session of sessions) {
+      this.flushPendingFiles(session);
       this.closeSession(session);
       this.deps.sessionManager.destroySession(session.handle.sessionName);
     }
   }
 
   // ─── Private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Reads all undelivered message files from disk and delivers them via the
+   * session's pending-message pipeline. Called before exit/destroy/dispose to
+   * prevent the debounce window from silently dropping final messages.
+   */
+  private flushPendingFiles(session: ActiveSession): void {
+    if (session.flushing) return;
+    session.flushing = true;
+    try {
+      // Clear debounce timers — we'll read files directly instead
+      for (const timer of session.debounceTimers.values()) {
+        clearTimeout(timer);
+      }
+      session.debounceTimers.clear();
+
+      let files: string[];
+      try {
+        files = this.readdirSyncFn(session.messagesDir);
+      } catch {
+        // Directory may not exist (no output written) — nothing to flush
+        files = [];
+      }
+
+      const jsonFiles = files.filter((f) => f.endsWith('.json') && !f.endsWith('.tmp')).sort();
+
+      for (const filename of jsonFiles) {
+        const filePath = path.join(session.messagesDir, filename);
+        let parsed: unknown;
+        try {
+          const raw = this.readFileSyncFn(filePath, 'utf8');
+          parsed = JSON.parse(raw);
+        } catch {
+          this.deps.logger.warn('Flush: failed to parse message file', { filePath });
+          continue;
+        }
+
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          typeof (parsed as Record<string, unknown>).sequence !== 'number' ||
+          typeof (parsed as Record<string, unknown>).timestamp !== 'string' ||
+          typeof (parsed as Record<string, unknown>).type !== 'string' ||
+          typeof (parsed as Record<string, unknown>).content !== 'string'
+        ) {
+          continue;
+        }
+
+        const msg = parsed as OutputMessage;
+        if (msg.sequence <= session.lastDeliveredSeq) continue;
+        session.pendingMessages.set(msg.sequence, msg);
+      }
+
+      // Deliver consecutive messages from nextExpectedSeq
+      this.deliverPendingMessages(session, session.callbacks);
+
+      // Force-deliver any remaining out-of-order messages (no more will arrive)
+      if (session.pendingMessages.size > 0) {
+        const sortedSeqs = Array.from(session.pendingMessages.keys()).sort((a, b) => a - b);
+        session.nextExpectedSeq = sortedSeqs[0]!;
+        this.deliverPendingMessages(session, session.callbacks);
+      }
+    } finally {
+      session.flushing = false;
+    }
+  }
 
   private handleSentinel(taskId: string, sessionDir: string, filename: string, callbacks: SpawnCallbacks): void {
     const session = this.activeSessions.get(taskId);
@@ -360,8 +441,10 @@ export class TmuxConnector {
     callbacks: SpawnCallbacks,
   ): void {
     if (session.exited) return;
-    session.exited = true;
 
+    this.flushPendingFiles(session);
+
+    session.exited = true;
     this.closeSession(session);
     this.activeSessions.delete(taskId);
     callbacks.onExit(code, signal);

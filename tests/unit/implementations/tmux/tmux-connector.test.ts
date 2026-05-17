@@ -95,7 +95,9 @@ function makeWatchMock(): {
 }
 
 function makeValidValidator(): TmuxValidator {
-  return { validate: vi.fn().mockReturnValue(ok({ version: '3.4', path: 'tmux' })) } as unknown as TmuxValidator;
+  return {
+    validate: vi.fn().mockReturnValue(ok({ version: '3.4', path: 'tmux', jqPath: '/usr/bin/jq' })),
+  } as unknown as TmuxValidator;
 }
 
 function makeFailingValidator(): TmuxValidator {
@@ -557,6 +559,227 @@ describe('TmuxConnector — output handling', () => {
     expect(received.length).toBeGreaterThan(0);
 
     connector.dispose();
+  });
+});
+
+describe('TmuxConnector — flush before exit', () => {
+  function buildOutputMsg(seq: number): OutputMessage {
+    return { sequence: seq, timestamp: '2026-01-01T00:00:00.000Z', type: 'stdout', content: `line ${seq}` };
+  }
+
+  function makeFlushReadFileSync(msgs: Record<string, OutputMessage>, sentinelContent = '0'): ReturnType<typeof vi.fn> {
+    return vi.fn().mockImplementation((p: string) => {
+      if (p.endsWith('.done') || p.endsWith('.exit')) return sentinelContent;
+      const base = p.split('/').pop()!;
+      const found = msgs[base];
+      if (!found) throw new Error(`Unknown file: ${base}`);
+      return JSON.stringify(found);
+    });
+  }
+
+  it('delivers debounced messages before onExit when sentinel fires during debounce window', async () => {
+    const msgs: Record<string, OutputMessage> = {
+      '00001-stdout.json': buildOutputMsg(1),
+      '00002-stdout.json': buildOutputMsg(2),
+    };
+    const readFileSync = makeFlushReadFileSync(msgs);
+    const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json', '00002-stdout.json']);
+    const { watch, fireMessage, fireSentinel } = makeWatchMock();
+    const onOutput = vi.fn();
+    const onExit = vi.fn();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readdirSync,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+
+    // Fire two messages — they enter 50ms debounce, not yet delivered
+    fireMessage('00001-stdout.json');
+    fireMessage('00002-stdout.json');
+
+    // Sentinel fires immediately — flush must deliver pending messages before onExit
+    fireSentinel('.done');
+
+    expect(onOutput).toHaveBeenCalledTimes(2);
+    expect(onExit).toHaveBeenCalledTimes(1);
+
+    // onOutput calls must precede onExit
+    const outputOrder = onOutput.mock.invocationCallOrder;
+    const exitOrder = onExit.mock.invocationCallOrder;
+    expect(outputOrder[0]!).toBeLessThan(exitOrder[0]!);
+    expect(outputOrder[1]!).toBeLessThan(exitOrder[0]!);
+  });
+
+  it('flush does not re-deliver already-delivered messages', async () => {
+    const msgs: Record<string, OutputMessage> = {
+      '00001-stdout.json': buildOutputMsg(1),
+      '00002-stdout.json': buildOutputMsg(2),
+    };
+    const readFileSync = makeFlushReadFileSync(msgs);
+    const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json', '00002-stdout.json']);
+    const { watch, fireMessage, fireSentinel } = makeWatchMock();
+    const onOutput = vi.fn();
+    const onExit = vi.fn();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readdirSync,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+
+    // Deliver msg1 normally via debounce
+    fireMessage('00001-stdout.json');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(onOutput).toHaveBeenCalledTimes(1);
+
+    // Now fire msg2 + sentinel immediately — flush should deliver msg2 but NOT re-deliver msg1
+    fireMessage('00002-stdout.json');
+    fireSentinel('.done');
+
+    expect(onOutput).toHaveBeenCalledTimes(2);
+    expect(onOutput.mock.calls[0]![0].sequence).toBe(1);
+    expect(onOutput.mock.calls[1]![0].sequence).toBe(2);
+  });
+
+  it('dispose flushes pending messages before closing', async () => {
+    const msgs: Record<string, OutputMessage> = {
+      '00001-stdout.json': buildOutputMsg(1),
+    };
+    const readFileSync = makeFlushReadFileSync(msgs);
+    const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json']);
+    const { watch, fireMessage } = makeWatchMock();
+    const onOutput = vi.fn();
+    const onExit = vi.fn();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readdirSync,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+
+    // Fire message — enters debounce window
+    fireMessage('00001-stdout.json');
+
+    // dispose immediately (before debounce settles) — must flush
+    connector.dispose();
+
+    expect(onOutput).toHaveBeenCalledTimes(1);
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it('destroy flushes pending messages before closing', async () => {
+    const msgs: Record<string, OutputMessage> = {
+      '00001-stdout.json': buildOutputMsg(1),
+    };
+    const readFileSync = makeFlushReadFileSync(msgs);
+    const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json']);
+    const { watch, fireMessage } = makeWatchMock();
+    const onOutput = vi.fn();
+    const onExit = vi.fn();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readdirSync,
+    });
+
+    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+    if (!spawnResult.ok) return;
+
+    // Fire message — enters debounce window
+    fireMessage('00001-stdout.json');
+
+    // destroy immediately (before debounce settles) — must flush
+    connector.destroy(spawnResult.value);
+
+    expect(onOutput).toHaveBeenCalledTimes(1);
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it('flush is re-entrancy safe — onOutput calling destroy does not loop', async () => {
+    const msgs: Record<string, OutputMessage> = {
+      '00001-stdout.json': buildOutputMsg(1),
+    };
+    const readFileSync = makeFlushReadFileSync(msgs);
+    const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json']);
+    const { watch, fireSentinel } = makeWatchMock();
+    const onExit = vi.fn();
+
+    let connector: TmuxConnector;
+    let handle: TmuxHandle;
+
+    const onOutput = vi.fn().mockImplementation(() => {
+      // Re-entrant: onOutput calls destroy during flush
+      connector.destroy(handle);
+    });
+
+    connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readdirSync,
+    });
+
+    const spawnResult = await connector.spawn(BASE_CONFIG, { onOutput, onExit });
+    if (!spawnResult.ok) return;
+    handle = spawnResult.value;
+
+    // Sentinel fires — triggers flush → onOutput → destroy (re-entrant)
+    expect(() => fireSentinel('.done')).not.toThrow();
+    expect(onOutput).toHaveBeenCalledTimes(1);
+  });
+
+  it('flush handles missing messagesDir gracefully', async () => {
+    const readFileSync = vi.fn().mockReturnValue('0');
+    const readdirSync = vi.fn().mockImplementation(() => {
+      const e = new Error('ENOENT') as NodeJS.ErrnoException;
+      e.code = 'ENOENT';
+      throw e;
+    });
+    const { watch, fireSentinel } = makeWatchMock();
+    const onExit = vi.fn();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readdirSync,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
+
+    // Sentinel fires with missing messages dir — should not throw
+    expect(() => fireSentinel('.done')).not.toThrow();
+    expect(onExit).toHaveBeenCalledWith(0, undefined);
   });
 });
 
