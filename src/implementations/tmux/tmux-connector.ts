@@ -154,7 +154,7 @@ export class TmuxConnector {
     };
 
     // 3. Start fs.watch watchers (BEFORE session launch to avoid race)
-    this.startWatchers(session, config.taskId, manifest.sessionsDir, manifest.messagesDir, callbacks);
+    this.startWatchers(session, manifest.sessionsDir);
 
     // 4. Create tmux session running the wrapper
     const sessionResult = this.deps.sessionManager.createSession({
@@ -179,7 +179,7 @@ export class TmuxConnector {
       ...DEFAULT_STALENESS_CONFIG,
       ...config.staleness,
     };
-    this.startStalenessTimer(session, config.taskId, stalenessConfig, callbacks);
+    this.startStalenessTimer(session, stalenessConfig);
 
     this.activeSessions.set(config.taskId, session);
     return ok(session.handle);
@@ -242,13 +242,10 @@ export class TmuxConnector {
    * Starts the sentinel and messages fs.watch watchers for a session.
    * Called BEFORE session launch so we never miss events from a fast-exiting agent.
    */
-  private startWatchers(
-    session: ActiveSession,
-    taskId: string,
-    sessionDir: string,
-    messagesDir: string,
-    callbacks: SpawnCallbacks,
-  ): void {
+  private startWatchers(session: ActiveSession, sessionDir: string): void {
+    const { taskId } = session.handle;
+    const { messagesDir, callbacks } = session;
+
     // Sentinel watcher — detects .done / .exit files written by the wrapper
     try {
       session.sentinelWatcher = this.deps.watch(
@@ -296,13 +293,10 @@ export class TmuxConnector {
    * Starts the staleness detection timer for a session.
    * Fires onExit(null, 'STALE') when the tmux session disappears without a sentinel.
    */
-  private startStalenessTimer(
-    session: ActiveSession,
-    taskId: string,
-    stalenessConfig: StalenessConfig,
-    callbacks: SpawnCallbacks,
-  ): void {
+  private startStalenessTimer(session: ActiveSession, stalenessConfig: StalenessConfig): void {
+    const { taskId } = session.handle;
     let lastAliveCheck = Date.now();
+
     session.stalenessTimer = setInterval(() => {
       // closeSession() clears the timer; this guard handles any in-flight tick
       if (session.exited) return;
@@ -332,7 +326,7 @@ export class TmuxConnector {
           sessionName: session.handle.sessionName,
           silentMs,
         });
-        this.triggerExit(taskId, session, null, 'STALE', callbacks);
+        this.triggerExit(taskId, session, null, 'STALE', session.callbacks);
       }
     }, stalenessConfig.checkIntervalMs);
   }
@@ -377,9 +371,8 @@ export class TmuxConnector {
           continue;
         }
 
-        const msg = parsed;
-        if (msg.sequence <= session.lastDeliveredSeq) continue;
-        session.pendingMessages.set(msg.sequence, msg);
+        if (parsed.sequence <= session.lastDeliveredSeq) continue;
+        session.pendingMessages.set(parsed.sequence, parsed);
       }
 
       // Deliver consecutive messages from nextExpectedSeq
@@ -433,10 +426,8 @@ export class TmuxConnector {
       return;
     }
 
-    const msg = parsed;
-
     // Buffer for ordered delivery
-    session.pendingMessages.set(msg.sequence, msg);
+    session.pendingMessages.set(parsed.sequence, parsed);
 
     // Deliver all consecutive messages starting from nextExpectedSeq
     this.deliverPendingMessages(session, callbacks);
