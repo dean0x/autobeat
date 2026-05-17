@@ -158,16 +158,34 @@ export class TmuxConnector implements TmuxConnectorPort {
     if (!manifestResult.ok) return manifestResult;
     const manifest = manifestResult.value;
 
+    return this.createAndRegisterSession(config, manifest.wrapperPath, manifest.messagesDir, manifest.sessionDir, callbacks);
+  }
+
+  /**
+   * Steps 3–5 of spawn(): start watchers, launch the tmux session, register the
+   * session in activeSessions, and (re)start the shared staleness timer.
+   * Extracted from spawn() so spawn() stays under 50 lines.
+   *
+   * On createSession failure, cleans up watchers and the generated session
+   * directory before returning the error.
+   */
+  private createAndRegisterSession(
+    config: TmuxSpawnConfig,
+    wrapperPath: string,
+    messagesDir: string,
+    sessionDir: string,
+    callbacks: SpawnCallbacks,
+  ): Result<TmuxHandle, AutobeatError> {
     // 3. Start fs.watch watchers (BEFORE session launch to avoid race).
     // Build a temporary session object with a placeholder sessionName so watchers
     // can be registered before createSession() returns the real name.
-    const session = this.buildActiveSession(config, config.name, manifest.messagesDir, callbacks);
-    this.startWatchers(session, manifest.sessionDir);
+    const session = this.buildActiveSession(config, config.name, messagesDir, callbacks);
+    this.startWatchers(session, sessionDir);
 
     // 4. Create tmux session running the wrapper
     const sessionResult = this.deps.sessionManager.createSession({
       ...config,
-      command: manifest.wrapperPath,
+      command: wrapperPath,
     });
     if (!sessionResult.ok) {
       // Clean up watchers and generated session directory on failure
@@ -309,7 +327,6 @@ export class TmuxConnector implements TmuxConnectorPort {
    */
   private startSentinelWatcher(session: ActiveSession, sessionDir: string): void {
     const { taskId } = session.handle;
-    const { callbacks } = session;
     try {
       session.sentinelWatcher = this.deps.watch(
         sessionDir,
@@ -317,7 +334,7 @@ export class TmuxConnector implements TmuxConnectorPort {
         (_eventType: string, filename: string | null) => {
           if (!filename) return;
           if (filename === '.done' || filename === '.exit') {
-            this.handleSentinel(taskId, sessionDir, filename, callbacks);
+            this.handleSentinel(taskId, sessionDir, filename);
           }
         },
       );
@@ -453,7 +470,7 @@ export class TmuxConnector implements TmuxConnectorPort {
     }
 
     for (const [taskId, session] of staleEntries) {
-      this.triggerExit(taskId, session, null, 'STALE', session.callbacks, true);
+      this.triggerExit(taskId, session, null, 'STALE', true);
     }
     // Restart once after the batch rather than once per stale session to avoid
     // O(N) timer teardown/recreate churn during batch stale detection.
@@ -502,18 +519,8 @@ export class TmuxConnector implements TmuxConnectorPort {
         if (!isNaN(filenameSeq) && filenameSeq <= session.lastDeliveredSeq) continue;
 
         const filePath = path.join(session.messagesDir, filename);
-        let parsed: unknown;
-        try {
-          const raw = this.readFileSyncFn(filePath, 'utf8');
-          parsed = JSON.parse(raw);
-        } catch {
-          this.deps.logger.warn('Flush: failed to parse message file', { filePath });
-          continue;
-        }
-
-        if (!isOutputMessage(parsed)) {
-          continue;
-        }
+        const parsed = this.parseMessageFile(filePath);
+        if (parsed === null) continue;
 
         if (parsed.sequence <= session.lastDeliveredSeq) continue;
         session.pendingMessages.set(parsed.sequence, parsed);
@@ -530,6 +537,25 @@ export class TmuxConnector implements TmuxConnectorPort {
   }
 
   /**
+   * Reads and parses a single message file from disk.
+   * Returns the parsed OutputMessage, or null if the file is unreadable,
+   * unparseable, or fails the isOutputMessage type guard.
+   * Used by flushPendingFiles to keep nesting ≤ 3 levels.
+   */
+  private parseMessageFile(filePath: string): OutputMessage | null {
+    let parsed: unknown;
+    try {
+      const raw = this.readFileSyncFn(filePath, 'utf8');
+      parsed = JSON.parse(raw);
+    } catch {
+      this.deps.logger.warn('Flush: failed to parse message file', { filePath });
+      return null;
+    }
+    if (!isOutputMessage(parsed)) return null;
+    return parsed;
+  }
+
+  /**
    * Force-delivers all remaining pending messages in sequence order, bypassing
    * the gap-filling logic. Used at flush time when no further messages will arrive.
    */
@@ -542,7 +568,7 @@ export class TmuxConnector implements TmuxConnectorPort {
     }
   }
 
-  private handleSentinel(taskId: string, sessionDir: string, filename: string, callbacks: SpawnCallbacks): void {
+  private handleSentinel(taskId: string, sessionDir: string, filename: string): void {
     const session = this.activeSessions.get(taskId);
     if (!session || session.exited) return;
 
@@ -559,7 +585,7 @@ export class TmuxConnector implements TmuxConnectorPort {
 
     // For .exit sentinel, code is the actual exit code; for .done it's 0
     const exitCode = filename === '.done' ? (code ?? 0) : (code ?? 1);
-    this.triggerExit(taskId, session, exitCode, undefined, callbacks);
+    this.triggerExit(taskId, session, exitCode, undefined);
   }
 
   private async handleMessageFile(filePath: string, session: ActiveSession, callbacks: SpawnCallbacks): Promise<void> {
@@ -639,7 +665,6 @@ export class TmuxConnector implements TmuxConnectorPort {
     session: ActiveSession,
     code: number | null,
     signal: string | undefined,
-    callbacks: SpawnCallbacks,
     skipTimerRestart = false,
   ): void {
     if (session.exited) return;
@@ -670,7 +695,7 @@ export class TmuxConnector implements TmuxConnectorPort {
       });
     }
     this.loggedCleanup('triggerExit', taskId, session.handle.sessionsDir);
-    callbacks.onExit(code, signal);
+    session.callbacks.onExit(code, signal);
   }
 
   /**
