@@ -194,13 +194,8 @@ export class TmuxConnector {
     // 5. Start staleness timer
     let lastAliveCheck = Date.now();
     session.stalenessTimer = setInterval(() => {
-      if (session.exited) {
-        if (session.stalenessTimer) {
-          clearInterval(session.stalenessTimer);
-          session.stalenessTimer = null;
-        }
-        return;
-      }
+      // closeSession() clears the timer; this guard handles any in-flight tick
+      if (session.exited) return;
 
       const aliveResult = this.deps.sessionManager.isAlive(session.handle.sessionName);
 
@@ -214,19 +209,20 @@ export class TmuxConnector {
         return;
       }
 
-      if (!aliveResult.value) {
-        // Confirmed dead: session is gone. Check if it has been silent long enough.
-        const silentMs = Date.now() - lastAliveCheck;
-        if (silentMs >= stalenessConfig.maxSilenceMs) {
-          this.deps.logger.warn('Session stale — no heartbeat detected', {
-            sessionName: session.handle.sessionName,
-            silentMs,
-          });
-          this.triggerExit(config.taskId, session, null, 'STALE', callbacks);
-        }
-      } else {
+      if (aliveResult.value) {
         // Confirmed alive — update the alive timestamp.
         lastAliveCheck = Date.now();
+        return;
+      }
+
+      // Confirmed dead: session is gone. Check if it has been silent long enough.
+      const silentMs = Date.now() - lastAliveCheck;
+      if (silentMs >= stalenessConfig.maxSilenceMs) {
+        this.deps.logger.warn('Session stale — no heartbeat detected', {
+          sessionName: session.handle.sessionName,
+          silentMs,
+        });
+        this.triggerExit(config.taskId, session, null, 'STALE', callbacks);
       }
     }, stalenessConfig.checkIntervalMs);
 
@@ -263,9 +259,9 @@ export class TmuxConnector {
    * Cleans up ALL active sessions. Call on process shutdown.
    */
   dispose(): void {
-    const sessions = Array.from(this.activeSessions.entries());
+    const sessions = Array.from(this.activeSessions.values());
     this.activeSessions.clear();
-    for (const [, session] of sessions) {
+    for (const session of sessions) {
       this.closeSession(session);
       this.deps.sessionManager.destroySession(session.handle.sessionName);
     }

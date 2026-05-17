@@ -113,10 +113,9 @@ export class TmuxSessionManager {
 
     // Auto-inject task identity variables so workers can identify their session
     const taskId = config.name.replace(/^beat-/, '');
-    const spawnTime = new Date().toISOString();
     const autoVars: Record<string, string> = {
       AUTOBEAT_TASK_ID: taskId,
-      AUTOBEAT_SPAWN_TIME: spawnTime,
+      AUTOBEAT_SPAWN_TIME: new Date().toISOString(),
     };
 
     // Inject caller-provided env vars, then the auto vars (auto vars win on conflict)
@@ -126,18 +125,11 @@ export class TmuxSessionManager {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
       // Quote the value to prevent shell interpretation
       const quotedValue = `'${value.replace(/'/g, "'\\''")}'`;
-      const envResult = this.deps.exec(`tmux set-environment -t ${config.name} ${key} ${quotedValue}`);
-      if (envResult.status !== 0) {
-        // Best-effort: session is created, log the failure but continue
-        // The session itself succeeded — don't roll back for env var failures
-      }
+      // Best-effort: session is created; don't roll back for env var failures
+      this.deps.exec(`tmux set-environment -t ${config.name} ${key} ${quotedValue}`);
     }
 
-    return ok({
-      sessionName: config.name,
-      taskId: config.name.replace(/^beat-/, ''),
-      sessionsDir: '',
-    });
+    return ok({ sessionName: config.name, taskId, sessionsDir: '' });
   }
 
   /**

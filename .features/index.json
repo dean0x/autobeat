@@ -1,1 +1,25 @@
-{"version":1,"features":{}}
+{
+  "version": 1,
+  "features": {
+    "tmux-runtime": {
+      "name": "Tmux Runtime Layer",
+      "description": "Tmux session management abstraction layer - validator, session manager, hooks/wrapper generation, connector with fs.watch",
+      "directories": [
+        "src/implementations/tmux/",
+        "tests/unit/implementations/tmux/",
+        "tests/integration/tmux/"
+      ],
+      "referencedFiles": [
+        "src/implementations/tmux/types.ts",
+        "src/implementations/tmux/tmux-validator.ts",
+        "src/implementations/tmux/tmux-session-manager.ts",
+        "src/implementations/tmux/tmux-hooks.ts",
+        "src/implementations/tmux/tmux-connector.ts",
+        "src/implementations/tmux/index.ts",
+        "src/core/errors.ts"
+      ],
+      "lastUpdated": "2026-05-16T21:12:32.125Z",
+      "createdBy": "implement"
+    }
+  }
+}

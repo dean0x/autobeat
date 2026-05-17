@@ -169,23 +169,19 @@ export type ExecFn = (cmd: string) => ExecResult;
 
 // ─── Dependency interfaces ────────────────────────────────────────────────────
 
+import type { AutobeatError } from '../../core/errors.js';
+import type { Result } from '../../core/result.js';
+
 /**
  * Interface for session lifecycle operations.
  * TmuxSessionManager satisfies this structurally; alternative implementations
  * (test doubles, future adapters) only need to implement these methods.
  */
 export interface ITmuxSessionManager {
-  createSession(
-    config: TmuxSessionConfig,
-  ): import('../../core/result.js').Result<TmuxHandle, import('../../core/errors.js').AutobeatError>;
-  destroySession(
-    name: string,
-  ): import('../../core/result.js').Result<void, import('../../core/errors.js').AutobeatError>;
-  sendKeys(
-    name: string,
-    keys: string,
-  ): import('../../core/result.js').Result<void, import('../../core/errors.js').AutobeatError>;
-  isAlive(name: string): import('../../core/result.js').Result<boolean, import('../../core/errors.js').AutobeatError>;
+  createSession(config: TmuxSessionConfig): Result<TmuxHandle, AutobeatError>;
+  destroySession(name: string): Result<void, AutobeatError>;
+  sendKeys(name: string, keys: string): Result<void, AutobeatError>;
+  isAlive(name: string): Result<boolean, AutobeatError>;
 }
 
 /**
@@ -193,13 +189,8 @@ export interface ITmuxSessionManager {
  * TmuxHooks satisfies this structurally.
  */
 export interface ITmuxHooks {
-  generateWrapper(
-    config: WrapperConfig,
-  ): import('../../core/result.js').Result<WrapperManifest, import('../../core/errors.js').AutobeatError>;
-  cleanup(
-    taskId: string,
-    sessionsDir: string,
-  ): import('../../core/result.js').Result<void, import('../../core/errors.js').AutobeatError>;
+  generateWrapper(config: WrapperConfig): Result<WrapperManifest, AutobeatError>;
+  cleanup(taskId: string, sessionsDir: string): Result<void, AutobeatError>;
 }
 
 /**
@@ -207,7 +198,7 @@ export interface ITmuxHooks {
  * TmuxValidator satisfies this structurally.
  */
 export interface ITmuxValidator {
-  validate(): import('../../core/result.js').Result<TmuxInfo, import('../../core/errors.js').AutobeatError>;
+  validate(): Result<TmuxInfo, AutobeatError>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
