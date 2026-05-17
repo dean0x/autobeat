@@ -43,6 +43,11 @@ export interface TmuxHooksDeps {
  * SECURITY: Targets are validated against SESSION_NAME_REGEX before embedding
  * in the generated bash script. Invalid targets are silently dropped to prevent
  * shell injection — callers must ensure target names come from trusted sources.
+ *
+ * SECURITY: File content is piped directly into tmux load-buffer to bypass shell
+ * variable expansion. Reading content into a $PAYLOAD variable and passing it as
+ * a double-quoted argument would allow agent output containing $() or backticks to
+ * be interpreted by the shell before tmux sees them.
  */
 function buildCommunicationBlock(config: WrapperConfig): string {
   const { communicationTargets: targets } = config;
@@ -51,16 +56,37 @@ function buildCommunicationBlock(config: WrapperConfig): string {
   const validTargets = targets.filter((t) => SESSION_NAME_REGEX.test(t));
   if (validTargets.length === 0) return '';
 
-  const sendLines = validTargets.map((t) => `  tmux send-keys -t "${t}" -l "$PAYLOAD" Enter`).join('\n');
+  const sendLines = validTargets
+    .map(
+      (t) =>
+        `  cat "$RESULT_FILE" | tmux load-buffer -b beat-payload -\n  tmux paste-buffer -b beat-payload -t "${t}"\n  tmux delete-buffer -b beat-payload`,
+    )
+    .join('\n');
 
   return `
 # Send result to communication targets
 RESULT_FILE=$(ls -1 "$MESSAGES_DIR"/*.json 2>/dev/null | tail -1)
 if [ -n "$RESULT_FILE" ]; then
-  PAYLOAD=$(cat "$RESULT_FILE")
 ${sendLines}
 fi`;
 }
+
+/**
+ * next_seq bash function body for the wrapper script.
+ *
+ * DESIGN DECISION: flock is intentionally absent. This wrapper is a single
+ * pipeline (one writer at a time) — the while-read loop is the sole caller of
+ * next_seq and bash does not run loop iterations in parallel. flock -x is a
+ * GNU coreutils utility unavailable on macOS without Homebrew, so including it
+ * would silently fail (the `|| true` guard) and add no protection anyway.
+ */
+const NEXT_SEQ_FN = `\
+next_seq() {
+  SEQ=$(cat "$SEQ_FILE" 2>/dev/null || echo 0)
+  SEQ=$((SEQ + 1))
+  echo $SEQ > "$SEQ_FILE"
+  printf "%05d" $SEQ
+}`;
 
 /**
  * Generates the wrapper bash script content.
@@ -79,15 +105,20 @@ SESSIONS_DIR='${sessionDir}'
 MESSAGES_DIR="$SESSIONS_DIR/messages"
 SEQ_FILE="$SESSIONS_DIR/.seq"
 
-next_seq() {
-  (
-    flock -x 200 2>/dev/null || true
-    SEQ=$(cat "$SEQ_FILE" 2>/dev/null || echo 0)
-    SEQ=$((SEQ + 1))
-    echo $SEQ > "$SEQ_FILE"
-    printf "%05d" $SEQ
-  ) 200>"$SEQ_FILE.lock"
+${NEXT_SEQ_FN}
+
+# Ensure a sentinel is always written, even if jq crashes or mv fails mid-run.
+# The exit code captured here is the script's exit code at trap time; when the
+# main flow completes normally it will have already written the sentinel, so
+# the guard condition prevents a duplicate.
+_sentinel_guard() {
+  local _ec=$?
+  if [ ! -f "$SESSIONS_DIR/${SENTINEL_DONE}" ] && [ ! -f "$SESSIONS_DIR/${SENTINEL_EXIT}" ]; then
+    echo "$_ec" > "$SESSIONS_DIR/${SENTINEL_EXIT}.tmp"
+    mv "$SESSIONS_DIR/${SENTINEL_EXIT}.tmp" "$SESSIONS_DIR/${SENTINEL_EXIT}" 2>/dev/null || true
+  fi
 }
+trap _sentinel_guard EXIT
 
 # Launch agent, capture output.
 # set +e disables errexit for the pipeline so that a non-zero agent exit does
@@ -177,8 +208,24 @@ export class DefaultTmuxHooks implements TmuxHooks {
 
   /**
    * Removes the session directory and all its contents.
+   *
+   * SECURITY: taskId and sessionsDir are validated before being passed to
+   * path.join + rmSync(recursive:true, force:true). This mirrors the validation
+   * in generateWrapper() and ensures cleanup() is safe as a public interface
+   * method — callers cannot pass an arbitrary path through this entry point.
    */
   cleanup(taskId: string, sessionsDir: string): Result<void, AutobeatError> {
+    if (!TASK_ID_REGEX.test(taskId)) {
+      return err(tmuxHookFailed('cleanup', `invalid taskId: ${taskId}`, { taskId }));
+    }
+    if (!SAFE_PATH_REGEX.test(sessionsDir)) {
+      return err(
+        tmuxHookFailed('cleanup', `unsafe sessionsDir path: ${sessionsDir}`, {
+          taskId,
+          sessionsDir,
+        }),
+      );
+    }
     const sessionDir = path.join(sessionsDir, taskId);
     try {
       this.deps.rmSync(sessionDir, { recursive: true, force: true });
