@@ -371,7 +371,8 @@ describe('TmuxConnector — output handling', () => {
 
   it('output JSON file fires onOutput with parsed OutputMessage', async () => {
     const msg = buildOutputMsg(1);
-    const readFileSync = vi.fn().mockReturnValue(JSON.stringify(msg));
+    // readFile is used by the hot-path message handler (async, non-blocking)
+    const readFile = vi.fn().mockResolvedValue(JSON.stringify(msg));
     const { watch, fireMessage } = makeWatchMock();
     const onOutput = vi.fn();
 
@@ -381,13 +382,13 @@ describe('TmuxConnector — output handling', () => {
       hooks: makeValidHooks(),
       logger: makeLogger(),
       watch,
-      readFileSync,
+      readFile,
     });
 
     await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
     fireMessage('00001-stdout.json');
 
-    // Allow debounce timer to fire
+    // Allow debounce timer and async readFile to resolve
     await vi.waitFor(() => expect(onOutput).toHaveBeenCalled(), { timeout: 300 });
     expect(onOutput.mock.calls[0]?.[0]).toMatchObject({ sequence: 1, type: 'stdout' });
     connector.dispose();
@@ -414,7 +415,8 @@ describe('TmuxConnector — output handling', () => {
   });
 
   it('logs warning and skips callback for malformed JSON', async () => {
-    const readFileSync = vi.fn().mockReturnValue('not json at all!!!');
+    // readFile is used by the hot-path message handler
+    const readFile = vi.fn().mockResolvedValue('not json at all!!!');
     const { watch, fireMessage } = makeWatchMock();
     const onOutput = vi.fn();
     const logger = makeLogger();
@@ -425,7 +427,7 @@ describe('TmuxConnector — output handling', () => {
       hooks: makeValidHooks(),
       logger,
       watch,
-      readFileSync,
+      readFile,
     });
 
     await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
@@ -444,11 +446,12 @@ describe('TmuxConnector — output handling', () => {
       '00002-stdout.json': { sequence: 2, timestamp: 'ts', type: 'stdout', content: 'two' },
     };
 
-    const readFileSync = vi.fn().mockImplementation((p: string) => {
+    // readFile is used by the hot-path message handler (async)
+    const readFile = vi.fn().mockImplementation((p: string) => {
       const base = p.split('/').pop()!;
       const found = msgs[base];
-      if (!found) throw new Error(`Unknown file: ${base}`);
-      return JSON.stringify(found);
+      if (!found) return Promise.reject(new Error(`Unknown file: ${base}`));
+      return Promise.resolve(JSON.stringify(found));
     });
 
     const { watch, fireMessage } = makeWatchMock();
@@ -460,7 +463,7 @@ describe('TmuxConnector — output handling', () => {
       hooks: makeValidHooks(),
       logger: makeLogger(),
       watch,
-      readFileSync,
+      readFile,
     });
 
     await connector.spawn(BASE_CONFIG, {
@@ -468,7 +471,7 @@ describe('TmuxConnector — output handling', () => {
       onExit: vi.fn(),
     });
 
-    // Fire in reverse order — wait for debounce between each
+    // Fire in reverse order — wait for debounce and async read between each
     fireMessage('00003-stdout.json');
     await new Promise((r) => setTimeout(r, 80));
     fireMessage('00001-stdout.json');
@@ -482,7 +485,8 @@ describe('TmuxConnector — output handling', () => {
 
   it('debounces double-fire — same file fired twice in 50ms fires onOutput once', async () => {
     const msg = buildOutputMsg(1);
-    const readFileSync = vi.fn().mockReturnValue(JSON.stringify(msg));
+    // readFile is used by the hot-path message handler (async)
+    const readFile = vi.fn().mockResolvedValue(JSON.stringify(msg));
     const { watch, fireMessage } = makeWatchMock();
     const onOutput = vi.fn();
 
@@ -492,7 +496,7 @@ describe('TmuxConnector — output handling', () => {
       hooks: makeValidHooks(),
       logger: makeLogger(),
       watch,
-      readFileSync,
+      readFile,
     });
 
     await connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
@@ -518,11 +522,12 @@ describe('TmuxConnector — output handling', () => {
       msgMap[filename] = buildOutputMsg(seq);
     }
 
-    const readFileSync = vi.fn().mockImplementation((p: string) => {
+    // readFile is used by the hot-path message handler (async)
+    const readFile = vi.fn().mockImplementation((p: string) => {
       const base = (p as string).split('/').pop()!;
       const found = msgMap[base];
-      if (!found) throw new Error(`Unknown file: ${base}`);
-      return JSON.stringify(found);
+      if (!found) return Promise.reject(new Error(`Unknown file: ${base}`));
+      return Promise.resolve(JSON.stringify(found));
     });
 
     // Use a fresh watch mock — makeWatchMock resets callCount so each connector
@@ -535,7 +540,7 @@ describe('TmuxConnector — output handling', () => {
       hooks: makeValidHooks(),
       logger,
       watch,
-      readFileSync,
+      readFile,
     });
 
     await connector.spawn(BASE_CONFIG, {
@@ -550,7 +555,7 @@ describe('TmuxConnector — output handling', () => {
       fireMessage(filename);
     }
 
-    // Allow debounce timers to settle
+    // Allow debounce timers and async reads to settle
     await new Promise((r) => setTimeout(r, 300));
 
     // The overflow warning must have been emitted
@@ -628,6 +633,8 @@ describe('TmuxConnector — flush before exit', () => {
       '00002-stdout.json': buildOutputMsg(2),
     };
     const readFileSync = makeFlushReadFileSync(msgs);
+    // readFile wraps the sync mock as a Promise for the hot-path message handler
+    const readFile = vi.fn().mockImplementation((p: string) => Promise.resolve(readFileSync(p)));
     const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json', '00002-stdout.json']);
     const { watch, fireMessage, fireSentinel } = makeWatchMock();
     const onOutput = vi.fn();
@@ -640,6 +647,7 @@ describe('TmuxConnector — flush before exit', () => {
       logger: makeLogger(),
       watch,
       readFileSync,
+      readFile,
       readdirSync,
     });
 
@@ -763,6 +771,8 @@ describe('TmuxConnector — flush before exit', () => {
       '00005-stdout.json': buildOutputMsg(5),
     };
     const readFileSync = makeFlushReadFileSync(msgs);
+    // readFile wraps the sync mock as a Promise for the hot-path message handler
+    const readFile = vi.fn().mockImplementation((p: string) => Promise.resolve(readFileSync(p)));
     const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json', '00003-stdout.json', '00005-stdout.json']);
     const { watch, fireMessage, fireSentinel } = makeWatchMock();
     const received: OutputMessage[] = [];
@@ -775,6 +785,7 @@ describe('TmuxConnector — flush before exit', () => {
       logger: makeLogger(),
       watch,
       readFileSync,
+      readFile,
       readdirSync,
     });
 

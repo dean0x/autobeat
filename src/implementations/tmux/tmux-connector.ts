@@ -8,9 +8,11 @@
  * DESIGN DECISION: The watcher is created BEFORE the tmux session launches to
  * eliminate the race condition where the agent exits before the watcher is ready.
  *
- * DESIGN DECISION: Staleness detection (setInterval + isAlive) acts as a safety
- * net for processes that crash without writing a sentinel. It fires onExit(null,
- * 'STALE') and stops itself after the first firing to prevent double-fire.
+ * DESIGN DECISION: Staleness detection uses a single shared setInterval that calls
+ * listSessions() once per tick and checks all active sessions. This avoids O(N)
+ * concurrent isAlive syscalls. The timer starts on first spawn and stops when
+ * activeSessions empties. Per-session maxSilenceMs and lastAliveCheck remain
+ * per-session for independent stale detection.
  */
 
 import * as fs from 'fs';
@@ -24,6 +26,7 @@ import {
   StalenessConfig,
   TmuxHandle,
   TmuxHooks,
+  TmuxSessionInfo,
   TmuxSessionManager,
   TmuxSpawnConfig,
   TmuxValidator,
@@ -63,8 +66,10 @@ export interface TmuxConnectorDeps {
   validator: TmuxValidator;
   logger: Logger;
   watch: WatchFn;
-  /** Injectable readFileSync — defaults to fs.readFileSync; injected in tests */
+  /** Injectable readFileSync — used for sentinel and flush paths (one-shot, sync); injected in tests */
   readFileSync?: (path: string, encoding: BufferEncoding) => string;
+  /** Injectable readFile — used for the hot-path message handler (async, non-blocking); injected in tests */
+  readFile?: (path: string, encoding: BufferEncoding) => Promise<string>;
   /** Injectable readdirSync — defaults to fs.readdirSync; injected in tests */
   readdirSync?: (dirPath: string) => string[];
 }
@@ -81,7 +86,10 @@ interface ActiveSession {
   handle: TmuxHandle;
   sentinelWatcher: fs.FSWatcher | null;
   messagesWatcher: fs.FSWatcher | null;
-  stalenessTimer: ReturnType<typeof setInterval> | null;
+  /** Per-session staleness config — used by the shared staleness timer */
+  stalenessConfig: StalenessConfig;
+  /** Timestamp of last confirmed-alive check — used for maxSilenceMs threshold */
+  lastAliveCheck: number;
   exited: boolean;
   /** Watermark: highest sequence number successfully delivered (monotonic) */
   lastDeliveredSeq: number;
@@ -102,10 +110,14 @@ interface ActiveSession {
 export class TmuxConnector {
   private readonly activeSessions = new Map<string, ActiveSession>();
   private readonly readFileSyncFn: (path: string, encoding: BufferEncoding) => string;
+  private readonly readFileFn: (path: string, encoding: BufferEncoding) => Promise<string>;
   private readonly readdirSyncFn: (dirPath: string) => string[];
+  /** Shared staleness timer — started on first spawn, stopped when activeSessions empties */
+  private sharedStalenessTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly deps: TmuxConnectorDeps) {
     this.readFileSyncFn = deps.readFileSync ?? ((p, enc) => fs.readFileSync(p, enc));
+    this.readFileFn = deps.readFile ?? ((p, enc) => fs.promises.readFile(p, enc));
     this.readdirSyncFn = deps.readdirSync ?? ((p) => fs.readdirSync(p));
   }
 
@@ -115,7 +127,7 @@ export class TmuxConnector {
    * 2. Generates the wrapper script
    * 3. Starts fs.watch watchers (BEFORE session launch to avoid race)
    * 4. Creates the tmux session running the wrapper
-   * 5. Starts the staleness timer
+   * 5. Starts (or restarts) the shared staleness timer
    */
   spawn(config: TmuxSpawnConfig, callbacks: SpawnCallbacks): Result<TmuxHandle, AutobeatError> {
     // 1. Validate tmux
@@ -133,6 +145,11 @@ export class TmuxConnector {
     if (!manifestResult.ok) return manifestResult;
     const manifest = manifestResult.value;
 
+    const stalenessConfig: StalenessConfig = {
+      ...DEFAULT_STALENESS_CONFIG,
+      ...config.staleness,
+    };
+
     // Build the internal session state (before launching, to set up watchers first)
     const session: ActiveSession = {
       handle: {
@@ -142,7 +159,8 @@ export class TmuxConnector {
       },
       sentinelWatcher: null,
       messagesWatcher: null,
-      stalenessTimer: null,
+      stalenessConfig,
+      lastAliveCheck: Date.now(),
       exited: false,
       lastDeliveredSeq: 0,
       pendingMessages: new Map(),
@@ -174,14 +192,12 @@ export class TmuxConnector {
       sessionName: sessionResult.value.sessionName,
     };
 
-    // 5. Start staleness timer
-    const stalenessConfig: StalenessConfig = {
-      ...DEFAULT_STALENESS_CONFIG,
-      ...config.staleness,
-    };
-    this.startStalenessTimer(session, stalenessConfig);
-
     this.activeSessions.set(config.taskId, session);
+
+    // 5. Start (or restart) the shared staleness timer — uses the minimum
+    // checkIntervalMs across all active sessions so no session is checked late.
+    this.restartSharedStalenessTimer();
+
     return ok(session.handle);
   }
 
@@ -198,6 +214,8 @@ export class TmuxConnector {
       this.flushPendingFiles(session);
       this.closeSession(session);
       this.activeSessions.delete(handle.taskId);
+      this.stopSharedStalenessTimerIfEmpty();
+      this.deps.hooks.cleanup(handle.taskId, handle.sessionsDir);
     }
     return this.deps.sessionManager.destroySession(handle.sessionName);
   }
@@ -220,6 +238,7 @@ export class TmuxConnector {
   dispose(): void {
     const sessions = Array.from(this.activeSessions.values());
     this.activeSessions.clear();
+    this.stopSharedStalenessTimer();
     for (const session of sessions) {
       // Set exited before flush so late staleness timer ticks that fire during
       // teardown see session.exited = true and return early.
@@ -233,6 +252,7 @@ export class TmuxConnector {
           error: result.error.message,
         });
       }
+      this.deps.hooks.cleanup(session.handle.taskId, session.handle.sessionsDir);
     }
   }
 
@@ -258,6 +278,14 @@ export class TmuxConnector {
           }
         },
       );
+      // Log watcher errors but do not throw or trigger exit — staleness timer handles detection
+      session.sentinelWatcher.on('error', (watchErr: Error) => {
+        this.deps.logger.warn('Sentinel watcher error — degrading to staleness detection', {
+          taskId,
+          sessionDir,
+          error: watchErr.message,
+        });
+      });
     } catch {
       // Directory may not exist yet — sentinel detection degrades gracefully
       this.deps.logger.warn('Failed to start sentinel watcher', { taskId, sessionDir });
@@ -284,51 +312,101 @@ export class TmuxConnector {
           session.debounceTimers.set(filename, timer);
         },
       );
+      // Log watcher errors but do not throw or trigger exit — staleness timer handles detection
+      session.messagesWatcher.on('error', (watchErr: Error) => {
+        this.deps.logger.warn('Messages watcher error — degrading to staleness detection', {
+          taskId,
+          messagesDir,
+          error: watchErr.message,
+        });
+      });
     } catch {
       this.deps.logger.warn('Failed to start messages watcher', { taskId, messagesDir });
     }
   }
 
   /**
-   * Starts the staleness detection timer for a session.
-   * Fires onExit(null, 'STALE') when the tmux session disappears without a sentinel.
+   * Restarts the shared staleness timer using the minimum checkIntervalMs across
+   * all active sessions. Called whenever the session set changes (spawn/exit).
+   * The single timer calls listSessions() once per tick and checks all sessions.
+   *
+   * DESIGN DECISION: A single shared timer avoids O(N) concurrent isAlive syscalls.
+   * listSessions() returns all live beat-* sessions in one tmux invocation; each
+   * session's lastAliveCheck and maxSilenceMs are stored per-session for independent
+   * stale detection.
    */
-  private startStalenessTimer(session: ActiveSession, stalenessConfig: StalenessConfig): void {
-    const { taskId } = session.handle;
-    let lastAliveCheck = Date.now();
+  private restartSharedStalenessTimer(): void {
+    this.stopSharedStalenessTimer();
+    if (this.activeSessions.size === 0) return;
 
-    session.stalenessTimer = setInterval(() => {
-      // closeSession() clears the timer; this guard handles any in-flight tick
-      if (session.exited) return;
-
-      const aliveResult = this.deps.sessionManager.isAlive(session.handle.sessionName);
-
-      if (!aliveResult.ok) {
-        // Transient exec error — cannot confirm dead; do not advance or reset timer.
-        // Only confirmed-dead (ok(false)) triggers stale detection.
-        this.deps.logger.warn('isAlive check failed — transient error, skipping', {
-          sessionName: session.handle.sessionName,
-          error: aliveResult.error.message,
-        });
-        return;
+    // Use the minimum checkIntervalMs so all sessions are checked on time
+    let minInterval = Infinity;
+    for (const s of this.activeSessions.values()) {
+      if (s.stalenessConfig.checkIntervalMs < minInterval) {
+        minInterval = s.stalenessConfig.checkIntervalMs;
       }
+    }
 
-      if (aliveResult.value) {
-        // Confirmed alive — update the alive timestamp.
-        lastAliveCheck = Date.now();
-        return;
-      }
+    this.sharedStalenessTimer = setInterval(() => {
+      this.runSharedStalenessCheck();
+    }, minInterval);
+  }
 
-      // Confirmed dead: session is gone. Check if it has been silent long enough.
-      const silentMs = Date.now() - lastAliveCheck;
-      if (silentMs >= stalenessConfig.maxSilenceMs) {
-        this.deps.logger.warn('Session stale — no heartbeat detected', {
-          sessionName: session.handle.sessionName,
-          silentMs,
-        });
-        this.triggerExit(taskId, session, null, 'STALE', session.callbacks);
+  /**
+   * Checks all active sessions for staleness using a single listSessions() call.
+   * Sessions confirmed alive update their lastAliveCheck. Sessions confirmed dead
+   * for longer than maxSilenceMs are triggered for exit with STALE signal.
+   */
+  private runSharedStalenessCheck(): void {
+    if (this.activeSessions.size === 0) return;
+
+    const listResult = this.deps.sessionManager.listSessions();
+    if (!listResult.ok) {
+      // Transient error — cannot confirm any session dead; skip this tick
+      this.deps.logger.warn('listSessions failed — transient error, skipping staleness check', {
+        error: listResult.error.message,
+      });
+      return;
+    }
+
+    const aliveSessions = new Set<string>(listResult.value.map((s: TmuxSessionInfo) => s.name));
+    const now = Date.now();
+
+    for (const [taskId, session] of this.activeSessions) {
+      if (session.exited) continue;
+
+      if (aliveSessions.has(session.handle.sessionName)) {
+        // Confirmed alive — reset the silent-since timestamp
+        session.lastAliveCheck = now;
+      } else {
+        // Confirmed dead — check if silent long enough
+        const silentMs = now - session.lastAliveCheck;
+        if (silentMs >= session.stalenessConfig.maxSilenceMs) {
+          this.deps.logger.warn('Session stale — no heartbeat detected', {
+            sessionName: session.handle.sessionName,
+            silentMs,
+          });
+          this.triggerExit(taskId, session, null, 'STALE', session.callbacks);
+        }
       }
-    }, stalenessConfig.checkIntervalMs);
+    }
+  }
+
+  private stopSharedStalenessTimer(): void {
+    if (this.sharedStalenessTimer !== null) {
+      clearInterval(this.sharedStalenessTimer);
+      this.sharedStalenessTimer = null;
+    }
+  }
+
+  /**
+   * Stops the shared timer only when there are no more active sessions.
+   * Called after removing a session from activeSessions.
+   */
+  private stopSharedStalenessTimerIfEmpty(): void {
+    if (this.activeSessions.size === 0) {
+      this.stopSharedStalenessTimer();
+    }
   }
 
   /**
@@ -383,10 +461,7 @@ export class TmuxConnector {
         const sorted = Array.from(session.pendingMessages.entries()).sort(([a], [b]) => a - b);
         for (const [, msg] of sorted) {
           session.pendingMessages.delete(msg.sequence);
-          if (msg.sequence > session.lastDeliveredSeq) {
-            session.lastDeliveredSeq = msg.sequence;
-            session.callbacks.onOutput(msg);
-          }
+          this.deliverSingle(msg, session, session.callbacks);
         }
       }
     } finally {
@@ -414,12 +489,16 @@ export class TmuxConnector {
     this.triggerExit(taskId, session, exitCode, undefined, callbacks);
   }
 
-  private handleMessageFile(filePath: string, session: ActiveSession, callbacks: SpawnCallbacks): void {
+  private async handleMessageFile(filePath: string, session: ActiveSession, callbacks: SpawnCallbacks): Promise<void> {
     if (session.exited) return;
 
     let parsed: unknown;
     try {
-      const raw = this.readFileSyncFn(filePath, 'utf8');
+      // Async read to avoid blocking the event loop on the hot output path.
+      // Sentinel and flush paths remain sync (one-shot on exit).
+      const raw = await this.readFileFn(filePath, 'utf8');
+      // Re-check after async gap — session may have exited during the read
+      if (session.exited) return;
       parsed = JSON.parse(raw);
     } catch {
       this.deps.logger.warn('Failed to parse output message file', { filePath });
@@ -453,6 +532,18 @@ export class TmuxConnector {
   }
 
   /**
+   * Delivers a single message if it is above the lastDeliveredSeq watermark.
+   * Shared by the ordered delivery loop and the force-deliver path in flushPendingFiles
+   * to ensure both paths use the same dedup watermark logic.
+   */
+  private deliverSingle(msg: OutputMessage, session: ActiveSession, callbacks: SpawnCallbacks): void {
+    if (msg.sequence > session.lastDeliveredSeq) {
+      session.lastDeliveredSeq = msg.sequence;
+      callbacks.onOutput(msg);
+    }
+  }
+
+  /**
    * Delivers all consecutive pending messages starting from session.nextExpectedSeq.
    * Uses lastDeliveredSeq as a monotonic watermark to prevent duplicate delivery.
    */
@@ -460,10 +551,7 @@ export class TmuxConnector {
     while (session.pendingMessages.has(session.nextExpectedSeq)) {
       const msg = session.pendingMessages.get(session.nextExpectedSeq)!;
       session.pendingMessages.delete(session.nextExpectedSeq);
-      if (msg.sequence > session.lastDeliveredSeq) {
-        session.lastDeliveredSeq = msg.sequence;
-        callbacks.onOutput(msg);
-      }
+      this.deliverSingle(msg, session, callbacks);
       session.nextExpectedSeq++;
     }
   }
@@ -484,6 +572,8 @@ export class TmuxConnector {
     this.flushPendingFiles(session);
     this.closeSession(session);
     this.activeSessions.delete(taskId);
+    this.stopSharedStalenessTimerIfEmpty();
+    this.deps.hooks.cleanup(session.handle.taskId, session.handle.sessionsDir);
     callbacks.onExit(code, signal);
   }
 
@@ -503,10 +593,6 @@ export class TmuxConnector {
         /* ignore */
       }
       session.messagesWatcher = null;
-    }
-    if (session.stalenessTimer) {
-      clearInterval(session.stalenessTimer);
-      session.stalenessTimer = null;
     }
     // Clear any pending debounce timers
     for (const timer of session.debounceTimers.values()) {
