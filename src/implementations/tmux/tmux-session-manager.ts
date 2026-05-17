@@ -87,7 +87,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
 
     const width = config.width ?? DEFAULT_WIDTH;
     const height = config.height ?? DEFAULT_HEIGHT;
-    const cwdFlag = config.cwd ? ` -c '${config.cwd.replace(/'/g, "'\\''")}'` : '';
+    const cwdFlag = config.cwd ? ` -c '${escapeSingleQuoted(config.cwd)}'` : '';
 
     const spawnResult = this.deps.exec(
       `tmux new-session -d -s ${config.name} -x ${width} -y ${height}${cwdFlag} '${escapeSingleQuoted(config.command)}'`,
@@ -116,11 +116,9 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     const validEntries = Object.entries(allEnv).filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key));
 
     if (validEntries.length > 0) {
-      // Escape value: backslashes first, then single quotes (prevents quoting context breaks)
       const commands = validEntries
         .map(([key, value]) => {
-          const escaped = value.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
-          return `tmux set-environment -t ${config.name} ${key} '${escaped}'`;
+          return `tmux set-environment -t ${config.name} ${key} '${escapeSingleQuoted(value)}'`;
         })
         .join(' && ');
       // Best-effort: session is created; don't roll back for env var failures
