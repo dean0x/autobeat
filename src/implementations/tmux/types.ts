@@ -3,6 +3,9 @@
  * Pure type definitions — no runtime logic
  */
 
+import type { AutobeatError } from '../../core/errors.js';
+import type { Result } from '../../core/result.js';
+
 // ─── Session configuration ───────────────────────────────────────────────────
 
 /**
@@ -31,6 +34,8 @@ export interface TmuxSpawnConfig extends TmuxSessionConfig {
   taskId: string;
   /** Base directory where all session data lives */
   sessionsDir: string;
+  /** Agent type to wrap — must match a supported WrapperConfig agent value */
+  agent: 'claude' | 'codex';
   /** Staleness detection configuration */
   staleness?: Partial<StalenessConfig>;
 }
@@ -178,9 +183,6 @@ export type ExecFn = (cmd: string) => ExecResult;
 
 // ─── Dependency interfaces ────────────────────────────────────────────────────
 
-import type { AutobeatError } from '../../core/errors.js';
-import type { Result } from '../../core/result.js';
-
 /**
  * Interface for session lifecycle operations.
  * DefaultTmuxSessionManager is the canonical implementation; alternative
@@ -193,6 +195,8 @@ export interface TmuxSessionManager {
   isAlive(name: string): Result<boolean, AutobeatError>;
   /** List all running beat-* tmux sessions. Used by the connector's staleness timer and admission control. */
   listSessions(): Result<TmuxSessionInfo[], AutobeatError>;
+  /** Read the value of a named environment variable from a running tmux session. */
+  getSessionEnvironment(name: string, varName: string): Result<string | undefined, AutobeatError>;
 }
 
 /**
