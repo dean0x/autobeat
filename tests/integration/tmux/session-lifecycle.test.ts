@@ -6,7 +6,7 @@
 import { spawnSync } from 'child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DefaultTmuxSessionManager } from '../../../src/implementations/tmux/tmux-session-manager.js';
-import type { ExecFn, ExecResult, TmuxSessionManager } from '../../../src/implementations/tmux/types.js';
+import type { ExecFn, ExecResult } from '../../../src/implementations/tmux/types.js';
 
 const TEST_SESSION = 'beat-integration-lifecycle';
 
@@ -52,7 +52,7 @@ afterAll(() => {
 });
 
 describe('TmuxSessionManager integration — session lifecycle', () => {
-  let manager: TmuxSessionManager;
+  let manager: DefaultTmuxSessionManager;
 
   beforeAll(() => {
     manager = new DefaultTmuxSessionManager({ exec: realExec as ExecFn });

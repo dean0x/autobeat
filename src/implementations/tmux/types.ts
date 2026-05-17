@@ -106,8 +106,8 @@ export interface WrapperConfig {
 export interface WrapperManifest {
   /** Path to the generated wrapper shell script */
   wrapperPath: string;
-  /** Session data root directory */
-  sessionsDir: string;
+  /** Task-specific session directory (sessionsDir/taskId) */
+  sessionDir: string;
   /** Path to the completion sentinel file (.done or .exit) */
   sentinelPath: string;
   /** Directory where output JSON messages are written */
@@ -191,6 +191,8 @@ export interface TmuxSessionManager {
   destroySession(name: string): Result<void, AutobeatError>;
   sendKeys(name: string, keys: string): Result<void, AutobeatError>;
   isAlive(name: string): Result<boolean, AutobeatError>;
+  /** List all running beat-* tmux sessions. Used by the connector's staleness timer and admission control. */
+  listSessions(): Result<TmuxSessionInfo[], AutobeatError>;
 }
 
 /**
@@ -217,6 +219,13 @@ export const SESSION_NAME_PREFIX = 'beat-' as const;
 
 /** Regex that valid session names must match */
 export const SESSION_NAME_REGEX = /^beat-[a-z0-9-]+$/;
+
+/**
+ * Regex that valid task IDs must match.
+ * Task IDs are lowercase alphanumeric with hyphens/underscores (e.g. "task-<uuid>").
+ * This prevents shell injection when the task ID is embedded in generated scripts.
+ */
+export const TASK_ID_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
 
 /** Filename of the success sentinel (exit code 0) */
 export const SENTINEL_DONE = '.done' as const;

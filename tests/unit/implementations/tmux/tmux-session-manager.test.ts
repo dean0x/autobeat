@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorCode } from '../../../../src/core/errors.js';
 import { DefaultTmuxSessionManager } from '../../../../src/implementations/tmux/tmux-session-manager.js';
-import type { ExecFn, ExecResult, TmuxSessionManager } from '../../../../src/implementations/tmux/types.js';
+import type { ExecFn, ExecResult } from '../../../../src/implementations/tmux/types.js';
 
 /** Build an exec mock that returns the given result for any command */
 function mockExec(result: Partial<ExecResult>): ExecFn {
@@ -34,7 +34,7 @@ const validConfig = {
 
 describe('TmuxSessionManager', () => {
   let exec: ReturnType<typeof vi.fn>;
-  let manager: TmuxSessionManager;
+  let manager: DefaultTmuxSessionManager;
 
   beforeEach(() => {
     exec = vi.fn().mockReturnValue({ stdout: '', stderr: '', status: 0 } satisfies ExecResult);
