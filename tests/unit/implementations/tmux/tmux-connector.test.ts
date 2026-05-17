@@ -436,6 +436,149 @@ describe('TmuxConnector — sentinel detection', () => {
   });
 });
 
+// B1: handleSentinel edge cases
+describe('TmuxConnector — handleSentinel edge cases', () => {
+  it('.exit sentinel with unreadable file defaults to exit code 1', async () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const onExit = vi.fn();
+    const readFileSync = vi.fn().mockImplementation(() => {
+      throw new Error('EACCES: permission denied');
+    });
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
+    fireSentinel('.exit');
+
+    expect(onExit).toHaveBeenCalledWith(1, undefined);
+  });
+
+  it('.exit sentinel with non-numeric file content defaults to exit code 1', async () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const onExit = vi.fn();
+    const readFileSync = vi.fn().mockReturnValue('not-a-number');
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
+    fireSentinel('.exit');
+
+    expect(onExit).toHaveBeenCalledWith(1, undefined);
+  });
+
+  it('.done sentinel with unreadable file defaults to exit code 0', async () => {
+    const { watch, fireSentinel } = makeWatchMock();
+    const onExit = vi.fn();
+    const readFileSync = vi.fn().mockImplementation(() => {
+      throw new Error('ENOENT: no such file or directory');
+    });
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit });
+    fireSentinel('.done');
+
+    expect(onExit).toHaveBeenCalledWith(0, undefined);
+  });
+});
+
+// B2: session exited during async read — message must be dropped
+describe('TmuxConnector — session-exited-during-async-read', () => {
+  it('drops message when session exits during async readFile gap', async () => {
+    const { watch, fireMessage, fireSentinel } = makeWatchMock();
+    const onOutput = vi.fn();
+    const onExit = vi.fn();
+    const readFileSync = vi.fn().mockReturnValue('0');
+    // readdirSync returns empty so flush has nothing to deliver
+    const readdirSync = vi.fn().mockReturnValue([]);
+
+    // readFile returns a promise that we resolve manually
+    let resolveRead!: (value: string) => void;
+    const pendingRead = new Promise<string>((resolve) => {
+      resolveRead = resolve;
+    });
+    const readFile = vi.fn().mockReturnValue(pendingRead);
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readFile,
+      readdirSync,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput, onExit });
+
+    // Fire a message — readFile starts but doesn't resolve yet
+    fireMessage('00001-stdout.json');
+
+    // Wait for debounce to fire (so handleMessageFile is called and awaiting read)
+    await sleep(100);
+
+    // Fire the exit sentinel while readFile is still pending
+    fireSentinel('.done');
+    expect(onExit).toHaveBeenCalledWith(0, undefined);
+
+    // Now resolve the pending read — but session.exited is true so message must be dropped
+    resolveRead(JSON.stringify({ sequence: 1, timestamp: 'ts', type: 'stdout', content: 'late' }));
+
+    // Allow the promise chain to settle
+    await sleep(50);
+
+    expect(onOutput).not.toHaveBeenCalled();
+  });
+});
+
+// B4: handleMessageFile readFile rejection
+describe('TmuxConnector — handleMessageFile readFile rejection', () => {
+  it('calls logger.warn when readFile rejects', async () => {
+    const { watch, fireMessage } = makeWatchMock();
+    const logger = makeLogger();
+    const readFile = vi.fn().mockRejectedValue(new Error('ENOENT: file vanished'));
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger,
+      watch,
+      readFile,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    fireMessage('00001-stdout.json');
+
+    // Wait for debounce and the rejection to propagate through the .catch handler
+    await vi.waitFor(() => expect(logger.warn).toHaveBeenCalled(), { timeout: 300 });
+
+    connector.dispose();
+  });
+});
+
 describe('TmuxConnector — watcher error handler', () => {
   it('logs a warning when the sentinel watcher emits an error event', async () => {
     const logger = makeLogger();
@@ -842,11 +985,12 @@ describe('TmuxConnector — flush before exit', () => {
     // Fire message — enters debounce window
     fireMessage('00001-stdout.json');
 
-    // dispose immediately (before debounce settles) — must flush
+    // dispose immediately (before debounce settles) — must flush messages then
+    // signal SHUTDOWN so callers don't leave tasks stuck in RUNNING.
     connector.dispose();
 
     expect(onOutput).toHaveBeenCalledTimes(1);
-    expect(onExit).not.toHaveBeenCalled();
+    expect(onExit).toHaveBeenCalledWith(null, 'SHUTDOWN');
   });
 
   it('destroy flushes pending messages before closing', async () => {

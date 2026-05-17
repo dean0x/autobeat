@@ -163,6 +163,19 @@ describe('TmuxSessionManager', () => {
     expect(result.ok).toBe(true);
   });
 
+  // B6: destroySession error path — non-idempotent failure returns TMUX_SESSION_FAILED
+  it('destroySession returns TMUX_SESSION_FAILED when exec fails with an unrecognized error', () => {
+    exec.mockReturnValue({
+      stdout: '',
+      stderr: 'server exited unexpectedly',
+      status: 1,
+    });
+    const result = manager.destroySession('beat-task-123');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
   it('escapes single quotes in cwd to prevent shell injection', () => {
     manager.createSession({ ...validConfig, cwd: "/home/user/it's a path" });
     const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
@@ -285,6 +298,22 @@ describe('TmuxSessionManager', () => {
     if (!result.ok) return;
     expect(result.value).toHaveLength(1);
     expect(result.value[0]?.name).toBe('beat-task-abc');
+  });
+
+  // B3: malformed lines mixed with valid lines
+  it('listSessions skips malformed lines (fewer than 5 colon-separated parts)', () => {
+    exec.mockReturnValue({
+      // Line 1: valid; Line 2: malformed (only 3 parts); Line 3: valid
+      stdout: 'beat-task-abc:1700000000:0:220:50\nbeat-malformed:bad\nbeat-task-def:1700000001:1:200:40\n',
+      stderr: '',
+      status: 0,
+    });
+    const result = manager.listSessions();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Only the two valid lines should appear; the malformed line is silently skipped
+    expect(result.value).toHaveLength(2);
+    expect(result.value.map((s) => s.name)).toEqual(['beat-task-abc', 'beat-task-def']);
   });
 
   it('listSessions returns ok([]) when no sessions exist', () => {

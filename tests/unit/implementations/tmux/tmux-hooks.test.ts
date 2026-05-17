@@ -119,10 +119,20 @@ describe('TmuxHooks.generateWrapper()', () => {
     expect(content).toContain('while IFS= read -r line');
   });
 
-  it('wrapper uses flock for atomic sequence numbers', () => {
+  // DESIGN DECISION: flock is intentionally absent. The wrapper is a single pipeline
+  // (one writer), so no concurrent callers exist. flock is also unavailable on macOS
+  // without Homebrew, making it a portability hazard with no safety benefit here.
+  // The decision is documented in the NEXT_SEQ_FN JSDoc in tmux-hooks.ts, not embedded
+  // in the generated script.
+  it('wrapper uses simple cat/increment/echo for next_seq (no flock)', () => {
     hooks.generateWrapper(validConfig);
     const [, content] = writeFile.mock.calls[0] as [string, string];
-    expect(content).toContain('flock -x');
+    expect(content).not.toContain('flock -x');
+    // next_seq reads SEQ_FILE with cat, increments, writes back, and prints the value
+    expect(content).toContain('SEQ=$(cat "$SEQ_FILE"');
+    expect(content).toContain('SEQ=$((SEQ + 1))');
+    expect(content).toContain('echo $SEQ > "$SEQ_FILE"');
+    expect(content).toContain('printf "%05d" $SEQ');
   });
 
   it('wrapper writes JSON atomically via .tmp then mv', () => {
@@ -196,20 +206,31 @@ describe('TmuxHooks.generateWrapper()', () => {
     };
     hooks.generateWrapper(configWithTargets);
     const [, content] = writeFile.mock.calls[0] as [string, string];
-    // Both targets should appear as separate send-keys calls
-    const matches = [...content.matchAll(/tmux send-keys -t/g)];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
+    // Both targets should appear as separate load-buffer/paste-buffer blocks
+    const loadMatches = [...content.matchAll(/tmux load-buffer/g)];
+    expect(loadMatches.length).toBeGreaterThanOrEqual(2);
+    const pasteMatches = [...content.matchAll(/tmux paste-buffer/g)];
+    expect(pasteMatches.length).toBeGreaterThanOrEqual(2);
+    expect(content).toContain('beat-a');
+    expect(content).toContain('beat-b');
   });
 
-  it('communication block uses tmux send-keys with the payload', () => {
+  // SECURITY: Communication uses load-buffer/paste-buffer to avoid shell variable
+  // expansion. A $PAYLOAD variable approach would allow agent output containing $()
+  // or backticks to be interpreted by the shell before tmux sees them.
+  it('communication block uses tmux load-buffer and paste-buffer (not send-keys) to forward payload', () => {
     const configWithTargets: WrapperConfig = {
       ...validConfig,
       communicationTargets: ['beat-receiver'],
     };
     hooks.generateWrapper(configWithTargets);
     const [, content] = writeFile.mock.calls[0] as [string, string];
-    expect(content).toContain('send-keys');
-    expect(content).toContain('PAYLOAD');
+    expect(content).toContain('tmux load-buffer');
+    expect(content).toContain('tmux paste-buffer');
+    expect(content).toContain('tmux delete-buffer');
+    // The content is piped directly — no $PAYLOAD variable expansion risk
+    expect(content).not.toContain('send-keys -l "$PAYLOAD"');
+    expect(content).toContain('beat-receiver');
   });
 
   it('returns manifest with all required paths', () => {
@@ -322,5 +343,18 @@ describe('TmuxHooks.cleanup()', () => {
     expect(dirPath).toContain('task-abc');
     expect(opts.recursive).toBe(true);
     expect(opts.force).toBe(true);
+  });
+
+  // B5: cleanup error path — rmSync throws
+  it('returns TMUX_HOOK_FAILED when rmSync throws', () => {
+    const { deps, rmSync } = makeDeps();
+    rmSync.mockImplementation(() => {
+      throw new Error('EACCES: permission denied');
+    });
+    const hooks = new DefaultTmuxHooks(deps);
+    const result = hooks.cleanup('task-abc', '/tmp/sessions');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
   });
 });
