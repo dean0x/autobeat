@@ -227,6 +227,34 @@ describe('TmuxHooks.generateWrapper()', () => {
   });
 });
 
+describe('TmuxHooks — wrapper script jq handling', () => {
+  it('does not contain printf fallback pattern', () => {
+    const { deps, writeFile } = makeDeps();
+    const hooks = new TmuxHooks(deps);
+    hooks.generateWrapper(validConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).not.toContain('printf \'%"');
+    expect(content).not.toContain('|| printf');
+  });
+
+  it('contains command -v jq defense-in-depth guard', () => {
+    const { deps, writeFile } = makeDeps();
+    const hooks = new TmuxHooks(deps);
+    hooks.generateWrapper(validConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).toContain('command -v jq');
+    expect(content).toContain('exit 127');
+  });
+
+  it('uses jq -Rs . for escaping without fallback', () => {
+    const { deps, writeFile } = makeDeps();
+    const hooks = new TmuxHooks(deps);
+    hooks.generateWrapper(validConfig);
+    const [, content] = writeFile.mock.calls[0] as [string, string];
+    expect(content).toContain('jq -Rs .');
+  });
+});
+
 describe('TmuxHooks.cleanup()', () => {
   it('removes session directory recursively', () => {
     const { deps, rmSync } = makeDeps();

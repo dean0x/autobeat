@@ -135,6 +135,8 @@ export interface TmuxInfo {
   version: string;
   /** Path to the tmux binary */
   path: string;
+  /** Path to the jq binary (required for JSON escaping in wrapper scripts) */
+  jqPath: string;
 }
 
 // ─── Staleness detection ──────────────────────────────────────────────────────

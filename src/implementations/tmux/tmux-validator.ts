@@ -83,9 +83,20 @@ export class TmuxValidator {
       );
     }
 
+    const jqResult = this.deps.exec('command -v jq');
+    if (jqResult.status !== 0) {
+      return err(
+        tmuxValidationFailed(
+          'jq is not installed. Install it with: brew install jq (macOS), apt-get install jq (Debian/Ubuntu), or see https://jqlang.github.io/jq/download/',
+          { tool: 'jq' },
+        ),
+      );
+    }
+
     return ok({
       version: `${major}.${minor}`,
       path: 'tmux',
+      jqPath: jqResult.stdout.trim(),
     });
   }
 }

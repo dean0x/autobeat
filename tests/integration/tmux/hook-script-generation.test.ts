@@ -145,6 +145,131 @@ describe('TmuxHooks integration — wrapper script generation', () => {
     }
   });
 
+  it('correctly escapes output containing double quotes via jq', () => {
+    const hooks = makeRealHooks();
+    const sessionsDir = path.join(tmpDir, 'escape-dquote');
+
+    const config: WrapperConfig = {
+      taskId: 'task-dquote',
+      agent: 'claude',
+      sessionsDir,
+      agentCommand: 'printf',
+      agentArgs: ["'%s\\n'", '\'he said "hello"\''],
+    };
+
+    const result = hooks.generateWrapper(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    spawnSync('bash', [result.value.wrapperPath], { encoding: 'utf8', timeout: 10000 });
+
+    const files = fs.readdirSync(result.value.messagesDir).filter((f) => f.endsWith('.json'));
+    expect(files.length).toBeGreaterThan(0);
+    const content = fs.readFileSync(path.join(result.value.messagesDir, files[0]!), 'utf8');
+    const parsed = JSON.parse(content) as { content: string };
+    expect(parsed.content).toBe('he said "hello"');
+  });
+
+  it('correctly escapes output containing backslashes via jq', () => {
+    const hooks = makeRealHooks();
+    const sessionsDir = path.join(tmpDir, 'escape-backslash');
+
+    const config: WrapperConfig = {
+      taskId: 'task-backslash',
+      agent: 'claude',
+      sessionsDir,
+      agentCommand: 'printf',
+      agentArgs: ["'%s\\n'", "'path\\to\\file'"],
+    };
+
+    const result = hooks.generateWrapper(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    spawnSync('bash', [result.value.wrapperPath], { encoding: 'utf8', timeout: 10000 });
+
+    const files = fs.readdirSync(result.value.messagesDir).filter((f) => f.endsWith('.json'));
+    expect(files.length).toBeGreaterThan(0);
+    const content = fs.readFileSync(path.join(result.value.messagesDir, files[0]!), 'utf8');
+    const parsed = JSON.parse(content) as { content: string };
+    expect(parsed.content).toBe('path\\to\\file');
+  });
+
+  it('correctly escapes output containing tabs via jq', () => {
+    const hooks = makeRealHooks();
+    const sessionsDir = path.join(tmpDir, 'escape-tab');
+
+    const config: WrapperConfig = {
+      taskId: 'task-tab',
+      agent: 'claude',
+      sessionsDir,
+      agentCommand: 'printf',
+      agentArgs: ["'%s\\n'", "$'col1\\tcol2'"],
+    };
+
+    const result = hooks.generateWrapper(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    spawnSync('bash', [result.value.wrapperPath], { encoding: 'utf8', timeout: 10000 });
+
+    const files = fs.readdirSync(result.value.messagesDir).filter((f) => f.endsWith('.json'));
+    expect(files.length).toBeGreaterThan(0);
+    const content = fs.readFileSync(path.join(result.value.messagesDir, files[0]!), 'utf8');
+    const parsed = JSON.parse(content) as { content: string };
+    expect(parsed.content).toBe('col1\tcol2');
+  });
+
+  it('handles mixed special characters in a single line', () => {
+    const hooks = makeRealHooks();
+    const sessionsDir = path.join(tmpDir, 'escape-mixed');
+
+    const config: WrapperConfig = {
+      taskId: 'task-mixed',
+      agent: 'claude',
+      sessionsDir,
+      agentCommand: 'printf',
+      agentArgs: ["'%s\\n'", '$\'"q" and \\\\b and \\t\''],
+    };
+
+    const result = hooks.generateWrapper(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    spawnSync('bash', [result.value.wrapperPath], { encoding: 'utf8', timeout: 10000 });
+
+    const files = fs.readdirSync(result.value.messagesDir).filter((f) => f.endsWith('.json'));
+    expect(files.length).toBeGreaterThan(0);
+    const content = fs.readFileSync(path.join(result.value.messagesDir, files[0]!), 'utf8');
+    expect(() => JSON.parse(content)).not.toThrow();
+  });
+
+  it('wrapper exits 127 when jq is not in PATH (defense-in-depth)', () => {
+    const hooks = makeRealHooks();
+    const sessionsDir = path.join(tmpDir, 'no-jq');
+
+    const config: WrapperConfig = {
+      taskId: 'task-nojq',
+      agent: 'claude',
+      sessionsDir,
+      agentCommand: 'echo',
+      agentArgs: ['test'],
+    };
+
+    const result = hooks.generateWrapper(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const run = spawnSync('/bin/bash', [result.value.wrapperPath], {
+      encoding: 'utf8',
+      timeout: 10000,
+      env: { PATH: '/nonexistent', HOME: os.homedir() },
+    });
+
+    expect(run.status).toBe(127);
+    expect(run.stderr).toContain('jq');
+  });
+
   it('sequence numbers increment monotonically across multiple output lines', () => {
     const hooks = makeRealHooks();
     const sessionsDir = path.join(tmpDir, 'seq-increment');

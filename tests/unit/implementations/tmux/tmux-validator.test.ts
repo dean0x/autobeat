@@ -8,8 +8,13 @@ import { ErrorCode } from '../../../../src/core/errors.js';
 import { TmuxValidator } from '../../../../src/implementations/tmux/tmux-validator.js';
 import type { ExecFn, ExecResult } from '../../../../src/implementations/tmux/types.js';
 
-function makeExec(stdout: string, status = 0): ExecFn {
-  return vi.fn().mockReturnValue({ stdout, stderr: '', status } satisfies ExecResult);
+function makeExec(stdout: string, status = 0, jqPath = '/usr/bin/jq'): ExecFn {
+  return vi.fn().mockImplementation((cmd: string) => {
+    if (cmd.includes('jq')) {
+      return { stdout: jqPath, stderr: '', status: 0 } satisfies ExecResult;
+    }
+    return { stdout, stderr: '', status } satisfies ExecResult;
+  });
 }
 
 function makeFailingExec(status = 127): ExecFn {
@@ -18,6 +23,15 @@ function makeFailingExec(status = 127): ExecFn {
     stderr: 'tmux: command not found',
     status,
   } satisfies ExecResult);
+}
+
+function makeExecWithJqMissing(tmuxStdout: string): ExecFn {
+  return vi.fn().mockImplementation((cmd: string) => {
+    if (cmd.includes('jq')) {
+      return { stdout: '', stderr: '', status: 1 } satisfies ExecResult;
+    }
+    return { stdout: tmuxStdout, stderr: '', status: 0 } satisfies ExecResult;
+  });
 }
 
 describe('TmuxValidator', () => {
@@ -47,13 +61,14 @@ describe('TmuxValidator', () => {
     expect(result.error.code).toBe(ErrorCode.TMUX_VALIDATION_FAILED);
   });
 
-  it('returns ok for valid tmux 3.4', () => {
+  it('returns ok for valid tmux 3.4 with jqPath', () => {
     const validator = new TmuxValidator({ exec: makeExec('tmux 3.4') });
     const result = validator.validate();
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.version).toBe('3.4');
     expect(result.value.path).toBe('tmux');
+    expect(result.value.jqPath).toBe('/usr/bin/jq');
   });
 
   it('strips version suffix — "tmux 3.4a" → version "3.4"', () => {
@@ -97,7 +112,7 @@ describe('TmuxValidator', () => {
     expect(r39.value.version).toBe('3.9');
   });
 
-  it('caches validation result — exec is called only once across multiple validate() calls', () => {
+  it('caches validation result — exec is called only twice (tmux + jq) across multiple validate() calls', () => {
     const exec = makeExec('tmux 3.4');
     const validator = new TmuxValidator({ exec });
 
@@ -105,6 +120,52 @@ describe('TmuxValidator', () => {
     validator.validate();
     validator.validate();
 
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  // ─── jq validation ──────────────────────────────────────────────────────────
+
+  it('returns TMUX_VALIDATION_FAILED when jq is not installed', () => {
+    const validator = new TmuxValidator({ exec: makeExecWithJqMissing('tmux 3.4') });
+    const result = validator.validate();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_VALIDATION_FAILED);
+    expect(result.error.message).toContain('jq');
+  });
+
+  it('returns ok with jqPath when both tmux and jq are present', () => {
+    const validator = new TmuxValidator({ exec: makeExec('tmux 3.4', 0, '/opt/homebrew/bin/jq') });
+    const result = validator.validate();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.jqPath).toBe('/opt/homebrew/bin/jq');
+  });
+
+  it('tmux failure short-circuits — jq check never runs', () => {
+    const exec = makeFailingExec(127);
+    const validator = new TmuxValidator({ exec });
+    validator.validate();
     expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('caches jq result along with tmux — both checks run only on first validate()', () => {
+    const exec = makeExec('tmux 3.4');
+    const validator = new TmuxValidator({ exec });
+
+    validator.validate();
+    validator.validate();
+    validator.validate();
+
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('error message for missing jq includes install guidance', () => {
+    const validator = new TmuxValidator({ exec: makeExecWithJqMissing('tmux 3.4') });
+    const result = validator.validate();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('jq');
+    expect(result.error.message).toContain('install');
   });
 });

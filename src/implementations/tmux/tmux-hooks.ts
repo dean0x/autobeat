@@ -64,6 +64,8 @@ function buildWrapperScript(config: WrapperConfig): string {
   return `#!/bin/bash
 set -euo pipefail
 
+command -v jq >/dev/null 2>&1 || { echo "FATAL: jq is required but not found in PATH" >&2; exit 127; }
+
 SESSIONS_DIR="${sessionDir}"
 MESSAGES_DIR="$SESSIONS_DIR/messages"
 SEQ_FILE="$SESSIONS_DIR/.seq"
@@ -87,7 +89,7 @@ set +e
 ${config.agentCommand} ${agentArgs} 2>&1 | while IFS= read -r line; do
   SEQ=$(next_seq)
   TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
-  ESCAPED=$(printf '%s' "$line" | jq -Rs . 2>/dev/null || printf '"%s"' "$line")
+  ESCAPED=$(printf '%s' "$line" | jq -Rs .)
   MSG_FILE="$MESSAGES_DIR/\${SEQ}-stdout.json"
   printf '{"sequence":%d,"timestamp":"%s","type":"stdout","content":%s}\\n' "$SEQ" "$TIMESTAMP" "$ESCAPED" > "\${MSG_FILE}.tmp"
   mv "\${MSG_FILE}.tmp" "$MSG_FILE"
