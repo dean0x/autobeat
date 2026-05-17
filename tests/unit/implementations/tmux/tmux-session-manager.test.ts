@@ -109,6 +109,51 @@ describe('TmuxSessionManager', () => {
     expect(newSession).toContain('-x 200 -y 50');
   });
 
+  it('rejects zero, negative, and non-integer dimensions', () => {
+    // Zero width
+    const zeroWidth = manager.createSession({ ...validConfig, width: 0, height: 50 });
+    expect(zeroWidth.ok).toBe(false);
+    if (zeroWidth.ok) return;
+    expect(zeroWidth.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    expect(zeroWidth.error.message).toContain('Invalid dimensions');
+
+    // Negative height
+    const negHeight = manager.createSession({ ...validConfig, width: 220, height: -1 });
+    expect(negHeight.ok).toBe(false);
+    if (negHeight.ok) return;
+    expect(negHeight.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    expect(negHeight.error.message).toContain('Invalid dimensions');
+
+    // Non-integer width (float)
+    const floatWidth = manager.createSession({ ...validConfig, width: 1.5, height: 50 });
+    expect(floatWidth.ok).toBe(false);
+    if (floatWidth.ok) return;
+    expect(floatWidth.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+    expect(floatWidth.error.message).toContain('Invalid dimensions');
+  });
+
+  it('injectEnvironment silently skips invalid POSIX keys and only injects valid ones', () => {
+    manager.createSession({
+      ...validConfig,
+      env: {
+        VALID_KEY: 'yes',
+        '123-BAD': 'skip-me',
+        'my.key': 'also-skip',
+        _UNDERSCORE_LEAD: 'also-valid',
+      },
+    });
+    const calls: string[] = exec.mock.calls.map((c: [string]) => c[0]);
+    const envCalls = calls.filter((c) => c.includes('set-environment'));
+    // All env commands are batched into one call — join them for assertion
+    const envStr = envCalls.join(' ');
+    // Valid keys must appear
+    expect(envStr).toContain('VALID_KEY');
+    expect(envStr).toContain('_UNDERSCORE_LEAD');
+    // Invalid keys must be absent
+    expect(envStr).not.toContain('123-BAD');
+    expect(envStr).not.toContain('my.key');
+  });
+
   it('enforces concurrent session limit when max sessions are active', () => {
     const limitedManager = new DefaultTmuxSessionManager({
       exec: listSessionsExec(20) as ExecFn,
@@ -362,5 +407,19 @@ describe('TmuxSessionManager', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.code).toBe(ErrorCode.TMUX_SESSION_FAILED);
+  });
+
+  it('getSessionEnvironment correctly parses values that contain "=" characters', () => {
+    // show-environment output: "MY_VAR=abc=def==" — only the first "=" is the key/value separator
+    exec.mockReturnValue({
+      stdout: 'MY_VAR=abc=def==',
+      stderr: '',
+      status: 0,
+    });
+    const result = manager.getSessionEnvironment('beat-task-123', 'MY_VAR');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Full value after the first "=" must be returned, preserving subsequent "=" characters
+    expect(result.value).toBe('abc=def==');
   });
 });
