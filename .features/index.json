@@ -3,7 +3,7 @@
   "features": {
     "tmux-runtime": {
       "name": "Tmux Runtime Layer",
-      "description": "Tmux session management abstraction layer - validator, session manager, hooks/wrapper generation, connector with fs.watch",
+      "description": "Use when implementing tmux-based worker processes, adding new agent types to the tmux runtime, debugging session lifecycle or output capture, tracing the pre-exit flush mechanism, or understanding the fs.watch sentinel completion pattern. Keywords: tmux, session, worker, spawn, wrapper, sentinel, staleness, fs.watch, send-keys, output capture, jq, flushPendingFiles, readdirSync.",
       "directories": [
         "src/implementations/tmux/",
         "tests/unit/implementations/tmux/",
@@ -18,8 +18,28 @@
         "src/implementations/tmux/index.ts",
         "src/core/errors.ts"
       ],
-      "lastUpdated": "2026-05-16T21:12:32.125Z",
-      "createdBy": "implement"
+      "lastUpdated": "2026-05-17T11:18:43.687Z",
+      "createdBy": "devflow-knowledge"
+    },
+    "tmux-infrastructure": {
+      "name": "Tmux Abstraction Layer",
+      "description": "Foundational tmux abstraction layer: TmuxSessionManager, TmuxConnector (fs.watch sentinel/message detection), TmuxHooks (wrapper script generation), TmuxValidator. Phase 1 of 10-phase tmux migration.",
+      "directories": [
+        "src/implementations/tmux",
+        "tests/unit/implementations/tmux",
+        "tests/integration/tmux"
+      ],
+      "referencedFiles": [
+        "src/implementations/tmux/types.ts",
+        "src/implementations/tmux/tmux-connector.ts",
+        "src/implementations/tmux/tmux-hooks.ts",
+        "src/implementations/tmux/tmux-session-manager.ts",
+        "src/implementations/tmux/tmux-validator.ts",
+        "src/implementations/tmux/index.ts",
+        "src/core/errors.ts"
+      ],
+      "lastUpdated": "2026-05-17T08:21:48.450Z",
+      "createdBy": "explore"
     }
   }
 }
