@@ -17,11 +17,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AutobeatError } from '../../core/errors.js';
 import type { Logger } from '../../core/interfaces.js';
-import { err, ok, Result } from '../../core/result.js';
-import { TmuxHooks } from './tmux-hooks.js';
-import { TmuxSessionManager } from './tmux-session-manager.js';
-import { TmuxValidator } from './tmux-validator.js';
-import { DEFAULT_STALENESS_CONFIG, OutputMessage, StalenessConfig, TmuxHandle, TmuxSpawnConfig } from './types.js';
+import { ok, Result } from '../../core/result.js';
+import {
+  DEFAULT_STALENESS_CONFIG,
+  ITmuxHooks,
+  ITmuxSessionManager,
+  ITmuxValidator,
+  OutputMessage,
+  StalenessConfig,
+  TmuxHandle,
+  TmuxSpawnConfig,
+} from './types.js';
 
 /** fs.watch callback signature */
 type WatchFn = typeof fs.watch;
@@ -33,9 +39,9 @@ const DEBOUNCE_MS = 50;
 const MAX_PENDING_MESSAGES = 100;
 
 export interface TmuxConnectorDeps {
-  sessionManager: TmuxSessionManager;
-  hooks: TmuxHooks;
-  validator: TmuxValidator;
+  sessionManager: ITmuxSessionManager;
+  hooks: ITmuxHooks;
+  validator: ITmuxValidator;
   logger: Logger;
   watch: WatchFn;
   /** Injectable readFileSync — defaults to fs.readFileSync; injected in tests */
@@ -56,8 +62,8 @@ interface ActiveSession {
   messagesWatcher: fs.FSWatcher | null;
   stalenessTimer: ReturnType<typeof setInterval> | null;
   exited: boolean;
-  /** Messages delivered so far, keyed by sequence number */
-  deliveredSequences: Set<number>;
+  /** Watermark: highest sequence number successfully delivered (monotonic) */
+  lastDeliveredSeq: number;
   /** Pending messages waiting for gap-filling (sequence ordering) */
   pendingMessages: Map<number, OutputMessage>;
   /** Next expected sequence number */
@@ -111,7 +117,7 @@ export class TmuxConnector {
       messagesWatcher: null,
       stalenessTimer: null,
       exited: false,
-      deliveredSequences: new Set(),
+      lastDeliveredSeq: 0,
       pendingMessages: new Map(),
       nextExpectedSeq: 1,
       debounceTimers: new Map(),
@@ -197,9 +203,19 @@ export class TmuxConnector {
       }
 
       const aliveResult = this.deps.sessionManager.isAlive(session.handle.sessionName);
-      const isAlive = aliveResult.ok && aliveResult.value;
 
-      if (!isAlive) {
+      if (!aliveResult.ok) {
+        // Transient exec error — cannot confirm dead; do not advance or reset timer.
+        // Only confirmed-dead (ok(false)) triggers stale detection.
+        this.deps.logger.warn('isAlive check failed — transient error, skipping', {
+          sessionName: session.handle.sessionName,
+          error: aliveResult.error.message,
+        });
+        return;
+      }
+
+      if (!aliveResult.value) {
+        // Confirmed dead: session is gone. Check if it has been silent long enough.
         const silentMs = Date.now() - lastAliveCheck;
         if (silentMs >= stalenessConfig.maxSilenceMs) {
           this.deps.logger.warn('Session stale — no heartbeat detected', {
@@ -209,6 +225,7 @@ export class TmuxConnector {
           this.triggerExit(config.taskId, session, null, 'STALE', callbacks);
         }
       } else {
+        // Confirmed alive — update the alive timestamp.
         lastAliveCheck = Date.now();
       }
     }, stalenessConfig.checkIntervalMs);
@@ -279,38 +296,34 @@ export class TmuxConnector {
   private handleMessageFile(filePath: string, session: ActiveSession, callbacks: SpawnCallbacks): void {
     if (session.exited) return;
 
-    let parsed: OutputMessage;
+    let parsed: unknown;
     try {
       const raw = this.readFileSyncFn(filePath, 'utf8');
-      parsed = JSON.parse(raw) as OutputMessage;
+      parsed = JSON.parse(raw);
     } catch {
       this.deps.logger.warn('Failed to parse output message file', { filePath });
       return;
     }
 
     if (
-      typeof parsed.sequence !== 'number' ||
-      typeof parsed.timestamp !== 'string' ||
-      typeof parsed.type !== 'string' ||
-      typeof parsed.content !== 'string'
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>).sequence !== 'number' ||
+      typeof (parsed as Record<string, unknown>).timestamp !== 'string' ||
+      typeof (parsed as Record<string, unknown>).type !== 'string' ||
+      typeof (parsed as Record<string, unknown>).content !== 'string'
     ) {
       this.deps.logger.warn('Output message missing required fields', { filePath });
       return;
     }
 
+    const msg = parsed as OutputMessage;
+
     // Buffer for ordered delivery
-    session.pendingMessages.set(parsed.sequence, parsed);
+    session.pendingMessages.set(msg.sequence, msg);
 
     // Deliver all consecutive messages starting from nextExpectedSeq
-    while (session.pendingMessages.has(session.nextExpectedSeq)) {
-      const msg = session.pendingMessages.get(session.nextExpectedSeq)!;
-      session.pendingMessages.delete(session.nextExpectedSeq);
-      if (!session.deliveredSequences.has(msg.sequence)) {
-        session.deliveredSequences.add(msg.sequence);
-        callbacks.onOutput(msg);
-      }
-      session.nextExpectedSeq++;
-    }
+    this.deliverPendingMessages(session, callbacks);
 
     // Safety cap: if too many pending messages accumulate (gap that won't fill),
     // skip ahead and deliver what we have to prevent unbounded memory growth
@@ -322,16 +335,24 @@ export class TmuxConnector {
       // Find the lowest pending sequence and deliver from there
       const sortedSeqs = Array.from(session.pendingMessages.keys()).sort((a, b) => a - b);
       session.nextExpectedSeq = sortedSeqs[0]!;
-      // Re-run the delivery loop
-      while (session.pendingMessages.has(session.nextExpectedSeq)) {
-        const msg = session.pendingMessages.get(session.nextExpectedSeq)!;
-        session.pendingMessages.delete(session.nextExpectedSeq);
-        if (!session.deliveredSequences.has(msg.sequence)) {
-          session.deliveredSequences.add(msg.sequence);
-          callbacks.onOutput(msg);
-        }
-        session.nextExpectedSeq++;
+      // Re-run the delivery loop after resetting the gap
+      this.deliverPendingMessages(session, callbacks);
+    }
+  }
+
+  /**
+   * Delivers all consecutive pending messages starting from session.nextExpectedSeq.
+   * Uses lastDeliveredSeq as a monotonic watermark to prevent duplicate delivery.
+   */
+  private deliverPendingMessages(session: ActiveSession, callbacks: SpawnCallbacks): void {
+    while (session.pendingMessages.has(session.nextExpectedSeq)) {
+      const msg = session.pendingMessages.get(session.nextExpectedSeq)!;
+      session.pendingMessages.delete(session.nextExpectedSeq);
+      if (msg.sequence > session.lastDeliveredSeq) {
+        session.lastDeliveredSeq = msg.sequence;
+        callbacks.onOutput(msg);
       }
+      session.nextExpectedSeq++;
     }
   }
 
