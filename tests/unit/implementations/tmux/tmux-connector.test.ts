@@ -14,6 +14,7 @@ import type {
   TmuxHandle,
   TmuxHooks,
   TmuxSessionManager,
+  TmuxSessionResult,
   TmuxSpawnConfig,
   TmuxValidator,
   WrapperManifest,
@@ -43,6 +44,10 @@ function makeManifest(taskId: string, sessionsDir = '/tmp/sessions'): WrapperMan
 
 function makeHandle(taskId: string, sessionName: string): TmuxHandle {
   return { sessionName, taskId, sessionsDir: '/tmp/sessions' };
+}
+
+function makeSessionResult(taskId: string, sessionName: string): TmuxSessionResult {
+  return { sessionName, taskId };
 }
 
 const BASE_CONFIG: TmuxSpawnConfig = {
@@ -122,7 +127,7 @@ function makeFailingHooks(code = ErrorCode.TMUX_HOOK_FAILED): TmuxHooks {
 
 function makeValidSessionManager(taskId = 'task-abc'): TmuxSessionManager {
   return {
-    createSession: vi.fn().mockReturnValue(ok(makeHandle(taskId, `beat-${taskId}`))),
+    createSession: vi.fn().mockReturnValue(ok(makeSessionResult(taskId, `beat-${taskId}`))),
     destroySession: vi.fn().mockReturnValue(ok(undefined)),
     sendKeys: vi.fn().mockReturnValue(ok(undefined)),
     isAlive: vi.fn().mockReturnValue(ok(true)),
@@ -719,6 +724,74 @@ describe('TmuxConnector — flush before exit', () => {
     expect(onExit).not.toHaveBeenCalled();
   });
 
+  it('flush delivers all messages with sequence gaps ([1, 3, 5])', async () => {
+    const msgs: Record<string, OutputMessage> = {
+      '00001-stdout.json': buildOutputMsg(1),
+      '00003-stdout.json': buildOutputMsg(3),
+      '00005-stdout.json': buildOutputMsg(5),
+    };
+    const readFileSync = makeFlushReadFileSync(msgs);
+    const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json', '00003-stdout.json', '00005-stdout.json']);
+    const { watch, fireSentinel } = makeWatchMock();
+    const received: OutputMessage[] = [];
+    const onExit = vi.fn();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readdirSync,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput: (m) => received.push(m), onExit });
+
+    fireSentinel('.done');
+
+    // All 3 messages delivered despite gaps at 2 and 4
+    expect(received).toHaveLength(3);
+    expect(received.map((m) => m.sequence)).toEqual([1, 3, 5]);
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('flush with gaps skips already-delivered messages', async () => {
+    const msgs: Record<string, OutputMessage> = {
+      '00001-stdout.json': buildOutputMsg(1),
+      '00003-stdout.json': buildOutputMsg(3),
+      '00005-stdout.json': buildOutputMsg(5),
+    };
+    const readFileSync = makeFlushReadFileSync(msgs);
+    const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json', '00003-stdout.json', '00005-stdout.json']);
+    const { watch, fireMessage, fireSentinel } = makeWatchMock();
+    const received: OutputMessage[] = [];
+    const onExit = vi.fn();
+
+    const connector = new TmuxConnector({
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFileSync,
+      readdirSync,
+    });
+
+    await connector.spawn(BASE_CONFIG, { onOutput: (m) => received.push(m), onExit });
+
+    // Deliver msg 1 normally via debounce
+    fireMessage('00001-stdout.json');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(received).toHaveLength(1);
+
+    // Sentinel triggers flush — should deliver only 3 and 5 (not re-deliver 1)
+    fireSentinel('.done');
+
+    expect(received).toHaveLength(3);
+    expect(received.map((m) => m.sequence)).toEqual([1, 3, 5]);
+  });
+
   it('flush is re-entrancy safe — onOutput calling destroy does not loop', async () => {
     const msgs: Record<string, OutputMessage> = {
       '00001-stdout.json': buildOutputMsg(1),
@@ -1023,8 +1096,8 @@ describe('TmuxConnector.dispose()', () => {
       ...makeValidSessionManager(),
       createSession: vi
         .fn()
-        .mockReturnValueOnce(ok(makeHandle('task-abc', 'beat-task-abc')))
-        .mockReturnValueOnce(ok(makeHandle('task-def', 'beat-task-def'))),
+        .mockReturnValueOnce(ok(makeSessionResult('task-abc', 'beat-task-abc')))
+        .mockReturnValueOnce(ok(makeSessionResult('task-def', 'beat-task-def'))),
     } as unknown as TmuxSessionManager;
 
     const hooks = {

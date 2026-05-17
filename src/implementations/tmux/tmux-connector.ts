@@ -380,9 +380,14 @@ export class TmuxConnector {
 
       // Force-deliver any remaining out-of-order messages (no more will arrive)
       if (session.pendingMessages.size > 0) {
-        const sortedSeqs = Array.from(session.pendingMessages.keys()).sort((a, b) => a - b);
-        session.nextExpectedSeq = sortedSeqs[0]!;
-        this.deliverPendingMessages(session, session.callbacks);
+        const sorted = Array.from(session.pendingMessages.entries()).sort(([a], [b]) => a - b);
+        for (const [, msg] of sorted) {
+          session.pendingMessages.delete(msg.sequence);
+          if (msg.sequence > session.lastDeliveredSeq) {
+            session.lastDeliveredSeq = msg.sequence;
+            session.callbacks.onOutput(msg);
+          }
+        }
       }
     } finally {
       session.flushing = false;
