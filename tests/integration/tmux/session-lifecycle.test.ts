@@ -5,7 +5,7 @@
 
 import { spawnSync } from 'child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DefaultTmuxSessionManager } from '../../../src/implementations/tmux/tmux-session-manager.js';
+import { TmuxSessionManager } from '../../../src/implementations/tmux/tmux-session-manager.js';
 import type { ExecFn, ExecResult } from '../../../src/implementations/tmux/types.js';
 
 const TEST_SESSION = 'beat-integration-lifecycle';
@@ -52,10 +52,10 @@ afterAll(() => {
 });
 
 describe('TmuxSessionManager integration — session lifecycle', () => {
-  let manager: DefaultTmuxSessionManager;
+  let manager: TmuxSessionManager;
 
   beforeAll(() => {
-    manager = new DefaultTmuxSessionManager({ exec: realExec as ExecFn });
+    manager = new TmuxSessionManager({ exec: realExec as ExecFn });
   });
 
   it('full lifecycle: create → isAlive → sendKeys → destroy', () => {
@@ -125,7 +125,7 @@ describe('TmuxSessionManager integration — session lifecycle', () => {
   it('concurrent session limit is enforced', () => {
     if (SKIP) return;
 
-    const limitedManager = new DefaultTmuxSessionManager({
+    const limitedManager = new TmuxSessionManager({
       exec: realExec as ExecFn,
       maxConcurrentSessions: 0, // Artificially small limit
     });

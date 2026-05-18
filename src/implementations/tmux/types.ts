@@ -12,9 +12,9 @@
  */
 
 import type { AgentProvider } from '../../core/agents.js';
+import type { TaskId } from '../../core/domain.js';
 import type { AutobeatError } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
-import type { TaskId } from '../../core/domain.js';
 
 /**
  * Agent types supported by the tmux abstraction layer.
@@ -197,14 +197,30 @@ export interface ExecResult {
  */
 export type ExecFn = (cmd: string) => ExecResult;
 
+/**
+ * Injectable fs.watch function signature.
+ * Structural definition matches the Node.js fs.watch overload used by TmuxConnector:
+ * watch(path, options, listener) → FSWatcher.
+ * Defined structurally (like ExecFn) so tests can pass any compatible mock without
+ * importing the real fs module.
+ */
+export type WatchFn = (
+  path: string,
+  options: { persistent: boolean },
+  listener: (eventType: string, filename: string | null) => void,
+) => {
+  close(): void;
+  on(event: string, handler: (...args: unknown[]) => void): void;
+};
+
 // ─── Dependency interfaces ────────────────────────────────────────────────────
 
 /**
- * Interface for session lifecycle operations.
- * DefaultTmuxSessionManager is the canonical implementation; alternative
+ * Port interface for session lifecycle operations.
+ * TmuxSessionManager is the canonical implementation; alternative
  * implementations (test doubles, future adapters) only need to implement these methods.
  */
-export interface TmuxSessionManager {
+export interface TmuxSessionManagerPort {
   createSession(config: TmuxSessionConfig): Result<TmuxSessionResult, AutobeatError>;
   destroySession(name: string): Result<void, AutobeatError>;
   sendKeys(name: string, keys: string): Result<void, AutobeatError>;
@@ -216,19 +232,19 @@ export interface TmuxSessionManager {
 }
 
 /**
- * Interface for wrapper script generation and session directory lifecycle.
- * DefaultTmuxHooks is the canonical implementation.
+ * Port interface for wrapper script generation and session directory lifecycle.
+ * TmuxHooks is the canonical implementation.
  */
-export interface TmuxHooks {
+export interface TmuxHooksPort {
   generateWrapper(config: WrapperConfig): Result<WrapperManifest, AutobeatError>;
   cleanup(taskId: TaskId, sessionsDir: string): Result<void, AutobeatError>;
 }
 
 /**
- * Interface for tmux installation validation.
- * DefaultTmuxValidator is the canonical implementation.
+ * Port interface for tmux installation validation.
+ * TmuxValidator is the canonical implementation.
  */
-export interface TmuxValidator {
+export interface TmuxValidatorPort {
   validate(): Result<TmuxInfo, AutobeatError>;
 }
 

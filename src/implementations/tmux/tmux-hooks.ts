@@ -16,31 +16,14 @@
  */
 
 import * as path from 'path';
+import type { TaskId } from '../../core/domain.js';
 import type { AutobeatError } from '../../core/errors.js';
 import { tmuxHookFailed } from '../../core/errors.js';
-import type { TaskId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
-import type { TmuxHooks, WrapperConfig, WrapperManifest } from './types.js';
-import {
-  SAFE_PATH_REGEX,
-  SENTINEL_DONE,
-  SENTINEL_EXIT,
-  SESSION_NAME_REGEX,
-  TASK_ID_REGEX,
-} from './types.js';
-
-/**
- * Escapes a string for safe embedding inside a bash single-quoted string.
- * The standard shell technique is to end the single-quoted segment, insert an
- * escaped single quote, then re-open the single-quoted segment:
- *   original: it's
- *   embedded:  'it'\''s'
- * Returns the full single-quoted token: '<escaped-content>'.
- */
-function shellSingleQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
+import { singleQuoteToken } from './tmux-shell-utils.js';
+import type { TmuxHooksPort, WrapperConfig, WrapperManifest } from './types.js';
+import { SAFE_PATH_REGEX, SENTINEL_DONE, SENTINEL_EXIT, SESSION_NAME_REGEX, TASK_ID_REGEX } from './types.js';
 
 /** Octal permission bits for session directories and scripts (owner read/write/execute only) */
 const FILE_MODE = 0o700;
@@ -110,15 +93,19 @@ function buildWrapperScript(config: WrapperConfig): string {
   const sessionDir = path.join(config.sessionsDir, config.taskId);
   // SECURITY: Each argument is individually single-quoted to prevent word
   // splitting, glob expansion, and injection of shell metacharacters.
-  const agentArgs = config.agentArgs.map(shellSingleQuote).join(' ');
+  const agentArgs = config.agentArgs.map(singleQuoteToken).join(' ');
   const communicationBlock = buildCommunicationBlock(config);
+  // SECURITY: sessionDir is assembled from sessionsDir and taskId, both validated
+  // against SAFE_PATH_REGEX above. singleQuoteToken is used here for consistency
+  // with all other path/value embeddings in this script.
+  const sessionDirToken = singleQuoteToken(sessionDir);
 
   return `#!/bin/bash
 set -euo pipefail
 
 command -v jq >/dev/null 2>&1 || { echo "FATAL: jq is required but not found in PATH" >&2; exit 127; }
 
-SESSIONS_DIR='${sessionDir}'
+SESSIONS_DIR=${sessionDirToken}
 MESSAGES_DIR="$SESSIONS_DIR/messages"
 SEQ_FILE="$SESSIONS_DIR/.seq"
 
@@ -168,7 +155,7 @@ exit "$EXIT_CODE"
 `;
 }
 
-export class DefaultTmuxHooks implements TmuxHooks {
+export class TmuxHooks implements TmuxHooksPort {
   constructor(private readonly deps: TmuxHooksDeps) {}
 
   /**

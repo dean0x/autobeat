@@ -14,11 +14,12 @@ import type { AutobeatError } from '../../core/errors.js';
 import { tmuxSendKeysFailed, tmuxSessionFailed } from '../../core/errors.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
-import type { ExecFn, TmuxSessionConfig, TmuxSessionInfo, TmuxSessionManager, TmuxSessionResult } from './types.js';
+import { escapeForSingleQuotes } from './tmux-shell-utils.js';
+import type { ExecFn, TmuxSessionConfig, TmuxSessionInfo, TmuxSessionManagerPort, TmuxSessionResult } from './types.js';
 import { MAX_CONCURRENT_SESSIONS, SAFE_PATH_REGEX, SESSION_NAME_REGEX } from './types.js';
 
 /**
- * Dependencies for DefaultTmuxSessionManager.
+ * Dependencies for TmuxSessionManager.
  * Follows the *Deps interface convention used by TmuxConnectorDeps and TmuxHooksDeps.
  */
 export interface TmuxSessionManagerDeps {
@@ -47,15 +48,6 @@ function isSessionNotFound(output: string): boolean {
   return SESSION_NOT_FOUND_PATTERNS.some((p) => lower.includes(p));
 }
 
-/**
- * Escapes a string for embedding inside a single-quoted shell context.
- * Only single quotes need escaping — all other characters are literal
- * inside single quotes per POSIX shell rules.
- */
-function escapeSingleQuoted(value: string): string {
-  return value.replace(/'/g, "'\\''");
-}
-
 function validateSessionName(name: string, operation: string): Result<void, AutobeatError> {
   if (!SESSION_NAME_REGEX.test(name)) {
     return err(
@@ -67,7 +59,7 @@ function validateSessionName(name: string, operation: string): Result<void, Auto
   return ok(undefined);
 }
 
-export class DefaultTmuxSessionManager implements TmuxSessionManager {
+export class TmuxSessionManager implements TmuxSessionManagerPort {
   private readonly maxConcurrentSessions: number;
 
   constructor(private readonly deps: TmuxSessionManagerDeps) {
@@ -109,10 +101,10 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
         }),
       );
     }
-    const cwdFlag = config.cwd ? ` -c '${escapeSingleQuoted(config.cwd)}'` : '';
+    const cwdFlag = config.cwd ? ` -c '${escapeForSingleQuotes(config.cwd)}'` : '';
 
     const spawnResult = this.deps.exec(
-      `tmux new-session -d -s '${config.name}' -x ${width} -y ${height}${cwdFlag} '${escapeSingleQuoted(config.command)}'`,
+      `tmux new-session -d -s '${config.name}' -x ${width} -y ${height}${cwdFlag} '${escapeForSingleQuotes(config.command)}'`,
     );
 
     if (spawnResult.status !== 0) {
@@ -173,7 +165,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
 
     const commands = validEntries
       .map(([key, value]) => {
-        return `tmux set-environment -t '${sessionName}' ${key} '${escapeSingleQuoted(value)}'`;
+        return `tmux set-environment -t '${sessionName}' ${key} '${escapeForSingleQuotes(value)}'`;
       })
       .join(' && ');
     // Best-effort: session is created; don't roll back for env var failures
@@ -216,7 +208,7 @@ export class DefaultTmuxSessionManager implements TmuxSessionManager {
     const nameCheck = validateSessionName(name, 'sendKeys');
     if (!nameCheck.ok) return nameCheck;
 
-    const escaped = escapeSingleQuoted(keys);
+    const escaped = escapeForSingleQuotes(keys);
     const result = this.deps.exec(`tmux send-keys -t '${name}' -l '${escaped}'`);
 
     if (result.status !== 0) {
