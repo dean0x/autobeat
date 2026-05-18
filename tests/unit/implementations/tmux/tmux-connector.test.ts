@@ -12,17 +12,30 @@ import { TmuxConnector, type TmuxConnectorDeps } from '../../../../src/implement
 import type {
   OutputMessage,
   TmuxHandle,
-  TmuxHooks,
-  TmuxSessionManager,
+  TmuxHooksPort,
+  TmuxSessionManagerPort,
   TmuxSessionResult,
   TmuxSpawnConfig,
-  TmuxValidator,
+  TmuxValidatorPort,
   WrapperManifest,
 } from '../../../../src/implementations/tmux/types.js';
 import { MAX_CONCURRENT_SESSIONS } from '../../../../src/implementations/tmux/types.js';
 import { sleep } from '../../../fixtures/test-data.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Default no-op stubs for the three required fs deps.
+ * Tests that need specific behaviour should override by passing their own mocks,
+ * which shadow these defaults in the spread: { ...makeDefaultFsDeps(), readFileSync: myMock }.
+ */
+function makeDefaultFsDeps(): Pick<TmuxConnectorDeps, 'readFileSync' | 'readFile' | 'readdirSync'> {
+  return {
+    readFileSync: vi.fn().mockReturnValue(''),
+    readFile: vi.fn().mockResolvedValue(''),
+    readdirSync: vi.fn().mockReturnValue([]),
+  };
+}
 
 function makeLogger(): Logger {
   return {
@@ -138,33 +151,33 @@ function makeWatchMock(): {
   };
 }
 
-function makeValidValidator(): TmuxValidator {
+function makeValidValidator(): TmuxValidatorPort {
   return {
     validate: vi.fn().mockReturnValue(ok({ version: '3.4', path: 'tmux', jqPath: '/usr/bin/jq' })),
-  } as unknown as TmuxValidator;
+  } as unknown as TmuxValidatorPort;
 }
 
-function makeFailingValidator(): TmuxValidator {
+function makeFailingValidator(): TmuxValidatorPort {
   return {
     validate: vi.fn().mockReturnValue(err(new AutobeatError(ErrorCode.TMUX_VALIDATION_FAILED, 'tmux not found'))),
-  } as unknown as TmuxValidator;
+  } as unknown as TmuxValidatorPort;
 }
 
-function makeValidHooks(taskId = 'task-abc'): TmuxHooks {
+function makeValidHooks(taskId = 'task-abc'): TmuxHooksPort {
   return {
     generateWrapper: vi.fn().mockReturnValue(ok(makeManifest(taskId))),
     cleanup: vi.fn().mockReturnValue(ok(undefined)),
-  } as unknown as TmuxHooks;
+  } as unknown as TmuxHooksPort;
 }
 
-function makeFailingHooks(code = ErrorCode.TMUX_HOOK_FAILED): TmuxHooks {
+function makeFailingHooks(code = ErrorCode.TMUX_HOOK_FAILED): TmuxHooksPort {
   return {
     generateWrapper: vi.fn().mockReturnValue(err(new AutobeatError(code, 'hook failed'))),
     cleanup: vi.fn().mockReturnValue(ok(undefined)),
-  } as unknown as TmuxHooks;
+  } as unknown as TmuxHooksPort;
 }
 
-function makeValidSessionManager(taskId = 'task-abc'): TmuxSessionManager {
+function makeValidSessionManager(taskId = 'task-abc'): TmuxSessionManagerPort {
   return {
     createSession: vi.fn().mockReturnValue(ok(makeSessionResult(taskId, `beat-${taskId}`))),
     destroySession: vi.fn().mockReturnValue(ok(undefined)),
@@ -172,10 +185,10 @@ function makeValidSessionManager(taskId = 'task-abc'): TmuxSessionManager {
     isAlive: vi.fn().mockReturnValue(ok(true)),
     listSessions: vi.fn().mockReturnValue(ok([])),
     getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
-  } as unknown as TmuxSessionManager;
+  } as unknown as TmuxSessionManagerPort;
 }
 
-function makeFailingSessionManager(code = ErrorCode.TMUX_SESSION_FAILED): TmuxSessionManager {
+function makeFailingSessionManager(code = ErrorCode.TMUX_SESSION_FAILED): TmuxSessionManagerPort {
   return {
     createSession: vi.fn().mockReturnValue(err(new AutobeatError(code, 'session create failed'))),
     destroySession: vi.fn().mockReturnValue(ok(undefined)),
@@ -183,7 +196,7 @@ function makeFailingSessionManager(code = ErrorCode.TMUX_SESSION_FAILED): TmuxSe
     isAlive: vi.fn().mockReturnValue(ok(false)),
     listSessions: vi.fn().mockReturnValue(ok([])),
     getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
-  } as unknown as TmuxSessionManager;
+  } as unknown as TmuxSessionManagerPort;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -196,6 +209,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator,
       sessionManager,
       hooks,
@@ -214,6 +228,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks,
@@ -230,6 +245,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -246,6 +262,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -261,6 +278,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -277,6 +295,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -295,6 +314,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -312,6 +332,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeFailingHooks(),
@@ -341,6 +362,7 @@ describe('TmuxConnector.spawn()', () => {
     const logger = makeLogger();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -364,6 +386,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeFailingSessionManager(),
       hooks: makeValidHooks(),
@@ -381,6 +404,7 @@ describe('TmuxConnector.spawn()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -410,6 +434,7 @@ describe('TmuxConnector — sentinel detection', () => {
     const readFileSync = vi.fn().mockReturnValue('0');
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -430,6 +455,7 @@ describe('TmuxConnector — sentinel detection', () => {
     const readFileSync = vi.fn().mockReturnValue('1');
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -450,6 +476,7 @@ describe('TmuxConnector — sentinel detection', () => {
     const readFileSync = vi.fn().mockReturnValue('0');
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -484,6 +511,7 @@ describe('TmuxConnector — null filename guard (macOS fs.watch edge case)', () 
     const onOutput = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -519,6 +547,7 @@ describe('TmuxConnector — null filename guard (macOS fs.watch edge case)', () 
     const onOutput = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -551,6 +580,7 @@ describe('TmuxConnector — handleSentinel edge cases', () => {
     });
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -571,6 +601,7 @@ describe('TmuxConnector — handleSentinel edge cases', () => {
     const readFileSync = vi.fn().mockReturnValue('not-a-number');
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -593,6 +624,7 @@ describe('TmuxConnector — handleSentinel edge cases', () => {
     });
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -626,6 +658,7 @@ describe('TmuxConnector — session-exited-during-async-read', () => {
     const readFile = vi.fn().mockReturnValue(pendingRead);
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -666,6 +699,7 @@ describe('TmuxConnector — handleMessageFile readFile rejection', () => {
     const readFile = vi.fn().mockRejectedValue(new Error('ENOENT: file vanished'));
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -690,6 +724,7 @@ describe('TmuxConnector — watcher error handler', () => {
     const { watch, triggerError } = makeWatchWithErrorCapture(1);
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -713,6 +748,7 @@ describe('TmuxConnector — watcher error handler', () => {
     const { watch, triggerError } = makeWatchWithErrorCapture(2);
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -745,6 +781,7 @@ describe('TmuxConnector — output handling', () => {
     const onOutput = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -767,6 +804,7 @@ describe('TmuxConnector — output handling', () => {
     const onOutput = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -796,6 +834,7 @@ describe('TmuxConnector — output handling', () => {
     const logger = makeLogger();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -820,6 +859,7 @@ describe('TmuxConnector — output handling', () => {
     const logger = makeLogger();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -856,6 +896,7 @@ describe('TmuxConnector — output handling', () => {
     const received: OutputMessage[] = [];
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -894,6 +935,7 @@ describe('TmuxConnector — output handling', () => {
     const onOutput = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -945,6 +987,7 @@ describe('TmuxConnector — output handling', () => {
     const { watch, fireMessage } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1009,6 +1052,7 @@ describe('TmuxConnector — flush before exit', () => {
     const onExit = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1051,6 +1095,7 @@ describe('TmuxConnector — flush before exit', () => {
     const onExit = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1088,6 +1133,7 @@ describe('TmuxConnector — flush before exit', () => {
     const onExit = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1121,6 +1167,7 @@ describe('TmuxConnector — flush before exit', () => {
     const onExit = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1158,6 +1205,7 @@ describe('TmuxConnector — flush before exit', () => {
     const onExit = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1192,6 +1240,7 @@ describe('TmuxConnector — flush before exit', () => {
     const onExit = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1234,6 +1283,7 @@ describe('TmuxConnector — flush before exit', () => {
     });
 
     connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1263,6 +1313,7 @@ describe('TmuxConnector — flush before exit', () => {
     const onExit = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1290,6 +1341,7 @@ describe('TmuxConnector — MIN_CHECK_INTERVAL_MS floor clamp', () => {
     // maxSilenceMs=0 so any tick past the first check triggers STALE
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -1298,7 +1350,9 @@ describe('TmuxConnector — MIN_CHECK_INTERVAL_MS floor clamp', () => {
     });
 
     connector.spawn(
-      { ...BASE_CONFIG, staleness: { checkIntervalMs: 100, maxSilenceMs: 0 } },
+      // checkIntervalMs=100 gets clamped to 1000ms; maxSilenceMs=500 so any tick
+      // past the first check (at 1001ms) has silentMs=1001 >= 500 → STALE
+      { ...BASE_CONFIG, staleness: { checkIntervalMs: 100, maxSilenceMs: 500 } },
       { onOutput: vi.fn(), onExit },
     );
 
@@ -1314,6 +1368,90 @@ describe('TmuxConnector — MIN_CHECK_INTERVAL_MS floor clamp', () => {
   });
 });
 
+describe('TmuxConnector — staleness config validation (rel-conn-staleness)', () => {
+  it('returns err when maxSilenceMs is 0', () => {
+    const { watch } = makeWatchMock();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    const result = connector.spawn(
+      { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 0 } },
+      { onOutput: vi.fn(), onExit: vi.fn() },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('maxSilenceMs');
+  });
+
+  it('returns err when maxSilenceMs is negative', () => {
+    const { watch } = makeWatchMock();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    const result = connector.spawn(
+      { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: -500 } },
+      { onOutput: vi.fn(), onExit: vi.fn() },
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('succeeds when maxSilenceMs is positive (even when less than checkIntervalMs)', () => {
+    const { watch } = makeWatchMock();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    // maxSilenceMs < checkIntervalMs is valid — the first tick will detect stale
+    // on the first check interval that exceeds maxSilenceMs
+    const result = connector.spawn(
+      { ...BASE_CONFIG, staleness: { checkIntervalMs: 5000, maxSilenceMs: 1000 } },
+      { onOutput: vi.fn(), onExit: vi.fn() },
+    );
+    expect(result.ok).toBe(true);
+    connector.dispose();
+  });
+
+  it('succeeds when maxSilenceMs is positive and exceeds checkIntervalMs', () => {
+    const { watch } = makeWatchMock();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    const result = connector.spawn(
+      { ...BASE_CONFIG, staleness: { checkIntervalMs: 1000, maxSilenceMs: 5000 } },
+      { onOutput: vi.fn(), onExit: vi.fn() },
+    );
+    expect(result.ok).toBe(true);
+    connector.dispose();
+  });
+});
+
 describe('TmuxConnector — staleness detection', () => {
   it('fires onExit(null, STALE) when session is dead for maxSilenceMs', () => {
     vi.useFakeTimers();
@@ -1325,6 +1463,7 @@ describe('TmuxConnector — staleness detection', () => {
     const sessionManager = makeValidSessionManager();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -1352,6 +1491,7 @@ describe('TmuxConnector — staleness detection', () => {
     const onExit = vi.fn();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -1387,6 +1527,7 @@ describe('TmuxConnector — staleness detection', () => {
     );
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -1423,6 +1564,7 @@ describe('TmuxConnector — staleness detection', () => {
     (sessionManager.listSessions as ReturnType<typeof vi.fn>).mockReturnValue(ok([{ name: `beat-task-abc` }]));
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -1452,7 +1594,7 @@ describe('TmuxConnector — staleness detection', () => {
       .fn()
       .mockImplementation(() => ({ close: vi.fn(), on: vi.fn() })) as unknown as TmuxConnectorDeps['watch'];
 
-    const sessionManager: TmuxSessionManager = {
+    const sessionManager: TmuxSessionManagerPort = {
       createSession: vi
         .fn()
         .mockReturnValueOnce(ok(makeSessionResult('task-fast', 'beat-task-fast')))
@@ -1463,17 +1605,18 @@ describe('TmuxConnector — staleness detection', () => {
       // listSessions is called once per shared timer tick — count calls to verify interval
       listSessions: vi.fn().mockReturnValue(ok([{ name: 'beat-task-fast' }, { name: 'beat-task-slow' }])),
       getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
-    } as unknown as TmuxSessionManager;
+    } as unknown as TmuxSessionManagerPort;
 
-    const hooks: TmuxHooks = {
+    const hooks: TmuxHooksPort = {
       generateWrapper: vi
         .fn()
         .mockReturnValueOnce(ok(makeManifest('task-fast')))
         .mockReturnValueOnce(ok(makeManifest('task-slow'))),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
-    } as unknown as TmuxHooks;
+    } as unknown as TmuxHooksPort;
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks,
@@ -1525,6 +1668,7 @@ describe('TmuxConnector — staleness detection', () => {
     const readFileSync = vi.fn().mockReturnValue('0');
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1554,6 +1698,7 @@ describe('TmuxConnector.destroy()', () => {
     const { watch, sentinelWatcher } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1572,6 +1717,7 @@ describe('TmuxConnector.destroy()', () => {
     const { watch, messageWatcher } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1593,6 +1739,7 @@ describe('TmuxConnector.destroy()', () => {
       const onExit = vi.fn();
 
       const connector = new TmuxConnector({
+        ...makeDefaultFsDeps(),
         validator: makeValidValidator(),
         sessionManager: makeValidSessionManager(),
         hooks: makeValidHooks(),
@@ -1626,6 +1773,7 @@ describe('TmuxConnector.destroy()', () => {
     const sessionManager = makeValidSessionManager();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -1645,6 +1793,7 @@ describe('TmuxConnector.destroy()', () => {
     const hooks = makeValidHooks();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks,
@@ -1663,6 +1812,7 @@ describe('TmuxConnector.destroy()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1686,6 +1836,7 @@ describe('TmuxConnector.sendKeys() / isAlive()', () => {
     const sessionManager = makeValidSessionManager();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -1715,6 +1866,7 @@ describe('TmuxConnector — triggerExit destroySession failure', () => {
     );
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -1746,6 +1898,7 @@ describe('TmuxConnector.dispose()', () => {
     );
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks: makeValidHooks(),
@@ -1767,6 +1920,7 @@ describe('TmuxConnector.dispose()', () => {
     const hooks = makeValidHooks();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks,
@@ -1797,7 +1951,7 @@ describe('TmuxConnector.dispose()', () => {
         .fn()
         .mockReturnValueOnce(ok(makeSessionResult('task-abc', 'beat-task-abc')))
         .mockReturnValueOnce(ok(makeSessionResult('task-def', 'beat-task-def'))),
-    } as unknown as TmuxSessionManager;
+    } as unknown as TmuxSessionManagerPort;
 
     const hooks = {
       generateWrapper: vi
@@ -1805,9 +1959,10 @@ describe('TmuxConnector.dispose()', () => {
         .mockReturnValueOnce(ok(makeManifest('task-abc')))
         .mockReturnValueOnce(ok(makeManifest('task-def'))),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
-    } as unknown as TmuxHooks;
+    } as unknown as TmuxHooksPort;
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks,
@@ -1833,6 +1988,7 @@ describe('TmuxConnector.getActiveHandles()', () => {
     const { watch } = makeWatchMock();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -1850,11 +2006,11 @@ describe('TmuxConnector.getActiveHandles()', () => {
 });
 
 describe('TmuxConnector — loggedCleanup failure logging', () => {
-  function makeCleanupFailingHooks(taskId = 'task-abc'): TmuxHooks {
+  function makeCleanupFailingHooks(taskId = 'task-abc'): TmuxHooksPort {
     return {
       generateWrapper: vi.fn().mockReturnValue(ok(makeManifest(taskId))),
       cleanup: vi.fn().mockReturnValue(err(new AutobeatError(ErrorCode.TMUX_HOOK_FAILED, 'cleanup error'))),
-    } as unknown as TmuxHooks;
+    } as unknown as TmuxHooksPort;
   }
 
   it('logs warning when hooks.cleanup fails during spawn rollback (createSession fails)', () => {
@@ -1863,6 +2019,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
     const hooks = makeCleanupFailingHooks();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeFailingSessionManager(),
       hooks,
@@ -1886,6 +2043,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
     const hooks = makeCleanupFailingHooks();
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks,
@@ -1914,6 +2072,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
     const readFileSync = vi.fn().mockReturnValue('0');
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks,
@@ -1941,7 +2100,7 @@ describe('TmuxConnector — loggedCleanup failure logging', () => {
 describe('TmuxConnector — connector-level session cap (rel-conn-1)', () => {
   it('returns error when spawn is called with MAX_CONCURRENT_SESSIONS sessions already active', () => {
     // Session manager that accepts any taskId, hooks that return a manifest per taskId
-    const sessionManager: TmuxSessionManager = {
+    const sessionManager: TmuxSessionManagerPort = {
       createSession: vi
         .fn()
         .mockImplementation((cfg: TmuxSpawnConfig) => ok(makeSessionResult(cfg.taskId, `beat-${cfg.taskId}`))),
@@ -1950,12 +2109,12 @@ describe('TmuxConnector — connector-level session cap (rel-conn-1)', () => {
       isAlive: vi.fn().mockReturnValue(ok(true)),
       listSessions: vi.fn().mockReturnValue(ok([])),
       getSessionEnvironment: vi.fn().mockReturnValue(ok(undefined)),
-    } as unknown as TmuxSessionManager;
+    } as unknown as TmuxSessionManagerPort;
 
-    const hooks: TmuxHooks = {
+    const hooks: TmuxHooksPort = {
       generateWrapper: vi.fn().mockImplementation((cfg: { taskId: string }) => ok(makeManifest(cfg.taskId))),
       cleanup: vi.fn().mockReturnValue(ok(undefined)),
-    } as unknown as TmuxHooks;
+    } as unknown as TmuxHooksPort;
 
     // Use a watch that always returns a no-op watcher so we can spawn many sessions
     let watchCallCount = 0;
@@ -1965,6 +2124,7 @@ describe('TmuxConnector — connector-level session cap (rel-conn-1)', () => {
     }) as unknown as TmuxConnectorDeps['watch'];
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager,
       hooks,
@@ -2008,6 +2168,7 @@ describe('TmuxConnector — watcher exited guard (rel-conn-2)', () => {
     const readFileSync = vi.fn().mockReturnValue('0');
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -2059,6 +2220,7 @@ describe('TmuxConnector — deliverPendingMessages explicit bound (rel-conn-3)',
     });
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),
@@ -2108,6 +2270,7 @@ describe('TmuxConnector — flushPendingFiles filename-based skip (perf-conn-1)'
     const readdirSync = vi.fn().mockReturnValue(['00001-stdout.json', '00002-stdout.json', '00003-stdout.json']);
 
     const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
       validator: makeValidValidator(),
       sessionManager: makeValidSessionManager(),
       hooks: makeValidHooks(),

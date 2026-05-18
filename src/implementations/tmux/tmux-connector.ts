@@ -15,12 +15,11 @@
  * per-session for independent stale detection.
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
+import type { TaskId } from '../../core/domain.js';
 import type { AutobeatError } from '../../core/errors.js';
 import { tmuxSessionFailed } from '../../core/errors.js';
 import type { Logger } from '../../core/interfaces.js';
-import type { TaskId } from '../../core/domain.js';
 import type { Result } from '../../core/result.js';
 import { err, ok } from '../../core/result.js';
 import type {
@@ -29,17 +28,13 @@ import type {
   StalenessConfig,
   TmuxConnectorPort,
   TmuxHandle,
-  TmuxHooks,
-  TmuxSessionManager,
+  TmuxHooksPort,
+  TmuxSessionManagerPort,
   TmuxSpawnConfig,
-  TmuxValidator,
+  TmuxValidatorPort,
+  WatchFn,
 } from './types.js';
 import { DEFAULT_STALENESS_CONFIG, MAX_CONCURRENT_SESSIONS } from './types.js';
-
-export type { SpawnCallbacks } from './types.js';
-
-/** fs.watch callback signature */
-type WatchFn = typeof fs.watch;
 
 /** Debounce window for suppressing fs.watch double-fires (ms) */
 const DEBOUNCE_MS = 50;
@@ -78,17 +73,17 @@ function isOutputMessage(value: unknown): value is OutputMessage {
 }
 
 export interface TmuxConnectorDeps {
-  sessionManager: TmuxSessionManager;
-  hooks: TmuxHooks;
-  validator: TmuxValidator;
+  sessionManager: TmuxSessionManagerPort;
+  hooks: TmuxHooksPort;
+  validator: TmuxValidatorPort;
   logger: Logger;
   watch: WatchFn;
-  /** Injectable readFileSync — used for sentinel and flush paths (one-shot, sync); injected in tests */
-  readFileSync?: (path: string, encoding: BufferEncoding) => string;
-  /** Injectable readFile — used for the hot-path message handler (async, non-blocking); injected in tests */
-  readFile?: (path: string, encoding: BufferEncoding) => Promise<string>;
-  /** Injectable readdirSync — defaults to fs.readdirSync; injected in tests */
-  readdirSync?: (dirPath: string) => string[];
+  /** Sync file read — used for sentinel and flush paths (one-shot, sync) */
+  readFileSync: (path: string, encoding: BufferEncoding) => string;
+  /** Async file read — used for the hot-path message handler (non-blocking) */
+  readFile: (path: string, encoding: BufferEncoding) => Promise<string>;
+  /** Sync directory listing — used for flush path */
+  readdirSync: (dirPath: string) => string[];
 }
 
 /**
@@ -96,8 +91,8 @@ export interface TmuxConnectorDeps {
  */
 interface ActiveSession {
   handle: TmuxHandle;
-  sentinelWatcher: fs.FSWatcher | null;
-  messagesWatcher: fs.FSWatcher | null;
+  sentinelWatcher: ReturnType<WatchFn> | null;
+  messagesWatcher: ReturnType<WatchFn> | null;
   /** Per-session staleness config — used by the shared staleness timer */
   stalenessConfig: StalenessConfig;
   /** Timestamp of last confirmed-alive check — used for maxSilenceMs threshold */
@@ -121,17 +116,10 @@ interface ActiveSession {
 
 export class TmuxConnector implements TmuxConnectorPort {
   private readonly activeSessions = new Map<TaskId, ActiveSession>();
-  private readonly readFileSyncFn: (path: string, encoding: BufferEncoding) => string;
-  private readonly readFileFn: (path: string, encoding: BufferEncoding) => Promise<string>;
-  private readonly readdirSyncFn: (dirPath: string) => string[];
   /** Shared staleness timer — started on first spawn, stopped when activeSessions empties */
   private sharedStalenessTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly deps: TmuxConnectorDeps) {
-    this.readFileSyncFn = deps.readFileSync ?? ((p, enc) => fs.readFileSync(p, enc));
-    this.readFileFn = deps.readFile ?? ((p, enc) => fs.promises.readFile(p, enc));
-    this.readdirSyncFn = deps.readdirSync ?? ((p) => fs.readdirSync(p));
-  }
+  constructor(private readonly deps: TmuxConnectorDeps) {}
 
   /**
    * Spawns a new managed tmux session.
@@ -195,7 +183,9 @@ export class TmuxConnector implements TmuxConnectorPort {
     // 3. Start fs.watch watchers (BEFORE session launch to avoid race).
     // Build a temporary session object with a placeholder sessionName so watchers
     // can be registered before createSession() returns the real name.
-    const session = this.buildActiveSession(config, config.name, messagesDir, callbacks);
+    const activeSessionResult = this.buildActiveSession(config, config.name, messagesDir, callbacks);
+    if (!activeSessionResult.ok) return activeSessionResult;
+    const session = activeSessionResult.value;
     this.startWatchers(session, sessionDir);
 
     // 4. Create tmux session running the wrapper
@@ -335,6 +325,10 @@ export class TmuxConnector implements TmuxConnectorPort {
    * Constructs the initial ActiveSession state object.
    * Extracted from spawn() to keep spawn() under 50 lines.
    *
+   * Returns err() when the caller-supplied staleness config is invalid:
+   *   - maxSilenceMs must be > 0 (zero or negative would declare every session
+   *     immediately stale, since silentMs >= 0 is always true)
+   *
    * @param sessionName - The tmux session name to embed in the handle. Callers
    *   may pass a placeholder before createSession() returns the real name, then
    *   overwrite session.handle.sessionName afterward.
@@ -344,12 +338,19 @@ export class TmuxConnector implements TmuxConnectorPort {
     sessionName: string,
     messagesDir: string,
     callbacks: SpawnCallbacks,
-  ): ActiveSession {
+  ): Result<ActiveSession, AutobeatError> {
     const stalenessConfig: StalenessConfig = {
       ...DEFAULT_STALENESS_CONFIG,
       ...config.staleness,
     };
-    return {
+
+    if (stalenessConfig.maxSilenceMs <= 0) {
+      return err(
+        tmuxSessionFailed('spawn', `staleness.maxSilenceMs must be positive (got ${stalenessConfig.maxSilenceMs})`),
+      );
+    }
+
+    return ok({
       handle: {
         sessionName,
         taskId: config.taskId,
@@ -367,7 +368,7 @@ export class TmuxConnector implements TmuxConnectorPort {
       messagesDir,
       callbacks,
       flushing: false,
-    };
+    });
   }
 
   /**
@@ -402,11 +403,12 @@ export class TmuxConnector implements TmuxConnectorPort {
         },
       );
       // Log watcher errors but do not throw or trigger exit — staleness timer handles detection
-      session.sentinelWatcher.on('error', (watchErr: Error) => {
+      session.sentinelWatcher.on('error', (...args: unknown[]) => {
+        const watchErr = args[0];
         this.deps.logger.warn('Sentinel watcher error — degrading to staleness detection', {
           taskId,
           sessionDir,
-          error: watchErr.message,
+          error: watchErr instanceof Error ? watchErr.message : String(watchErr),
         });
       });
     } catch {
@@ -422,44 +424,55 @@ export class TmuxConnector implements TmuxConnectorPort {
    */
   private startMessagesWatcher(session: ActiveSession): void {
     const { taskId } = session.handle;
-    const { messagesDir, callbacks } = session;
+    const { messagesDir } = session;
     try {
       session.messagesWatcher = this.deps.watch(
         messagesDir,
         { persistent: false },
-        (_eventType: string, filename: string | null) => {
-          if (!filename || session.exited) return;
-          // Ignore temp files and non-JSON
-          if (filename.endsWith('.tmp')) return;
-          if (!filename.endsWith('.json')) return;
-
-          // Debounce double-fires for the same file
-          const existing = session.debounceTimers.get(filename);
-          if (existing) clearTimeout(existing);
-          const timer = setTimeout(() => {
-            session.debounceTimers.delete(filename);
-            this.handleMessageFile(path.join(messagesDir, filename), session, callbacks).catch((err: unknown) => {
-              this.deps.logger.warn('handleMessageFile threw unexpectedly', {
-                taskId,
-                filename,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            });
-          }, DEBOUNCE_MS);
-          session.debounceTimers.set(filename, timer);
-        },
+        (_eventType: string, filename: string | null) => this.onMessageFileChange(session, filename),
       );
       // Log watcher errors but do not throw or trigger exit — staleness timer handles detection
-      session.messagesWatcher.on('error', (watchErr: Error) => {
+      session.messagesWatcher.on('error', (...args: unknown[]) => {
+        const watchErr = args[0];
         this.deps.logger.warn('Messages watcher error — degrading to staleness detection', {
           taskId,
           messagesDir,
-          error: watchErr.message,
+          error: watchErr instanceof Error ? watchErr.message : String(watchErr),
         });
       });
     } catch {
       this.deps.logger.warn('Failed to start messages watcher', { taskId, messagesDir });
     }
+  }
+
+  /**
+   * Called by the messages watcher for each file-change event.
+   * Validates the filename, debounces double-fires, and schedules async message delivery.
+   * Extracted from startMessagesWatcher to flatten nesting and keep the watcher setup readable.
+   */
+  private onMessageFileChange(session: ActiveSession, filename: string | null): void {
+    if (!filename || session.exited) return;
+    // Ignore temp files and non-JSON
+    if (filename.endsWith('.tmp')) return;
+    if (!filename.endsWith('.json')) return;
+
+    const { taskId } = session.handle;
+    const { messagesDir, callbacks } = session;
+
+    // Debounce double-fires for the same file
+    const existing = session.debounceTimers.get(filename);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      session.debounceTimers.delete(filename);
+      this.handleMessageFile(path.join(messagesDir, filename), session, callbacks).catch((err: unknown) => {
+        this.deps.logger.warn('handleMessageFile threw unexpectedly', {
+          taskId,
+          filename,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, DEBOUNCE_MS);
+    session.debounceTimers.set(filename, timer);
   }
 
   /**
@@ -515,20 +528,8 @@ export class TmuxConnector implements TmuxConnectorPort {
 
     for (const [taskId, session] of this.activeSessions) {
       if (session.exited) continue;
-
-      if (aliveSessions.has(session.handle.sessionName)) {
-        // Confirmed alive — reset the silent-since timestamp
-        session.lastAliveCheck = now;
-      } else {
-        // Confirmed dead — check if silent long enough
-        const silentMs = now - session.lastAliveCheck;
-        if (silentMs >= session.stalenessConfig.maxSilenceMs) {
-          this.deps.logger.warn('Session stale — no heartbeat detected', {
-            sessionName: session.handle.sessionName,
-            silentMs,
-          });
-          staleEntries.push([taskId, session]);
-        }
+      if (this.checkSessionStaleness(session, aliveSessions, now)) {
+        staleEntries.push([taskId, session]);
       }
     }
 
@@ -540,6 +541,29 @@ export class TmuxConnector implements TmuxConnectorPort {
     if (staleEntries.length > 0) {
       this.restartSharedStalenessTimer();
     }
+  }
+
+  /**
+   * Checks a single session's staleness against the alive-sessions set.
+   * If alive, resets lastAliveCheck. If dead long enough, logs a warning and returns true.
+   * Returns true when the session should be marked stale, false otherwise.
+   */
+  private checkSessionStaleness(session: ActiveSession, aliveSessions: Set<string>, now: number): boolean {
+    if (aliveSessions.has(session.handle.sessionName)) {
+      // Confirmed alive — reset the silent-since timestamp
+      session.lastAliveCheck = now;
+      return false;
+    }
+    // Confirmed dead — check if silent long enough
+    const silentMs = now - session.lastAliveCheck;
+    if (silentMs >= session.stalenessConfig.maxSilenceMs) {
+      this.deps.logger.warn('Session stale — no heartbeat detected', {
+        sessionName: session.handle.sessionName,
+        silentMs,
+      });
+      return true;
+    }
+    return false;
   }
 
   private stopSharedStalenessTimer(): void {
@@ -566,7 +590,7 @@ export class TmuxConnector implements TmuxConnectorPort {
 
       let files: string[];
       try {
-        files = this.readdirSyncFn(session.messagesDir);
+        files = this.deps.readdirSync(session.messagesDir);
       } catch {
         // Directory may not exist (no output written) — nothing to flush
         files = [];
@@ -608,7 +632,7 @@ export class TmuxConnector implements TmuxConnectorPort {
   private parseMessageFile(filePath: string): OutputMessage | null {
     let parsed: unknown;
     try {
-      const raw = this.readFileSyncFn(filePath, 'utf8');
+      const raw = this.deps.readFileSync(filePath, 'utf8');
       parsed = JSON.parse(raw);
     } catch {
       this.deps.logger.warn('Flush: failed to parse message file', { filePath });
@@ -639,7 +663,7 @@ export class TmuxConnector implements TmuxConnectorPort {
     let code: number | null = null;
     try {
       const sentinelPath = path.join(sessionDir, filename);
-      const raw = this.readFileSyncFn(sentinelPath, 'utf8').trim();
+      const raw = this.deps.readFileSync(sentinelPath, 'utf8').trim();
       code = parseInt(raw, 10);
       if (isNaN(code)) code = null;
     } catch {
@@ -658,7 +682,7 @@ export class TmuxConnector implements TmuxConnectorPort {
     try {
       // Async read to avoid blocking the event loop on the hot output path.
       // Sentinel and flush paths remain sync (one-shot on exit).
-      const raw = await this.readFileFn(filePath, 'utf8');
+      const raw = await this.deps.readFile(filePath, 'utf8');
       // Re-check after async gap — session may have exited during the read
       if (session.exited) return;
       parsed = JSON.parse(raw);
