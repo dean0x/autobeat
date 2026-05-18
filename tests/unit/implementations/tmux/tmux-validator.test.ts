@@ -171,4 +171,40 @@ describe('TmuxValidator', () => {
     expect(result.error.message).toContain('jq');
     expect(result.error.message).toContain('install');
   });
+
+  // DESIGN DECISION: only success results are cached; failures are returned immediately
+  // so a transient error (e.g. PATH not yet set) does not permanently poison the validator.
+  it('failure result is NOT cached — a second validate() re-runs exec even after the first fails', () => {
+    // First call: tmux not found (status 127). Second call: tmux present (status 0).
+    const exec = vi
+      .fn()
+      .mockImplementationOnce((_cmd: string) => ({
+        stdout: '',
+        stderr: 'tmux: command not found',
+        status: 127,
+      }))
+      .mockImplementation((cmd: string) => {
+        if (cmd.includes('jq')) return { stdout: '/usr/bin/jq', stderr: '', status: 0 };
+        if (cmd === 'command -v tmux') return { stdout: '/usr/bin/tmux', stderr: '', status: 0 };
+        return { stdout: 'tmux 3.4', stderr: '', status: 0 };
+      }) as ExecFn;
+
+    const validator = new TmuxValidator({ exec });
+
+    const first = validator.validate();
+    expect(first.ok).toBe(false);
+
+    // If failures were cached, exec would still have been called only once.
+    // The failure is NOT cached, so exec runs again on the second call.
+    const second = validator.validate();
+    expect(second.ok).toBe(true);
+
+    // exec was called at least twice — once for the first (failed) validate(),
+    // and at least once more for the second (successful) validate().
+    expect(exec).toHaveBeenCalledTimes(
+      // first call: 1 exec (tmux -V fails, short-circuits before jq)
+      // second call: 3 execs (tmux -V + command -v jq + command -v tmux)
+      4,
+    );
+  });
 });

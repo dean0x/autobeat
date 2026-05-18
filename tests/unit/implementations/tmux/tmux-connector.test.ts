@@ -1850,6 +1850,29 @@ describe('TmuxConnector.sendKeys() / isAlive()', () => {
     connector.sendKeys(spawnResult.value, 'hello');
     expect(sessionManager.sendKeys).toHaveBeenCalledWith(spawnResult.value.sessionName, 'hello');
   });
+
+  it('isAlive delegates to sessionManager.isAlive and returns its result', () => {
+    const { watch } = makeWatchMock();
+    const sessionManager = makeValidSessionManager();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+    });
+
+    const spawnResult = connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    if (!spawnResult.ok) return;
+
+    const result = connector.isAlive(spawnResult.value);
+    expect(sessionManager.isAlive).toHaveBeenCalledWith(spawnResult.value.sessionName);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBe(true);
+  });
 });
 
 // test-conn-2: triggerExit destroySession failure logging
@@ -1980,6 +2003,73 @@ describe('TmuxConnector.dispose()', () => {
 
     connector.dispose();
     expect(connector.getActiveHandles()).toHaveLength(0);
+  });
+
+  it('dispose resilience — one failing teardown does not prevent remaining sessions from being cleaned up', () => {
+    const { watch: watch1 } = makeWatchMock();
+    const { watch: watch2 } = makeWatchMock();
+
+    let watchCallCount = 0;
+    const combinedWatch = vi.fn().mockImplementation((...args: Parameters<typeof watch1>) => {
+      watchCallCount++;
+      if (watchCallCount <= 2) return watch1(...args);
+      return watch2(...args);
+    }) as unknown as TmuxConnectorDeps['watch'];
+
+    const sessionManager = {
+      ...makeValidSessionManager(),
+      createSession: vi
+        .fn()
+        .mockReturnValueOnce(ok(makeSessionResult('task-abc', 'beat-task-abc')))
+        .mockReturnValueOnce(ok(makeSessionResult('task-def', 'beat-task-def'))),
+      // First destroySession call throws — simulates catastrophic teardown failure
+      destroySession: vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error('catastrophic teardown failure');
+        })
+        .mockReturnValue(ok(undefined)),
+    } as unknown as TmuxSessionManagerPort;
+
+    const hooks = {
+      generateWrapper: vi
+        .fn()
+        .mockReturnValueOnce(ok(makeManifest('task-abc')))
+        .mockReturnValueOnce(ok(makeManifest('task-def'))),
+      cleanup: vi.fn().mockReturnValue(ok(undefined)),
+    } as unknown as TmuxHooksPort;
+
+    const logger = makeLogger();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager,
+      hooks,
+      logger,
+      watch: combinedWatch,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput: vi.fn(), onExit: vi.fn() });
+    connector.spawn(
+      { ...BASE_CONFIG, name: 'beat-task-def', taskId: 'task-def' },
+      { onOutput: vi.fn(), onExit: vi.fn() },
+    );
+
+    expect(connector.getActiveHandles()).toHaveLength(2);
+
+    // dispose() must not throw even though the first session's teardown throws
+    expect(() => connector.dispose()).not.toThrow();
+
+    // Second session's destroySession must still have been called
+    expect(sessionManager.destroySession).toHaveBeenCalledTimes(2);
+
+    // Error was logged for the failing session
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('Dispose: unhandled error during session teardown'),
+      expect.any(Error),
+      expect.objectContaining({ taskId: 'task-abc' }),
+    );
   });
 });
 

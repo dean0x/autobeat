@@ -93,6 +93,40 @@ describe('TmuxHooks integration — wrapper script generation', () => {
     expect(run.status).toBe(0);
   });
 
+  it('wrapper creates .exit sentinel (not .done) when agent exits non-zero', () => {
+    const hooks = makeRealHooks();
+    const sessionsDir = path.join(tmpDir, 'exit-nonzero');
+
+    // 'bash' with '-c' and 'exit 1' reliably exits with code 1
+    const config: WrapperConfig = {
+      taskId: 'task-exitcode',
+      agent: 'claude',
+      sessionsDir,
+      agentCommand: 'bash',
+      agentArgs: ['-c', 'exit 1'],
+    };
+
+    const result = hooks.generateWrapper(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    spawnSync('bash', [result.value.wrapperPath], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+
+    const donePath = path.join(result.value.sessionDir, '.done');
+    const exitPath = path.join(result.value.sessionDir, '.exit');
+
+    // Failure path: .exit sentinel must be present, .done must be absent
+    expect(fs.existsSync(exitPath)).toBe(true);
+    expect(fs.existsSync(donePath)).toBe(false);
+
+    // The .exit file must contain the non-zero exit code
+    const exitCode = parseInt(fs.readFileSync(exitPath, 'utf8').trim(), 10);
+    expect(exitCode).toBe(1);
+  });
+
   it('wrapper captures stdout output to JSON files in messages/', () => {
     const hooks = makeRealHooks();
     const sessionsDir = path.join(tmpDir, 'output-capture');

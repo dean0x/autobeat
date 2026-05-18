@@ -405,4 +405,28 @@ describe('TmuxHooks.cleanup()', () => {
     if (result.ok) return;
     expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
   });
+
+  // SECURITY: taskId and sessionsDir are validated before being passed to path.join + rmSync.
+  // These tests guard cleanup() as a public interface independent of generateWrapper() tests.
+  it('returns TMUX_HOOK_FAILED for invalid taskId (shell metacharacters)', () => {
+    const { deps, rmSync } = makeDeps();
+    const hooks = new TmuxHooks(deps);
+    const result = hooks.cleanup('$(evil)', '/tmp/sessions');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+    // rmSync must not have been called — validation rejects before filesystem access
+    expect(rmSync).not.toHaveBeenCalled();
+  });
+
+  it('returns TMUX_HOOK_FAILED for unsafe sessionsDir (path traversal attempt)', () => {
+    const { deps, rmSync } = makeDeps();
+    const hooks = new TmuxHooks(deps);
+    const result = hooks.cleanup('task-abc', '/tmp/../etc');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe(ErrorCode.TMUX_HOOK_FAILED);
+    // rmSync must not have been called — validation rejects before filesystem access
+    expect(rmSync).not.toHaveBeenCalled();
+  });
 });
