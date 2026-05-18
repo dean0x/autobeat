@@ -4,31 +4,14 @@
  * Skips gracefully if tmux is not available.
  */
 
-import { execSync, spawnSync } from 'child_process';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TmuxSessionManager } from '../../../src/implementations/tmux/tmux-session-manager.js';
-import type { ExecFn, ExecResult } from '../../../src/implementations/tmux/types.js';
-
-function realExec(cmd: string): ExecResult {
-  const result = spawnSync('sh', ['-c', cmd], { encoding: 'utf8' });
-  return {
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    status: result.status ?? 1,
-  };
-}
-
-function isTmuxAvailable(): boolean {
-  const r = realExec('which tmux && tmux -V');
-  if (r.status !== 0) return false;
-  const match = /(\d+)\.(\d+)/.exec(r.stdout);
-  if (!match) return false;
-  const [, major] = match;
-  return parseInt(major!, 10) >= 3;
-}
+import type { ExecFn } from '../../../src/implementations/tmux/types.js';
+import { isTmuxAvailable, realExec } from './test-helpers.js';
 
 const tmuxAvailable = isTmuxAvailable();
 

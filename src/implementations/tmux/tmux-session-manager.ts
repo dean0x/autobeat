@@ -75,7 +75,14 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
     const nameCheck = validateSessionName(config.name, 'create');
     if (!nameCheck.ok) return nameCheck;
 
-    // Enforce concurrent session limit
+    // DESIGN DECISION: Dual-gate session cap — this is the authoritative tmux-level gate.
+    // TmuxConnector performs a fast in-memory check (O(1)) before calling here; that check
+    // avoids the ~5-20ms exec cost of listSessions() on every spawn when the cap is already
+    // reached. This listSessions() call is the ground-truth gate: it reflects the actual
+    // state of tmux and guards against crash-recovery scenarios where the connector's
+    // in-memory map was reset (process restart) but tmux sessions are still alive. The
+    // defense-in-depth duplication is intentional — removing either gate would create a
+    // window where the limit could be bypassed.
     const listResult = this.listSessions();
     if (!listResult.ok) return listResult;
     if (listResult.value.length >= this.maxConcurrentSessions) {

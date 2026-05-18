@@ -820,6 +820,33 @@ describe('TmuxConnector — output handling', () => {
     connector.dispose();
   });
 
+  it('ignores non-JSON files in message watcher — readFile is not called', async () => {
+    // Guard: if (!filename.endsWith('.json')) return — verify readFile is never invoked
+    // for files with non-JSON extensions (e.g. .log, .txt).
+    const readFile = vi.fn();
+    const { watch, fireMessage } = makeWatchMock();
+    const onOutput = vi.fn();
+
+    const connector = new TmuxConnector({
+      ...makeDefaultFsDeps(),
+      validator: makeValidValidator(),
+      sessionManager: makeValidSessionManager(),
+      hooks: makeValidHooks(),
+      logger: makeLogger(),
+      watch,
+      readFile,
+    });
+
+    connector.spawn(BASE_CONFIG, { onOutput, onExit: vi.fn() });
+    fireMessage('00001-stdout.log');
+    fireMessage('00002-stdout.txt');
+
+    await sleep(100);
+    expect(readFile).not.toHaveBeenCalled();
+    expect(onOutput).not.toHaveBeenCalled();
+    connector.dispose();
+  });
+
   it('silently drops messages with an invalid type field — onOutput not called', async () => {
     // A structurally valid JSON object whose 'type' is not in ['stdout','stderr','result']
     const invalidTypeMsg = {
@@ -910,14 +937,14 @@ describe('TmuxConnector — output handling', () => {
       onExit: vi.fn(),
     });
 
-    // Fire in reverse order — wait for debounce and async read between each
+    // Fire all three files out of sequence. Each file has its own independent debounce
+    // timer, so the connector reads all three concurrently and buffers by sequence number.
+    // vi.waitFor() replaces real sleep(80) to avoid CI timing fragility on slow machines.
     fireMessage('00003-stdout.json');
-    await sleep(80);
     fireMessage('00001-stdout.json');
-    await sleep(80);
     fireMessage('00002-stdout.json');
-    await sleep(80);
 
+    await vi.waitFor(() => expect(received).toHaveLength(3), { timeout: 500 });
     expect(received.map((m) => m.sequence)).toEqual([1, 2, 3]);
     connector.dispose();
   });

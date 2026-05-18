@@ -142,8 +142,13 @@ export class TmuxConnector implements TmuxConnectorPort {
       return err(tmuxSessionFailed('spawn', `session for taskId '${config.taskId}' already exists`));
     }
 
-    // Guard: enforce connector-level session cap so injected session managers cannot
-    // bypass the MAX_CONCURRENT_SESSIONS limit enforced at the tmux level.
+    // DESIGN DECISION: Dual-gate session cap — connector (in-memory) + session-manager (tmux-level).
+    // This check is the fast in-memory gate: it's O(1) and avoids the ~5-20ms exec cost of a
+    // tmux list-sessions call on every spawn when the cap has already been reached. The
+    // session-manager gate below is the authoritative tmux-level check and also guards against
+    // crash-recovery scenarios where the connector's in-memory map was reset (e.g. process
+    // restart) but tmux sessions are still alive. Both checks are necessary; neither alone
+    // provides complete protection.
     if (this.activeSessions.size >= MAX_CONCURRENT_SESSIONS) {
       return err(tmuxSessionFailed('spawn', `connector session limit reached (${MAX_CONCURRENT_SESSIONS})`));
     }

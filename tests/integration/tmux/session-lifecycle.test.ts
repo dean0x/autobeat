@@ -3,39 +3,12 @@
  * Skips gracefully if tmux is not available or is below minimum version.
  */
 
-import { spawnSync } from 'child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TmuxSessionManager } from '../../../src/implementations/tmux/tmux-session-manager.js';
-import type { ExecFn, ExecResult } from '../../../src/implementations/tmux/types.js';
+import type { ExecFn } from '../../../src/implementations/tmux/types.js';
+import { isTmuxAvailable, realExec } from './test-helpers.js';
 
 const TEST_SESSION = 'beat-integration-lifecycle';
-
-function realExec(cmd: string): ExecResult {
-  const result = spawnSync('sh', ['-c', cmd], { encoding: 'utf8' });
-  return {
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    status: result.status ?? 1,
-  };
-}
-
-function isTmuxAvailable(): boolean {
-  // Check binary exists and is >= 3.0
-  const versionCheck = realExec('which tmux && tmux -V');
-  if (versionCheck.status !== 0) return false;
-  const match = /(\d+)\.(\d+)/.exec(versionCheck.stdout);
-  if (!match) return false;
-  const [, major, minor] = match;
-  const versionOk = (parseInt(major!, 10) === 3 && parseInt(minor!, 10) >= 0) || parseInt(major!, 10) > 3;
-  if (!versionOk) return false;
-
-  // Verify the tmux server is functional — not just that the binary exists.
-  // CI environments may have the binary installed but no server/socket support.
-  // Attempt to create and immediately destroy a probe session.
-  const probeSession = 'beat-ci-probe';
-  const probe = realExec(`tmux new-session -d -s ${probeSession} 'exit' && tmux kill-session -t ${probeSession}`);
-  return probe.status === 0;
-}
 
 let SKIP = false;
 
