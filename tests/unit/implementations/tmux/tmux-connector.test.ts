@@ -61,8 +61,8 @@ function makeHandle(taskId: string, sessionName: string): TmuxHandle {
   return { sessionName, taskId, sessionsDir: '/tmp/sessions' };
 }
 
-function makeSessionResult(taskId: string, sessionName: string): TmuxSessionResult {
-  return { sessionName, taskId };
+function makeSessionResult(sessionName: string): TmuxSessionResult {
+  return { sessionName };
 }
 
 const BASE_CONFIG: TmuxSpawnConfig = {
@@ -179,7 +179,7 @@ function makeFailingHooks(code = ErrorCode.TMUX_HOOK_FAILED): TmuxHooksPort {
 
 function makeValidSessionManager(taskId = 'task-abc'): TmuxSessionManagerPort {
   return {
-    createSession: vi.fn().mockReturnValue(ok(makeSessionResult(taskId, `beat-${taskId}`))),
+    createSession: vi.fn().mockReturnValue(ok(makeSessionResult(`beat-${taskId}`))),
     destroySession: vi.fn().mockReturnValue(ok(undefined)),
     sendKeys: vi.fn().mockReturnValue(ok(undefined)),
     isAlive: vi.fn().mockReturnValue(ok(true)),
@@ -1624,8 +1624,8 @@ describe('TmuxConnector — staleness detection', () => {
     const sessionManager: TmuxSessionManagerPort = {
       createSession: vi
         .fn()
-        .mockReturnValueOnce(ok(makeSessionResult('task-fast', 'beat-task-fast')))
-        .mockReturnValueOnce(ok(makeSessionResult('task-slow', 'beat-task-slow'))),
+        .mockReturnValueOnce(ok(makeSessionResult('beat-task-fast')))
+        .mockReturnValueOnce(ok(makeSessionResult('beat-task-slow'))),
       destroySession: vi.fn().mockReturnValue(ok(undefined)),
       sendKeys: vi.fn().mockReturnValue(ok(undefined)),
       isAlive: vi.fn().mockReturnValue(ok(true)),
@@ -1999,8 +1999,8 @@ describe('TmuxConnector.dispose()', () => {
       ...makeValidSessionManager(),
       createSession: vi
         .fn()
-        .mockReturnValueOnce(ok(makeSessionResult('task-abc', 'beat-task-abc')))
-        .mockReturnValueOnce(ok(makeSessionResult('task-def', 'beat-task-def'))),
+        .mockReturnValueOnce(ok(makeSessionResult('beat-task-abc')))
+        .mockReturnValueOnce(ok(makeSessionResult('beat-task-def'))),
     } as unknown as TmuxSessionManagerPort;
 
     const hooks = {
@@ -2047,8 +2047,8 @@ describe('TmuxConnector.dispose()', () => {
       ...makeValidSessionManager(),
       createSession: vi
         .fn()
-        .mockReturnValueOnce(ok(makeSessionResult('task-abc', 'beat-task-abc')))
-        .mockReturnValueOnce(ok(makeSessionResult('task-def', 'beat-task-def'))),
+        .mockReturnValueOnce(ok(makeSessionResult('beat-task-abc')))
+        .mockReturnValueOnce(ok(makeSessionResult('beat-task-def'))),
       // First destroySession call throws — simulates catastrophic teardown failure
       destroySession: vi
         .fn()
@@ -2220,7 +2220,7 @@ describe('TmuxConnector — connector-level session cap (rel-conn-1)', () => {
     const sessionManager: TmuxSessionManagerPort = {
       createSession: vi
         .fn()
-        .mockImplementation((cfg: TmuxSpawnConfig) => ok(makeSessionResult(cfg.taskId, `beat-${cfg.taskId}`))),
+        .mockImplementation((cfg: TmuxSpawnConfig) => ok(makeSessionResult(`beat-${cfg.taskId}`))),
       destroySession: vi.fn().mockReturnValue(ok(undefined)),
       sendKeys: vi.fn().mockReturnValue(ok(undefined)),
       isAlive: vi.fn().mockReturnValue(ok(true)),

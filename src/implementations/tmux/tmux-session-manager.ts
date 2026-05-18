@@ -171,11 +171,8 @@ export class TmuxSessionManager implements TmuxSessionManagerPort {
     if (validEntries.length === 0) return true;
 
     const commands = validEntries
-      .map(([key, value]) => {
-        return `tmux set-environment -t '${sessionName}' ${key} '${escapeForSingleQuotes(value)}'`;
-      })
+      .map(([key, value]) => `tmux set-environment -t '${sessionName}' ${key} '${escapeForSingleQuotes(value)}'`)
       .join(' && ');
-    // Best-effort: session is created; don't roll back for env var failures
     const result = this.deps.exec(commands);
     return result.status === 0;
   }

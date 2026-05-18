@@ -159,27 +159,35 @@ export class TmuxHooks implements TmuxHooksPort {
   constructor(private readonly deps: TmuxHooksDeps) {}
 
   /**
+   * Validates taskId and sessionsDir — both are shared preconditions for
+   * generateWrapper() and cleanup(). Returns err() on the first violation.
+   * SECURITY: Both values are embedded in generated scripts or used in recursive
+   * filesystem operations; invalid values could cause shell injection or path traversal.
+   */
+  private validateBaseInputs(
+    operation: string,
+    taskId: string,
+    sessionsDir: string,
+  ): Result<void, AutobeatError> {
+    if (!TASK_ID_REGEX.test(taskId)) {
+      return err(tmuxHookFailed(operation, `invalid taskId: ${taskId}`, { taskId }));
+    }
+    if (!SAFE_PATH_REGEX.test(sessionsDir)) {
+      return err(
+        tmuxHookFailed(operation, `unsafe sessionsDir path: ${sessionsDir}`, { taskId, sessionsDir }),
+      );
+    }
+    return ok(undefined);
+  }
+
+  /**
    * Generates the session directory tree and wrapper script for a task.
    * Returns a manifest with all artifact paths.
    */
   generateWrapper(config: WrapperConfig): Result<WrapperManifest, AutobeatError> {
-    // SECURITY: Validate taskId and sessionsDir before embedding in generated scripts.
-    // Both are embedded in the wrapper script; invalid values could cause shell injection.
-    if (!TASK_ID_REGEX.test(config.taskId)) {
-      return err(
-        tmuxHookFailed('generateWrapper', `invalid taskId: ${config.taskId}`, {
-          taskId: config.taskId,
-        }),
-      );
-    }
-    if (!SAFE_PATH_REGEX.test(config.sessionsDir)) {
-      return err(
-        tmuxHookFailed('generateWrapper', `unsafe sessionsDir path: ${config.sessionsDir}`, {
-          taskId: config.taskId,
-          sessionsDir: config.sessionsDir,
-        }),
-      );
-    }
+    const baseCheck = this.validateBaseInputs('generateWrapper', config.taskId, config.sessionsDir);
+    if (!baseCheck.ok) return baseCheck;
+
     // SECURITY: Validate agentCommand against SAFE_PATH_REGEX before embedding
     // in the generated script. Reject-bad-input is preferred over escaping for
     // command paths — a command with shell metacharacters is almost certainly a
@@ -224,24 +232,14 @@ export class TmuxHooks implements TmuxHooksPort {
 
   /**
    * Removes the session directory and all its contents.
-   *
-   * SECURITY: taskId and sessionsDir are validated before being passed to
-   * path.join + rmSync(recursive:true, force:true). This mirrors the validation
-   * in generateWrapper() and ensures cleanup() is safe as a public interface
-   * method — callers cannot pass an arbitrary path through this entry point.
+   * taskId and sessionsDir are validated via validateBaseInputs before being
+   * passed to path.join + rmSync(recursive:true) — callers cannot introduce
+   * shell metacharacters or path traversal through this entry point.
    */
   cleanup(taskId: TaskId, sessionsDir: string): Result<void, AutobeatError> {
-    if (!TASK_ID_REGEX.test(taskId)) {
-      return err(tmuxHookFailed('cleanup', `invalid taskId: ${taskId}`, { taskId }));
-    }
-    if (!SAFE_PATH_REGEX.test(sessionsDir)) {
-      return err(
-        tmuxHookFailed('cleanup', `unsafe sessionsDir path: ${sessionsDir}`, {
-          taskId,
-          sessionsDir,
-        }),
-      );
-    }
+    const baseCheck = this.validateBaseInputs('cleanup', taskId, sessionsDir);
+    if (!baseCheck.ok) return baseCheck;
+
     const sessionDir = path.join(sessionsDir, taskId);
     try {
       this.deps.rmSync(sessionDir, { recursive: true, force: true });

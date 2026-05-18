@@ -15,9 +15,7 @@ function mockExec(result: Partial<ExecResult>): ExecFn {
 
 /** Build a session-list exec that simulates N active beat-* sessions */
 function listSessionsExec(count: number, otherCalls: Partial<ExecResult> = {}): ExecFn {
-  let callCount = 0;
   return vi.fn().mockImplementation((cmd: string) => {
-    callCount++;
     if (cmd.includes('list-sessions')) {
       const lines = Array.from({ length: count }, (_, i) => `beat-task-${i}:${Date.now()}:0:220:50`).join('\n');
       return { stdout: lines, stderr: '', status: count === 0 ? 1 : 0 };

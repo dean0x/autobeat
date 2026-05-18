@@ -263,15 +263,7 @@ export class TmuxConnector implements TmuxConnectorPort {
     // Notify the caller so the task does not remain stuck in RUNNING after an
     // explicit destroy request. Use 'DESTROYED' to distinguish from natural
     // exits ('STALE', 'SHUTDOWN') and sentinel-driven exits.
-    try {
-      session.callbacks.onExit(null, 'DESTROYED');
-    } catch (cbErr: unknown) {
-      this.deps.logger.error(
-        'destroy: onExit callback threw',
-        cbErr instanceof Error ? cbErr : new Error(String(cbErr)),
-        { taskId: handle.taskId },
-      );
-    }
+    this.safeCallOnExit('destroy', session, null, 'DESTROYED');
     return destroyResult;
   }
 
@@ -312,15 +304,7 @@ export class TmuxConnector implements TmuxConnectorPort {
         }
         this.loggedCleanup('dispose', session.handle.taskId, session.handle.sessionsDir);
         // Notify callers so tasks don't remain stuck in RUNNING after shutdown.
-        try {
-          session.callbacks.onExit(null, 'SHUTDOWN');
-        } catch (cbErr: unknown) {
-          this.deps.logger.error(
-            'dispose: onExit callback threw',
-            cbErr instanceof Error ? cbErr : new Error(String(cbErr)),
-            { taskId: session.handle.taskId },
-          );
-        }
+        this.safeCallOnExit('dispose', session, null, 'SHUTDOWN');
       } catch (teardownErr: unknown) {
         this.deps.logger.error(
           'Dispose: unhandled error during session teardown',
@@ -843,13 +827,27 @@ export class TmuxConnector implements TmuxConnectorPort {
       });
     }
     this.loggedCleanup('triggerExit', taskId, session.handle.sessionsDir);
+    this.safeCallOnExit('triggerExit', session, code, signal);
+  }
+
+  /**
+   * Calls session.callbacks.onExit() and logs a warning if the callback throws.
+   * Extracted from destroy/dispose/triggerExit to eliminate the repeated try/catch
+   * guard pattern around user-supplied callbacks.
+   */
+  private safeCallOnExit(
+    caller: string,
+    session: ActiveSession,
+    code: number | null,
+    signal?: string,
+  ): void {
     try {
       session.callbacks.onExit(code, signal);
     } catch (cbErr: unknown) {
       this.deps.logger.error(
-        'triggerExit: onExit callback threw',
+        `${caller}: onExit callback threw`,
         cbErr instanceof Error ? cbErr : new Error(String(cbErr)),
-        { taskId },
+        { taskId: session.handle.taskId },
       );
     }
   }
@@ -888,7 +886,6 @@ export class TmuxConnector implements TmuxConnectorPort {
       }
       session.messagesWatcher = null;
     }
-    // Clear any pending debounce timers
     for (const timer of session.debounceTimers.values()) {
       clearTimeout(timer);
     }
